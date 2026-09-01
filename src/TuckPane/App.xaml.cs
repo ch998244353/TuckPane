@@ -171,14 +171,41 @@ public partial class App : Application
     private async Task HandleArgumentsAsync(IEnumerable<string> arguments, bool redirected)
     {
         string[] values = arguments.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
+        int noteFolderIndex = Array.FindIndex(values,
+            value => value.Equals("--create-note-in", StringComparison.OrdinalIgnoreCase));
+        if (noteFolderIndex >= 0)
+        {
+            string folderPath = noteFolderIndex + 1 < values.Length ? values[noteFolderIndex + 1] : string.Empty;
+            await _host!.CreateExternalNoteAsync(folderPath);
+            return;
+        }
+        int folderIndex = Array.FindIndex(values,
+            value => value.Equals("--create-organizer-in", StringComparison.OrdinalIgnoreCase));
+        if (folderIndex >= 0)
+        {
+            string folderPath = folderIndex + 1 < values.Length ? values[folderIndex + 1] : string.Empty;
+            await _host!.CreateFolderOrganizerAsync(folderPath);
+            return;
+        }
         string[] notePaths = values
             .Where(value => value.EndsWith(".tucknote", StringComparison.OrdinalIgnoreCase))
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (notePaths.Length > 0)
+        string[] todoPaths = values
+            .Where(value => value.EndsWith(".tucktodo", StringComparison.OrdinalIgnoreCase))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (notePaths.Length > 0 || todoPaths.Length > 0)
         {
             foreach (string path in notePaths) await _host!.OpenExternalNoteAsync(path);
+            foreach (string path in todoPaths) await _host!.OpenExternalTodoAsync(path);
+            return;
+        }
+        if (values.Contains("--create-organizer", StringComparer.OrdinalIgnoreCase))
+        {
+            await _host!.CreateDesktopOrganizerAsync();
             return;
         }
         if (redirected && !values.Contains("--startup", StringComparer.OrdinalIgnoreCase)) _host!.OpenConsole();

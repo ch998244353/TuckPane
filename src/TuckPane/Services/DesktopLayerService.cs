@@ -19,10 +19,13 @@ public sealed class DesktopLayerService : IDisposable
         _activationGuard = ActivationGuard;
         ApplyToolWindowStyle();
         _ = NativeMethods.SetWindowSubclass(_window, _activationGuard, ActivationSubclassId, IntPtr.Zero);
-        int corner = NativeMethods.DWMWCP_DONOTROUND;
-        _ = NativeMethods.DwmSetWindowAttribute(window, NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE, ref corner, sizeof(int));
-        int border = NativeMethods.DWMWA_COLOR_NONE;
-        _ = NativeMethods.DwmSetWindowAttribute(window, NativeMethods.DWMWA_BORDER_COLOR, ref border, sizeof(int));
+        if (NativeMethods.SupportsWindows11DwmAttributes)
+        {
+            int corner = NativeMethods.DWMWCP_DONOTROUND;
+            _ = NativeMethods.DwmSetWindowAttribute(window, NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE, ref corner, sizeof(int));
+            int border = NativeMethods.DWMWA_COLOR_NONE;
+            _ = NativeMethods.DwmSetWindowAttribute(window, NativeMethods.DWMWA_BORDER_COLOR, ref border, sizeof(int));
+        }
         Reattach();
     }
 
@@ -42,7 +45,8 @@ public sealed class DesktopLayerService : IDisposable
                 0,
                 0,
                 0,
-                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
+                NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER);
             return;
         }
 
@@ -51,11 +55,16 @@ public sealed class DesktopLayerService : IDisposable
             _desktopIconView = FindDesktopIconView();
         }
 
-        if (_desktopIconView != IntPtr.Zero && NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT) != _desktopIconView)
+        bool ownerChanged = _desktopIconView != IntPtr.Zero &&
+            NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT) != _desktopIconView;
+        if (ownerChanged)
         {
             _ = NativeMethods.SetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT, _desktopIconView);
         }
 
+        uint flags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
+            NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER;
+        if (!ownerChanged) flags |= NativeMethods.SWP_NOZORDER;
         _ = NativeMethods.SetWindowPos(
             _window,
             NativeMethods.HWND_BOTTOM,
@@ -63,7 +72,7 @@ public sealed class DesktopLayerService : IDisposable
             0,
             0,
             0,
-            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
+            flags);
     }
 
     public void SetExpanded(bool expanded, bool stayTopmost = false)
@@ -77,7 +86,8 @@ public sealed class DesktopLayerService : IDisposable
                 0,
                 0,
                 0,
-                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
+                NativeMethods.SWP_NOOWNERZORDER);
         }
 
         _expanded = expanded;
@@ -99,9 +109,37 @@ public sealed class DesktopLayerService : IDisposable
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
     }
 
+    public void SetTransientOwner(IntPtr owner)
+    {
+        if (owner == IntPtr.Zero || !NativeMethods.IsWindow(owner)) return;
+        if (NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT) != owner)
+            _ = NativeMethods.SetWindowLongPtr(_window, NativeMethods.GWLP_HWNDPARENT, owner);
+        _ = NativeMethods.SetWindowPos(
+            _window,
+            NativeMethods.HWND_TOP,
+            0,
+            0,
+            0,
+            0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
+            NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER);
+    }
+
     public void SetInputActivation(bool enabled)
     {
         _allowActivation = enabled;
+        if (enabled && _stayTopmost)
+        {
+            _ = NativeMethods.SetWindowPos(
+                _window,
+                NativeMethods.HWND_NOTOPMOST,
+                0,
+                0,
+                0,
+                0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
+                NativeMethods.SWP_NOOWNERZORDER);
+        }
         long style = NativeMethods.GetWindowLongPtr(_window, NativeMethods.GWL_EXSTYLE).ToInt64();
         style = enabled ? style & ~NativeMethods.WS_EX_NOACTIVATE : style | NativeMethods.WS_EX_NOACTIVATE;
         _ = NativeMethods.SetWindowLongPtr(_window, NativeMethods.GWL_EXSTYLE, new IntPtr(style));
@@ -112,7 +150,8 @@ public sealed class DesktopLayerService : IDisposable
             0,
             0,
             0,
-            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_FRAMECHANGED | NativeMethods.SWP_SHOWWINDOW);
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_FRAMECHANGED |
+            NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER);
 
         if (enabled)
         {
@@ -124,7 +163,8 @@ public sealed class DesktopLayerService : IDisposable
                 0,
                 0,
                 0,
-                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_SHOWWINDOW);
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_SHOWWINDOW |
+                NativeMethods.SWP_NOOWNERZORDER);
             _ = NativeMethods.SetForegroundWindow(_window);
         }
         else
@@ -198,6 +238,7 @@ public sealed class DesktopLayerService : IDisposable
         IntPtr found = IntPtr.Zero;
         NativeMethods.EnumWindows((window, _) =>
         {
+            if (!IsDesktopHostWindow(window)) return true;
             IntPtr child = NativeMethods.FindWindowEx(window, IntPtr.Zero, "SHELLDLL_DefView", null);
             if (child == IntPtr.Zero)
             {
@@ -219,5 +260,15 @@ public sealed class DesktopLayerService : IDisposable
             found = NativeMethods.FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
         }
         return found;
+    }
+
+    internal static bool IsDesktopHostClassName(string? className) =>
+        className is "Progman" or "WorkerW";
+
+    private static bool IsDesktopHostWindow(IntPtr window)
+    {
+        var className = new System.Text.StringBuilder(32);
+        return NativeMethods.GetClassName(window, className, className.Capacity) > 0 &&
+            IsDesktopHostClassName(className.ToString());
     }
 }

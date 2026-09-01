@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Media;
 using TuckPane.Core;
 using TuckPane.Models;
 using TuckPane.Services;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 using Windows.Foundation;
 using Windows.UI;
@@ -87,6 +88,36 @@ public sealed partial class NoteWindow : Window
 
     internal Guid Id => _definition.Id;
     internal bool IsVisible => _visible;
+    internal string? ExternalPath => _externalPath;
+
+    internal async Task ApplyGlobalThemeAsync(NoteTheme theme)
+    {
+        _definition.Theme = theme;
+        if (_portableDocument is not null) _portableDocument.Theme = theme;
+        ApplyTheme();
+        if (_editorReady && Editor.CoreWebView2 is not null)
+        {
+            try
+            {
+                await Editor.CoreWebView2.ExecuteScriptAsync(
+                    $"window.__tuckpane?.setTheme({JsonSerializer.Serialize(GetCssPalette())})");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"无法同步便签主题：{Id}", ex);
+                ShowError(AppStrings.Format("NoteEditorErrorFormat", ex.Message));
+            }
+        }
+        if (_externalPath is not null) await FlushAsync(readEditor: true);
+    }
+
+    internal void RebindExternalPath(string path)
+    {
+        if (_externalPath is null) throw new InvalidOperationException("Only portable notes can be rebound.");
+        _externalPath = Path.GetFullPath(path);
+        _definition.Name = Path.GetFileNameWithoutExtension(_externalPath);
+        UpdateTitle();
+    }
 
     internal void InitializeHostWindow()
     {
@@ -95,17 +126,17 @@ public sealed partial class NoteWindow : Window
         _hwnd = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(_hwnd));
         _titleInput = InputNonClientPointerSource.GetForWindowId(_appWindow.Id);
-        _appWindow.IsShownInSwitchers = false;
+        _appWindow.IsShownInSwitchers = true;
         if (_appWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.SetBorderAndTitleBar(true, false);
-            presenter.IsAlwaysOnTop = true;
+            presenter.IsAlwaysOnTop = _host.State.GlobalSettings.NoteAlwaysOnTop;
             presenter.IsResizable = true;
             presenter.IsMaximizable = false;
-            presenter.IsMinimizable = false;
+            presenter.IsMinimizable = true;
         }
         long extendedStyle = NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE).ToInt64();
-        extendedStyle = (extendedStyle | NativeMethods.WS_EX_TOOLWINDOW) & ~NativeMethods.WS_EX_APPWINDOW;
+        extendedStyle = (extendedStyle | NativeMethods.WS_EX_APPWINDOW) & ~NativeMethods.WS_EX_TOOLWINDOW;
         _ = NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE, new IntPtr(extendedStyle));
         _ = NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER |
@@ -116,11 +147,30 @@ public sealed partial class NoteWindow : Window
         _appWindow.Closing += AppWindow_Closing;
     }
 
+    internal void ApplyAlwaysOnTopSetting()
+    {
+        if (_appWindow.Presenter is OverlappedPresenter presenter)
+            presenter.IsAlwaysOnTop = _host.State.GlobalSettings.NoteAlwaysOnTop;
+    }
+
     internal void ShowAndActivate()
     {
         InitializeHostWindow();
         _visible = true;
+        if (_appWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
+            presenter.Restore(activateWindow: true);
         _appWindow.Show(activateWindow: true);
+        Activate();
+        _ = NativeMethods.SetWindowPos(
+            _hwnd,
+            _host.State.GlobalSettings.NoteAlwaysOnTop ? NativeMethods.HWND_TOPMOST : NativeMethods.HWND_TOP,
+            0,
+            0,
+            0,
+            0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_SHOWWINDOW |
+            NativeMethods.SWP_NOOWNERZORDER);
+        _ = NativeMethods.SetForegroundWindow(_hwnd);
         _ = DispatcherQueue.TryEnqueue(() =>
         {
             UpdateTitlePassthrough();
@@ -174,6 +224,17 @@ public sealed partial class NoteWindow : Window
     {
         if (_permanentClose) return;
         await FlushAsync(readEditor: true);
+        _permanentClose = true;
+        Close();
+    }
+
+    internal Task<bool> FlushForExitAsync() =>
+        _permanentClose ? Task.FromResult(true) : FlushAsync(readEditor: true);
+
+    internal void ClosePermanentlyWithoutSave()
+    {
+        if (_permanentClose) return;
+        _saveTimer.Stop();
         _permanentClose = true;
         Close();
     }
@@ -248,11 +309,38 @@ public sealed partial class NoteWindow : Window
     {
         try
         {
+            if (_editorUri is null || !Uri.TryCreate(args.Source, UriKind.Absolute, out Uri? source) ||
+                !source.IsFile || !Path.GetFullPath(source.LocalPath)
+                    .Equals(Path.GetFullPath(_editorUri.LocalPath), StringComparison.OrdinalIgnoreCase)) return;
             using JsonDocument message = JsonDocument.Parse(args.WebMessageAsJson);
             string type = message.RootElement.GetProperty("type").GetString() ?? string.Empty;
             if (type == "shellReady")
             {
                 await SendEditorLoadAsync();
+                return;
+            }
+            if (type == "copyText")
+            {
+                if (!message.RootElement.TryGetProperty("text", out JsonElement textElement) ||
+                    textElement.GetString() is not { Length: > 0 } text ||
+                    text.Length > NoteStore.MaximumHtmlLength) return;
+                var content = new DataPackage();
+                content.SetText(text);
+                bool copied = false;
+                int[] retryDelaysMs = [0, 50, 100, 200, 400];
+                foreach (int delayMs in retryDelaysMs)
+                {
+                    if (delayMs > 0) await Task.Delay(delayMs);
+                    copied = Clipboard.SetContentWithOptions(
+                        content,
+                        new ClipboardContentOptions());
+                    if (copied) break;
+                }
+                if (!copied)
+                {
+                    AppLogger.Error($"便签文字在 {retryDelaysMs.Length} 次尝试后仍无法写入剪贴板。");
+                    ShowError(AppStrings.Get("NoteClipboardWriteError"));
+                }
                 return;
             }
             if (type is not ("changed" or "fontSize")) return;
@@ -368,14 +456,15 @@ public sealed partial class NoteWindow : Window
     private async void ThemeItem_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not ToggleMenuFlyoutItem { Tag: NoteTheme theme }) return;
-        _definition.Theme = theme;
-        ApplyTheme();
-        if (_editorReady)
+        try
         {
-            string script = $"window.__tuckpane?.setTheme({JsonSerializer.Serialize(GetCssPalette())})";
-            await Editor.CoreWebView2.ExecuteScriptAsync(script);
+            await _host.SetNoteThemeAsync(theme);
         }
-        await PersistMetadataAsync();
+        catch (Exception ex)
+        {
+            AppLogger.Error($"无法保存全局便签主题：{theme}", ex);
+            ShowError(AppStrings.Format("NoteSaveErrorFormat", ex.Message));
+        }
     }
 
     private async void RuledLinesButton_Click(object sender, RoutedEventArgs e)
@@ -410,24 +499,45 @@ public sealed partial class NoteWindow : Window
         IReadOnlyDictionary<string, string> css = GetCssPalette();
         Color surface = ParseColor(css["surface"]);
         Color editor = ParseColor(css["editor"]);
+        Color accent = ParseColor(css["accent"]);
         Color text = ParseColor(css["text"]);
         WindowFrame.Background = new SolidColorBrush(editor);
         DragTitleBar.Background = new SolidColorBrush(surface);
         NoteTitleText.Foreground = new SolidColorBrush(text);
         NoteTitleEditor.Foreground = new SolidColorBrush(text);
-        ColorButton.Foreground = new SolidColorBrush(text);
+        ColorButton.Foreground = new SolidColorBrush(accent);
+        ColorButton.Resources["ButtonBackgroundPointerOver"] = new SolidColorBrush(
+            ColorHelper.FromArgb(30, accent.R, accent.G, accent.B));
+        ColorButton.Resources["ButtonBackgroundPressed"] = new SolidColorBrush(
+            ColorHelper.FromArgb(52, accent.R, accent.G, accent.B));
+        ColorButton.Resources["ButtonForegroundPointerOver"] = new SolidColorBrush(accent);
+        ColorButton.Resources["ButtonForegroundPressed"] = new SolidColorBrush(accent);
         RuledLinesButton.Foreground = new SolidColorBrush(text);
-        SolidColorBrush transparent = new(Colors.Transparent);
-        RuledLinesButton.Resources["ToggleButtonBackgroundChecked"] = transparent;
-        RuledLinesButton.Resources["ToggleButtonBackgroundCheckedPointerOver"] = transparent;
-        RuledLinesButton.Resources["ToggleButtonBackgroundCheckedPressed"] = transparent;
-        RuledLinesButton.Resources["ToggleButtonBackgroundCheckedDisabled"] = transparent;
+        RuledLinesButton.Resources["ToggleButtonBackgroundPointerOver"] = new SolidColorBrush(
+            ColorHelper.FromArgb(24, accent.R, accent.G, accent.B));
+        RuledLinesButton.Resources["ToggleButtonBackgroundPressed"] = new SolidColorBrush(
+            ColorHelper.FromArgb(42, accent.R, accent.G, accent.B));
+        RuledLinesButton.Resources["ToggleButtonBackgroundChecked"] = new SolidColorBrush(
+            ColorHelper.FromArgb(68, accent.R, accent.G, accent.B));
+        RuledLinesButton.Resources["ToggleButtonBackgroundCheckedPointerOver"] = new SolidColorBrush(
+            ColorHelper.FromArgb(88, accent.R, accent.G, accent.B));
+        RuledLinesButton.Resources["ToggleButtonBackgroundCheckedPressed"] = new SolidColorBrush(
+            ColorHelper.FromArgb(108, accent.R, accent.G, accent.B));
+        RuledLinesButton.Resources["ToggleButtonBackgroundCheckedDisabled"] = new SolidColorBrush(
+            ColorHelper.FromArgb(34, accent.R, accent.G, accent.B));
         SolidColorBrush checkedForeground = new(text);
         RuledLinesButton.Resources["ToggleButtonForegroundChecked"] = checkedForeground;
         RuledLinesButton.Resources["ToggleButtonForegroundCheckedPointerOver"] = checkedForeground;
         RuledLinesButton.Resources["ToggleButtonForegroundCheckedPressed"] = checkedForeground;
         RuledLinesButton.Resources["ToggleButtonForegroundCheckedDisabled"] = checkedForeground;
         CloseButton.Foreground = new SolidColorBrush(text);
+        Color closeHover = _accessibility.HighContrast ? accent : ColorHelper.FromArgb(255, 196, 43, 28);
+        Color closePressed = _accessibility.HighContrast ? accent : ColorHelper.FromArgb(255, 164, 38, 25);
+        Color closeForeground = _accessibility.HighContrast ? surface : Colors.White;
+        CloseButton.Resources["ButtonBackgroundPointerOver"] = new SolidColorBrush(closeHover);
+        CloseButton.Resources["ButtonBackgroundPressed"] = new SolidColorBrush(closePressed);
+        CloseButton.Resources["ButtonForegroundPointerOver"] = new SolidColorBrush(closeForeground);
+        CloseButton.Resources["ButtonForegroundPressed"] = new SolidColorBrush(closeForeground);
     }
 
     private IReadOnlyDictionary<string, string> GetCssPalette()
@@ -435,7 +545,14 @@ public sealed partial class NoteWindow : Window
         if (!_accessibility.HighContrast)
         {
             IReadOnlyDictionary<string, string> theme = NoteThemePalette.Get(_definition.Theme).Css;
-            return new Dictionary<string, string>(theme) { ["rule"] = theme["border"] };
+            Color editor = ParseColor(theme["editor"]);
+            return new Dictionary<string, string>(theme)
+            {
+                ["rule"] = theme["border"],
+                ["caret"] = IsDark(editor) ? "#FFFFFF" : "#000000",
+                ["scroll-thumb"] = Darken(editor, .22),
+                ["scroll-thumb-hover"] = Darken(editor, .30)
+            };
         }
         var settings = new UISettings();
         string foreground = ToHex(settings.GetColorValue(UIColorType.Foreground));
@@ -447,11 +564,19 @@ public sealed partial class NoteWindow : Window
             ["border"] = foreground,
             ["text"] = foreground,
             ["muted"] = foreground,
-            ["rule"] = foreground
+            ["rule"] = foreground,
+            ["caret"] = foreground,
+            ["scroll-thumb"] = foreground,
+            ["scroll-thumb-hover"] = foreground
         };
     }
 
     private static string ToHex(Color color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+    private static bool IsDark(Color color) => color.R * 299 + color.G * 587 + color.B * 114 < 128000;
+    private static string Darken(Color color, double amount) => ToHex(ColorHelper.FromArgb(255,
+        (byte)Math.Round(color.R * (1 - amount)),
+        (byte)Math.Round(color.G * (1 - amount)),
+        (byte)Math.Round(color.B * (1 - amount))));
     private static Color ParseColor(string value) => ColorHelper.FromArgb(255,
         Convert.ToByte(value.Substring(1, 2), 16),
         Convert.ToByte(value.Substring(3, 2), 16),
@@ -485,16 +610,10 @@ public sealed partial class NoteWindow : Window
                 Math.Max(1, (int)Math.Ceiling(bounds.Height * scale))) ]);
     }
 
-    private void NoteTitleText_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private void NoteTitleText_Tapped(object sender, TappedRoutedEventArgs e)
     {
         BeginRename();
         e.Handled = true;
-    }
-
-    private void RenameKeyboardAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
-    {
-        BeginRename();
-        args.Handled = true;
     }
 
     private void BeginRename()

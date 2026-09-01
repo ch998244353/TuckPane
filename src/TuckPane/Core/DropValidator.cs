@@ -106,6 +106,12 @@ public static class DropValidator
             return true;
         }
 
+        if (extension.Equals(".tucktodo", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+        {
+            kind = WidgetItemKind.PortableTodo;
+            return true;
+        }
+
         if (File.Exists(path))
         {
             kind = WidgetItemKind.File;

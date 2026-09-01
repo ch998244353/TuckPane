@@ -114,6 +114,41 @@ public static class AppPaths
         return Path.Combine("Windows", CreateOwnedContainerName(name, id));
     }
 
+    public static string ResolveDefaultStorageDirectory(GlobalSettings settings)
+    {
+        string path = string.IsNullOrWhiteSpace(settings.DefaultStorageDirectory)
+            ? WindowsRoot
+            : settings.DefaultStorageDirectory.Trim();
+        if (!Path.IsPathFullyQualified(path) || path.StartsWith(@"\\", StringComparison.Ordinal))
+            throw new InvalidOperationException(AppStrings.Get("StorageAbsoluteRequired"));
+        return NormalizeDirectory(path);
+    }
+
+    public static string CreateDefaultOrganizerStoragePath(string defaultDirectory, Guid id)
+    {
+        if (id == Guid.Empty) throw new ArgumentException("Organizer ID cannot be empty.", nameof(id));
+        return Path.Combine(NormalizeDirectory(defaultDirectory), $"收纳窗-{id.ToString("N")[..8]}");
+    }
+
+    internal static string CreateDefaultOrganizerStorageDirectory(
+        string defaultDirectory,
+        Guid id,
+        IEnumerable<string> occupiedPaths)
+    {
+        if (string.IsNullOrWhiteSpace(defaultDirectory) || !Path.IsPathFullyQualified(defaultDirectory) ||
+            defaultDirectory.StartsWith(@"\\", StringComparison.Ordinal))
+            throw new InvalidOperationException(AppStrings.Get("StorageAbsoluteRequired"));
+        string root = NormalizeDirectory(defaultDirectory);
+        if (!Directory.Exists(root))
+            throw new DirectoryNotFoundException(AppStrings.Get("DefaultStorageDirectoryMissing"));
+        root = ValidateCustomStoragePath(root);
+        string candidate = CreateDefaultOrganizerStoragePath(root, id);
+        if (File.Exists(candidate) || Directory.Exists(candidate) || occupiedPaths.Any(path => PathsOverlap(candidate, path)))
+            throw new InvalidOperationException(AppStrings.Get("DefaultStoragePathOccupied"));
+        Directory.CreateDirectory(candidate);
+        return candidate;
+    }
+
     public static string ValidateCustomStoragePath(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path) || path.StartsWith(@"\\", StringComparison.Ordinal))
@@ -155,6 +190,7 @@ public static class AppPaths
 
     public static string? GetOwnedStorageContainer(OrganizerDefinition definition)
     {
+        if (!definition.StorageOwnedByApp) return null;
         string itemsPath;
         try { itemsPath = ResolveStoragePath(definition); }
         catch { return null; }

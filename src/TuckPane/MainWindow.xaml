@@ -14,6 +14,26 @@
         Drop="WindowRoot_Drop"
         KeyDown="WindowRoot_KeyDown">
 
+        <Grid.Resources>
+            <LinearGradientBrush x:Key="OrganizerPreviewSurfaceBrush" StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Offset="0" Color="#FFF8FAFC" />
+                <GradientStop Offset="0.58" Color="#FFE9EFF4" />
+                <GradientStop Offset="1" Color="#FFD8E2EA" />
+            </LinearGradientBrush>
+            <LinearGradientBrush x:Key="OrganizerPreviewOutlineBrush" StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Offset="0" Color="#E8FFFFFF" />
+                <GradientStop Offset="0.52" Color="#788FA1B2" />
+                <GradientStop Offset="1" Color="#4F627587" />
+            </LinearGradientBrush>
+            <SolidColorBrush x:Key="OrganizerPreviewShadowBrush" Color="#24192B3D" />
+            <Style x:Key="OrganizerMenuPresenterStyle" TargetType="MenuFlyoutPresenter">
+                <Setter Property="HighContrastAdjustment" Value="Auto" />
+                <Setter Property="RequestedTheme" Value="Light" />
+                <Setter Property="SystemBackdrop" Value="{x:Null}" />
+                <Setter Property="Background" Value="#FFFFFFFF" />
+            </Style>
+        </Grid.Resources>
+
         <Grid
             x:Name="CompactView"
             Width="76"
@@ -21,10 +41,16 @@
             HorizontalAlignment="Center"
             VerticalAlignment="Center">
             <Grid.ContextFlyout>
-                <MenuFlyout x:Name="CompactTileContextMenu" Opened="ContextMenu_Opened" Closed="ContextMenu_Closed">
+                <MenuFlyout
+                    x:Name="CompactTileContextMenu"
+                    Closed="ContextMenu_Closed"
+                    MenuFlyoutPresenterStyle="{StaticResource OrganizerMenuPresenterStyle}"
+                    Opened="ContextMenu_Opened"
+                    Opening="ContextMenu_Opening">
                     <MenuFlyoutItem x:Name="CompactManageMenuItem" Click="ManageMenuItem_Click" Tag="ContextManage" Text="设置" />
                     <MenuFlyoutItem x:Name="CompactDuplicateMenuItem" Click="DuplicateWindowMenuItem_Click" Tag="ContextDuplicate" Text="窗口复制" />
                     <MenuFlyoutItem x:Name="CompactToggleModeMenuItem" Click="ToggleModeMenuItem_Click" Tag="ContextSwitchMode" Text="模式切换" />
+                    <MenuFlyoutItem x:Name="CompactToggleContentModeMenuItem" Click="ToggleContentModeMenuItem_Click" Text="切换为精简模式" />
                     <MenuFlyoutItem x:Name="CompactRenameMenuItem" Click="RenameMenuItem_Click" Tag="ContextRename" Text="重命名" />
                     <MenuFlyoutItem x:Name="CompactOpenStorageMenuItem" Click="OpenStorageMenuItem_Click" Tag="ContextOpenStorage" Text="打开收纳目录" />
                     <MenuFlyoutItem x:Name="CompactDeleteWindowMenuItem" Click="DeleteWindowMenuItem_Click" Tag="ContextDeleteWindow" Text="删除窗口" />
@@ -44,9 +70,14 @@
                 Background="Transparent"
                 PointerCanceled="CompactTile_PointerCanceled"
                 PointerCaptureLost="CompactTile_PointerCaptureLost"
+                PointerEntered="CompactTile_PointerEntered"
+                PointerExited="CompactTile_PointerExited"
                 PointerMoved="CompactTile_PointerMoved"
                 PointerPressed="CompactTile_PointerPressed"
                 PointerReleased="CompactTile_PointerReleased">
+                <Grid.ScaleTransition>
+                    <Vector3Transition Duration="0:0:0.12" />
+                </Grid.ScaleTransition>
                 <Grid
                     x:Name="CompactThumbnailHost"
                     Width="39"
@@ -71,14 +102,22 @@
                         </Grid>
                     </Grid>
                 </Grid>
-                <FontIcon
-                    x:Name="CompactWarningIcon"
+                <Border
+                    x:Name="CompactWarningBadge"
+                    Width="22"
+                    Height="22"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
-                    FontSize="18"
-                    Foreground="#FFFFC857"
-                    Glyph="&#xE814;"
-                    Visibility="Collapsed" />
+                    Background="#B81D232B"
+                    CornerRadius="11"
+                    IsHitTestVisible="False"
+                    Visibility="Collapsed">
+                    <FontIcon
+                        x:Name="CompactWarningIcon"
+                        FontSize="14"
+                        Foreground="#FFFFC857"
+                        Glyph="&#xE814;" />
+                </Border>
             </Grid>
             <TextBlock
                 x:Name="CompactNameText"
@@ -105,21 +144,49 @@
             UseLayoutRounding="True"
             Visibility="Collapsed">
             <Grid.ContextFlyout>
-                <MenuFlyout x:Name="ExpandedViewContextMenu" Opened="ContextMenu_Opened" Closed="ContextMenu_Closed">
+                <MenuFlyout
+                    x:Name="ExpandedViewContextMenu"
+                    Closed="ContextMenu_Closed"
+                    MenuFlyoutPresenterStyle="{StaticResource OrganizerMenuPresenterStyle}"
+                    Opened="ContextMenu_Opened"
+                    Opening="ContextMenu_Opening"
+                    ShouldConstrainToRootBounds="True">
                     <MenuFlyoutItem x:Name="NewNoteMenuItem" Click="NewNoteMenuItem_Click" Tag="ContextNewNote" Text="新建便签" />
+                    <MenuFlyoutItem x:Name="NewTodoMenuItem" Click="NewTodoMenuItem_Click" Tag="ContextNewTodo" Text="新建待办" />
                     <MenuFlyoutItem x:Name="PasteMenuItem" Click="PasteMenuItem_Click" IsEnabled="False" Tag="ContextPaste" Text="粘贴" Visibility="Collapsed" />
                     <MenuFlyoutItem x:Name="NewFolderMenuItem" Click="NewFolderMenuItem_Click" Tag="ContextNewFolder" Text="新建文件夹" Visibility="Collapsed" />
                     <MenuFlyoutSeparator x:Name="StationActionSeparator" Visibility="Collapsed" />
                     <MenuFlyoutItem x:Name="ExpandedManageMenuItem" Click="ManageMenuItem_Click" Tag="ContextManage" Text="设置" />
                     <MenuFlyoutItem x:Name="ExpandedDuplicateMenuItem" Click="DuplicateWindowMenuItem_Click" Tag="ContextDuplicate" Text="窗口复制" />
                     <MenuFlyoutItem x:Name="ExpandedToggleModeMenuItem" Click="ToggleModeMenuItem_Click" Tag="ContextSwitchMode" Text="模式切换" />
+                    <MenuFlyoutItem x:Name="ExpandedToggleContentModeMenuItem" Click="ToggleContentModeMenuItem_Click" Text="切换为精简模式" />
                     <MenuFlyoutItem x:Name="ExpandedRenameMenuItem" Click="RenameMenuItem_Click" Tag="ContextRename" Text="重命名" />
                     <MenuFlyoutItem x:Name="ExpandedOpenStorageMenuItem" Click="OpenStorageMenuItem_Click" Tag="ContextOpenStorage" Text="打开收纳目录" />
                     <MenuFlyoutItem x:Name="ExpandedDeleteWindowMenuItem" Click="DeleteWindowMenuItem_Click" Tag="ContextDeleteWindow" Text="删除窗口" />
                 </MenuFlyout>
             </Grid.ContextFlyout>
-            <Grid x:Name="ExpandedSurfaceHost" />
-            <Grid x:Name="ExpandedContentLayer" Background="Transparent">
+            <Grid.RowDefinitions>
+                <RowDefinition x:Name="ExpandedTitleRow" Height="56" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock
+                x:Name="ExpandedNameText"
+                Grid.Row="0"
+                Margin="16,0"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Center"
+                AutomationProperties.AutomationId="ExpandedOrganizerName"
+                FontFamily="Segoe UI Variable Display"
+                FontSize="42"
+                FontWeight="SemiBold"
+                Foreground="White"
+                IsHitTestVisible="False"
+                TextAlignment="Center"
+                TextTrimming="CharacterEllipsis"
+                TextWrapping="NoWrap" />
+            <Grid x:Name="ExpandedPanel" Grid.Row="1">
+                <Grid x:Name="ExpandedSurfaceHost" />
+                <Grid x:Name="ExpandedContentLayer" Background="Transparent">
                 <Button
                 x:Name="CollapseButton"
                 Width="28"
@@ -132,7 +199,8 @@
                 BorderThickness="0"
                 Click="CollapseButton_Click"
                 PointerCanceled="CollapseButton_PointerReleased"
-                PointerExited="CollapseButton_PointerReleased"
+                PointerEntered="CollapseButton_PointerEntered"
+                PointerExited="CollapseButton_PointerExited"
                 PointerPressed="CollapseButton_PointerPressed"
                 PointerReleased="CollapseButton_PointerReleased"
                 AutomationProperties.Name="收缩"
@@ -145,11 +213,25 @@
                     </ControlTemplate>
                 </Button.Template>
                 <Border
-                    x:Name="CollapseDash"
-                    Width="12"
-                    Height="1"
-                    Background="White"
-                    CornerRadius="0.5" />
+                    x:Name="CollapseButtonSurface"
+                    Width="28"
+                    Height="28"
+                    Background="Transparent"
+                    CornerRadius="8">
+                    <Border
+                        x:Name="CollapseDash"
+                        Width="12"
+                        Height="1"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Background="White"
+                        CornerRadius="0.5"
+                        Opacity="0.78">
+                        <Border.ScaleTransition>
+                            <Vector3Transition Duration="0:0:0.12" />
+                        </Border.ScaleTransition>
+                    </Border>
+                </Border>
                 </Button>
                 <ScrollView
                 x:Name="ItemsScrollView"
@@ -176,6 +258,7 @@
                                 Background="Transparent"
                                 ContextRequested="Item_ContextRequested"
                                 CornerRadius="16"
+                                DoubleTapped="CompactListRow_DoubleTapped"
                                 Padding="5"
                                 PointerCanceled="Item_PointerCanceled"
                                 PointerEntered="Item_PointerEntered"
@@ -185,6 +268,9 @@
                                 PointerPressed="Item_PointerPressed"
                                 PointerReleased="Item_PointerReleased"
                                 Tag="{Binding RelativeName}">
+                                <Border.BackgroundTransition>
+                                    <BrushTransition Duration="0:0:0.12" />
+                                </Border.BackgroundTransition>
                                 <StackPanel
                                     x:Name="ItemContent"
                                     DoubleTapped="Item_DoubleTapped"
@@ -192,6 +278,12 @@
                                     Tag="{Binding RelativeName}"
                                     VerticalAlignment="Center"
                                     Spacing="6">
+                                    <StackPanel.ScaleTransition>
+                                        <Vector3Transition Duration="0:0:0.12" />
+                                    </StackPanel.ScaleTransition>
+                                    <StackPanel.TranslationTransition>
+                                        <Vector3Transition Duration="0:0:0.12" />
+                                    </StackPanel.TranslationTransition>
                                     <Grid x:Name="ItemIconContainer" Width="72" Height="72">
                                         <FontIcon
                                             x:Name="ItemFallbackIcon"
@@ -207,6 +299,48 @@
                                             HorizontalAlignment="Center"
                                             VerticalAlignment="Center"
                                             Stretch="Uniform" />
+                                        <Grid
+                                            x:Name="OrganizerPreviewGrid"
+                                            IsHitTestVisible="False"
+                                            Visibility="Collapsed">
+                                            <Border
+                                                Margin="1,2,0,0"
+                                                Background="{StaticResource OrganizerPreviewShadowBrush}"
+                                                CornerRadius="10" />
+                                            <Border
+                                                Margin="0,0,1,2"
+                                                Padding="4"
+                                                Background="{StaticResource OrganizerPreviewSurfaceBrush}"
+                                                BorderBrush="{StaticResource OrganizerPreviewOutlineBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="10">
+                                                <Grid x:Name="OrganizerPreviewContentGrid">
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition />
+                                                        <RowDefinition />
+                                                    </Grid.RowDefinitions>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition />
+                                                        <ColumnDefinition />
+                                                    </Grid.ColumnDefinitions>
+                                                    <FontIcon
+                                                        x:Name="OrganizerPreviewEmptyIcon"
+                                                        Grid.RowSpan="2"
+                                                        Grid.ColumnSpan="2"
+                                                        HorizontalAlignment="Center"
+                                                        VerticalAlignment="Center"
+                                                        FontFamily="Segoe Fluent Icons"
+                                                        Foreground="#8C52697A"
+                                                        Glyph="&#xE8B7;"
+                                                        IsHitTestVisible="False"
+                                                        Visibility="Collapsed" />
+                                                    <Image x:Name="OrganizerPreview0" Margin="2" Stretch="Uniform" />
+                                                    <Image x:Name="OrganizerPreview1" Grid.Column="1" Margin="2" Stretch="Uniform" />
+                                                    <Image x:Name="OrganizerPreview2" Grid.Row="1" Margin="2" Stretch="Uniform" />
+                                                    <Image x:Name="OrganizerPreview3" Grid.Row="1" Grid.Column="1" Margin="2" Stretch="Uniform" />
+                                                </Grid>
+                                            </Border>
+                                        </Grid>
                                     </Grid>
                                     <TextBlock
                                         x:Name="ItemNameText"
@@ -224,6 +358,7 @@
                     </ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
                 </ScrollView>
+                </Grid>
             </Grid>
         </Grid>
     </Grid>

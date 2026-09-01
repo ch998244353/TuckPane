@@ -263,15 +263,14 @@ New-Item -ItemType Directory -Path $localRoot, $itemsRoot -Force | Out-Null
 [IO.File]::WriteAllText($sourceFile, 'keep this file', [Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText($statePath, @'
 {
-  "SchemaVersion": 3,
-  "GlobalSettings": { "Theme": 0, "StartWithWindows": false, "Language": 0 },
+  "SchemaVersion": 7,
+  "GlobalSettings": { "ThemeColorArgb": 4293060073, "Material": 0, "ThemeTransparency": 0.35, "StartWithWindows": false, "Language": 0 },
   "ConsolePlacement": null,
   "Organizers": [
     {
       "Id": "44444444-4444-4444-4444-444444444444",
       "Name": "DeleteCheck",
       "CreatedAtUtc": "2026-08-23T00:00:00+00:00",
-      "ThemeOverride": null,
       "PlacementMode": 0,
       "Layout": { "Mode": 0, "Rows": 3, "Columns": 3 },
       "CompactScale": 0.8,

@@ -4,15 +4,32 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 
-public enum GlassTheme
+public enum ThemeMaterial
 {
-    Light = 0,
-    Gray = 1,
-    SolidLight = 2,
-    SolidDark = 3,
-    FrostedLight = 4,
-    FrostedDark = 5
+    Acrylic = 0,
+    Glass = 1,
+    Matte = 3
 }
+
+internal enum ThemeTarget
+{
+    Settings,
+    Organizer
+}
+
+internal readonly record struct ThemeValues(uint ColorArgb, ThemeMaterial Material, double Transparency);
+
+public enum PerformanceProfile
+{
+    PowerSaver = 0,
+    Balanced = 1,
+    HighPerformance = 2
+}
+
+internal readonly record struct PerformanceTuning(
+    int PointerPollMilliseconds,
+    int DesktopRepairMilliseconds,
+    bool CustomAnimationsEnabled);
 
 public enum OrganizerLayoutMode
 {
@@ -26,6 +43,12 @@ public enum OrganizerPlacementMode
     Floating = 0,
     Positioned = 1,
     Station = 2
+}
+
+public enum OrganizerExpandedContentMode
+{
+    Icon = 0,
+    CompactList = 1
 }
 
 public enum OrganizerDockEdge
@@ -48,15 +71,16 @@ internal enum OrganizerVisualChange
 {
     None = 0,
     Name = 1 << 0,
-    Theme = 1 << 1,
-    Layout = 1 << 2,
-    CompactScale = 1 << 3,
-    CanvasScale = 1 << 4,
-    ItemScale = 1 << 5,
-    NameScale = 1 << 6,
-    PlacementMode = 1 << 7,
-    Docking = 1 << 8,
-    All = Name | Theme | Layout | CompactScale | CanvasScale | ItemScale | NameScale | PlacementMode | Docking
+    Layout = 1 << 1,
+    CompactScale = 1 << 2,
+    CanvasScale = 1 << 3,
+    ItemScale = 1 << 4,
+    NameScale = 1 << 5,
+    PlacementMode = 1 << 6,
+    Docking = 1 << 7,
+    ExpandedContentMode = 1 << 8,
+    CompactListItemScale = 1 << 9,
+    All = Name | Layout | CompactScale | CanvasScale | ItemScale | NameScale | PlacementMode | Docking | ExpandedContentMode | CompactListItemScale
 }
 
 public enum NoteTheme
@@ -72,7 +96,7 @@ public enum NoteTheme
 
 public sealed class AppStateV2
 {
-    public int SchemaVersion { get; set; } = 5;
+    public int SchemaVersion { get; set; } = 9;
     public GlobalSettings GlobalSettings { get; set; } = new();
     public ConsolePlacement? ConsolePlacement { get; set; }
     public List<OrganizerDefinition> Organizers { get; set; } = [];
@@ -80,13 +104,157 @@ public sealed class AppStateV2
 
 public sealed class GlobalSettings
 {
-    public GlassTheme Theme { get; set; } = GlassTheme.Light;
+    private const int LegacyFrostedGlassMaterialValue = 2;
+    public const uint DefaultThemeColorArgb = 0xFFE2E5E9;
+    public const double DefaultThemeTransparency = .35;
+    public const double MaximumThemeTransparency = .9;
+    public const int MinimumHoverDelayMs = 100;
+    public const int MaximumHoverDelayMs = 2000;
+    public const int HoverDelayStepMs = 50;
+    public const int DefaultStationActivationDistanceDip = 16;
+    public const int MinimumStationActivationDistanceDip = 4;
+    public const int MaximumStationActivationDistanceDip = 48;
+    public const int StationActivationDistanceStepDip = 4;
+    public const int DefaultStationHoverExpandDelayMs = 120;
+    public const int MinimumStationHoverExpandDelayMs = 0;
+    public const int MaximumStationHoverExpandDelayMs = 500;
+    public const int StationHoverExpandDelayStepMs = 20;
+    public const double MinimumCompactNameScale = .6;
+    public const double MaximumCompactNameScale = 1;
+
+    public uint ThemeColorArgb { get; set; } = DefaultThemeColorArgb;
+    public ThemeMaterial Material { get; set; } = ThemeMaterial.Acrylic;
+    public double ThemeTransparency { get; set; } = DefaultThemeTransparency;
+    public uint SettingsThemeColorArgb { get; set; } = DefaultThemeColorArgb;
+    public ThemeMaterial SettingsThemeMaterial { get; set; } = ThemeMaterial.Acrylic;
+    public double SettingsThemeTransparency { get; set; } = DefaultThemeTransparency;
+    public NoteTheme NoteTheme { get; set; } = NoteTheme.RainBlue;
     public bool StartWithWindows { get; set; }
     public AppLanguage Language { get; set; } = AppLanguage.ChineseSimplified;
+    public string? DefaultStorageDirectory { get; set; }
+    public PerformanceProfile PerformanceProfile { get; set; } = global::TuckPane.Models.PerformanceProfile.Balanced;
     public bool ExclusiveExpansion { get; set; } = true;
     public bool CollapseOnOutsideClick { get; set; }
+    public bool NoteAlwaysOnTop { get; set; }
     public bool ExpandOnHover { get; set; }
     public bool CollapseOnPointerLeave { get; set; }
+    public bool WindowAlignmentEnabled { get; set; }
+    public bool RememberExpandedOrganizerPosition { get; set; }
+    public bool MoveOrganizerFilesToDesktopOnDelete { get; set; } = true;
+    public bool UseUniformFloatingCompactScale { get; set; }
+    public double UniformFloatingCompactScale { get; set; } = OrganizerLimits.DefaultCompactScale;
+    public bool UseUniformPositionedCompactScale { get; set; }
+    public double UniformPositionedCompactScale { get; set; } = OrganizerLimits.DefaultCompactScale;
+    public bool UseUniformFloatingCompactNameScale { get; set; }
+    public double UniformFloatingCompactNameScale { get; set; } = MaximumCompactNameScale;
+    public bool UseUniformPositionedCompactNameScale { get; set; }
+    public double UniformPositionedCompactNameScale { get; set; } = MaximumCompactNameScale;
+    public double ExpandedNameScale { get; set; } = MaximumCompactNameScale;
+    public int HoverExpandDelayMs { get; set; } = 350;
+    public int PointerLeaveCollapseDelayMs { get; set; } = 400;
+    public int StationPointerLeaveCollapseDelayMs { get; set; } = 400;
+    public int StationActivationDistanceDip { get; set; } = DefaultStationActivationDistanceDip;
+    public int StationHoverExpandDelayMs { get; set; } = DefaultStationHoverExpandDelayMs;
+
+    internal PerformanceTuning PerformanceTuning => PerformanceProfile switch
+    {
+        global::TuckPane.Models.PerformanceProfile.PowerSaver => new(100, 8000, false),
+        global::TuckPane.Models.PerformanceProfile.HighPerformance => new(25, 2000, true),
+        _ => new(50, 4000, true)
+    };
+
+    internal bool ShouldUseCustomAnimations(bool systemAnimationsEnabled) =>
+        systemAnimationsEnabled && PerformanceTuning.CustomAnimationsEnabled;
+
+    internal bool UsesUniformCompactScale(OrganizerPlacementMode mode) => mode switch
+    {
+        OrganizerPlacementMode.Floating => UseUniformFloatingCompactScale,
+        OrganizerPlacementMode.Positioned => UseUniformPositionedCompactScale,
+        _ => false
+    };
+
+    internal double ResolveCompactScale(OrganizerPlacementMode mode, double requestedScale)
+    {
+        double scale = mode switch
+        {
+            OrganizerPlacementMode.Floating when UseUniformFloatingCompactScale => UniformFloatingCompactScale,
+            OrganizerPlacementMode.Positioned when UseUniformPositionedCompactScale => UniformPositionedCompactScale,
+            _ => requestedScale
+        };
+        return NormalizeCompactScale(mode, scale);
+    }
+
+    internal static double NormalizeCompactScale(OrganizerPlacementMode mode, double scale) => Math.Clamp(
+        scale,
+        OrganizerLimits.MinimumCompactScale,
+        mode == OrganizerPlacementMode.Positioned
+            ? OrganizerLimits.MaximumPositionedCompactScale
+            : OrganizerLimits.MaximumCompactScale);
+
+    internal double ResolveCompactNameScale(OrganizerPlacementMode mode) =>
+        mode is OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned
+            ? NormalizeCompactNameScale(UniformFloatingCompactNameScale)
+            : MaximumCompactNameScale;
+
+    internal double ResolveExpandedNameScale(OrganizerPlacementMode mode) =>
+        mode is OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned
+            ? NormalizeCompactNameScale(ExpandedNameScale)
+            : MaximumCompactNameScale;
+
+    internal static double NormalizeCompactNameScale(double scale) =>
+        double.IsFinite(scale) ? Math.Clamp(scale, MinimumCompactNameScale, MaximumCompactNameScale) : MaximumCompactNameScale;
+
+    public static int NormalizeHoverDelayMs(int value)
+    {
+        int clamped = Math.Clamp(value, MinimumHoverDelayMs, MaximumHoverDelayMs);
+        return (int)Math.Round(clamped / (double)HoverDelayStepMs, MidpointRounding.AwayFromZero) * HoverDelayStepMs;
+    }
+
+    public static int NormalizeStationActivationDistanceDip(int value)
+    {
+        int clamped = Math.Clamp(value, MinimumStationActivationDistanceDip, MaximumStationActivationDistanceDip);
+        return (int)Math.Round(clamped / (double)StationActivationDistanceStepDip, MidpointRounding.AwayFromZero) *
+            StationActivationDistanceStepDip;
+    }
+
+    public static int NormalizeStationHoverExpandDelayMs(int value)
+    {
+        int clamped = Math.Clamp(value, MinimumStationHoverExpandDelayMs, MaximumStationHoverExpandDelayMs);
+        return (int)Math.Round(clamped / (double)StationHoverExpandDelayStepMs, MidpointRounding.AwayFromZero) *
+            StationHoverExpandDelayStepMs;
+    }
+
+    public static double NormalizeThemeTransparency(double value) =>
+        double.IsFinite(value) ? Math.Clamp(value, 0, MaximumThemeTransparency) : DefaultThemeTransparency;
+
+    internal ThemeValues GetTheme(ThemeTarget target) => target == ThemeTarget.Settings
+        ? new(SettingsThemeColorArgb, SettingsThemeMaterial, SettingsThemeTransparency)
+        : new(ThemeColorArgb, Material, ThemeTransparency);
+
+    internal void SetTheme(ThemeTarget target, ThemeValues theme)
+    {
+        if (target == ThemeTarget.Settings)
+        {
+            SettingsThemeColorArgb = theme.ColorArgb;
+            SettingsThemeMaterial = theme.Material;
+            SettingsThemeTransparency = theme.Transparency;
+            return;
+        }
+
+        ThemeColorArgb = theme.ColorArgb;
+        Material = theme.Material;
+        ThemeTransparency = theme.Transparency;
+    }
+
+    internal static ThemeValues NormalizeTheme(ThemeValues theme) => new(
+        theme.ColorArgb | 0xFF000000,
+        NormalizeThemeMaterial(theme.Material),
+        NormalizeThemeTransparency(theme.Transparency));
+
+    internal static ThemeMaterial NormalizeThemeMaterial(ThemeMaterial material) =>
+        (int)material == LegacyFrostedGlassMaterialValue
+            ? ThemeMaterial.Matte
+            : Enum.IsDefined(material) ? material : ThemeMaterial.Acrylic;
 }
 
 public sealed class ConsolePlacement
@@ -103,7 +271,6 @@ public sealed class OrganizerDefinition
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "收纳窗";
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
-    public GlassTheme? ThemeOverride { get; set; }
     public OrganizerPlacementMode PlacementMode { get; set; } = OrganizerPlacementMode.Floating;
     public OrganizerDockEdge DockEdge { get; set; } = OrganizerDockEdge.Right;
     public OrganizerLayout Layout { get; set; } = new();
@@ -111,11 +278,18 @@ public sealed class OrganizerDefinition
     public double CanvasScale { get; set; } = 1;
     public double ItemScale { get; set; } = 1;
     public double NameScale { get; set; } = 1;
+    public double CompactListItemScale { get; set; } = 1;
+    public OrganizerExpandedContentMode ExpandedContentMode { get; set; } = OrganizerExpandedContentMode.Icon;
+    public double CompactListCanvasWidthDip { get; set; } = OrganizerLimits.DefaultCompactListCanvasWidthDip;
+    public double CompactListCanvasHeightDip { get; set; } = OrganizerLimits.DefaultCompactListCanvasHeightDip;
     public double? ManualCanvasBaseWidthDip { get; set; }
     public double? ManualCanvasBaseHeightDip { get; set; }
     public WidgetPosition? Position { get; set; }
+    public WidgetPosition? ExpandedPosition { get; set; }
+    public Guid? ContainerStationId { get; set; }
     public string StorageRelativePath { get; set; } = string.Empty;
     public string? StorageAbsolutePath { get; set; }
+    public bool StorageOwnedByApp { get; set; }
     public List<string> ItemOrder { get; set; } = [];
     public List<NoteDefinition> Notes { get; set; } = [];
 }
@@ -181,7 +355,9 @@ public enum WidgetItemKind
     InternetShortcut,
     File,
     PortableNote,
-    Note
+    PortableTodo,
+    Note,
+    Organizer
 }
 
 public sealed record WidgetItem : INotifyPropertyChanged
@@ -191,14 +367,22 @@ public sealed record WidgetItem : INotifyPropertyChanged
     private string _relativeName;
     private WidgetItemKind _kind;
     private Guid? _noteId;
+    private Guid? _organizerId;
 
-    public WidgetItem(string name, string fullPath, string relativeName, WidgetItemKind kind, Guid? noteId = null)
+    public WidgetItem(
+        string name,
+        string fullPath,
+        string relativeName,
+        WidgetItemKind kind,
+        Guid? noteId = null,
+        Guid? organizerId = null)
     {
         _name = name;
         _fullPath = fullPath;
         _relativeName = relativeName;
         _kind = kind;
         _noteId = noteId;
+        _organizerId = organizerId;
     }
 
     public string Name
@@ -231,6 +415,12 @@ public sealed record WidgetItem : INotifyPropertyChanged
         private set => SetField(ref _noteId, value);
     }
 
+    public Guid? OrganizerId
+    {
+        get => _organizerId;
+        private set => SetField(ref _organizerId, value);
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     internal bool HasSameValue(WidgetItem other) =>
@@ -238,7 +428,8 @@ public sealed record WidgetItem : INotifyPropertyChanged
         FullPath.Equals(other.FullPath, StringComparison.Ordinal) &&
         RelativeName.Equals(other.RelativeName, StringComparison.Ordinal) &&
         Kind == other.Kind &&
-        NoteId == other.NoteId;
+        NoteId == other.NoteId &&
+        OrganizerId == other.OrganizerId;
 
     internal void ApplyValue(WidgetItem other)
     {
@@ -247,9 +438,10 @@ public sealed record WidgetItem : INotifyPropertyChanged
         RelativeName = other.RelativeName;
         Kind = other.Kind;
         NoteId = other.NoteId;
+        OrganizerId = other.OrganizerId;
     }
 
-    internal WidgetItem CopyValue() => new(Name, FullPath, RelativeName, Kind, NoteId);
+    internal WidgetItem CopyValue() => new(Name, FullPath, RelativeName, Kind, NoteId, OrganizerId);
 
     private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
@@ -262,6 +454,7 @@ public sealed record WidgetItem : INotifyPropertyChanged
 public enum TransferStatus
 {
     Moved,
+    Retained,
     Copied,
     ShortcutCreated,
     CopiedSourceRetained,

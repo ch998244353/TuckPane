@@ -5,39 +5,62 @@
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
   <data name="AppTitle" xml:space="preserve"><value>TuckPane</value></data>
+  <data name="NavSystem" xml:space="preserve"><value>系统</value></data>
+  <data name="NavDisplay" xml:space="preserve"><value>显示</value></data>
+  <data name="NavInteraction" xml:space="preserve"><value>交互</value></data>
   <data name="NavGeneral" xml:space="preserve"><value>通用</value></data>
   <data name="NavTheme" xml:space="preserve"><value>主题</value></data>
   <data name="NavAdd" xml:space="preserve"><value>添加</value></data>
   <data name="NavManage" xml:space="preserve"><value>管理</value></data>
   <data name="GeneralTitle" xml:space="preserve"><value>通用</value></data>
+  <data name="SystemTitle" xml:space="preserve"><value>系统</value></data>
+  <data name="DisplaySettingsTitle" xml:space="preserve"><value>显示</value></data>
+  <data name="InteractionTitle" xml:space="preserve"><value>交互</value></data>
   <data name="StartupTitle" xml:space="preserve"><value>开机时启动 TuckPane</value></data>
-  <data name="StartupDescription" xml:space="preserve"><value>静默恢复收纳窗，不显示总控台。</value></data>
   <data name="CollapseOutsideTitle" xml:space="preserve"><value>点击窗口外自动收缩</value></data>
-  <data name="CollapseOutsideDescription" xml:space="preserve"><value>展开后点击其他位置时自动收起。</value></data>
+  <data name="NoteAlwaysOnTopTitle" xml:space="preserve"><value>便签与待办永远处于最高层</value></data>
+  <data name="WindowAlignmentTitle" xml:space="preserve"><value>拖动窗口时自动对齐</value></data>
+  <data name="RememberExpandedOrganizerPositionTitle" xml:space="preserve"><value>记住收纳窗展开位置</value></data>
+  <data name="UniformFloatingCompactScaleTitle" xml:space="preserve"><value>统一悬浮模式入口大小</value></data>
+  <data name="UniformPositionedCompactScaleTitle" xml:space="preserve"><value>统一定位模式入口大小</value></data>
+  <data name="UniformCompactScaleErrorTitle" xml:space="preserve"><value>无法更新统一入口大小</value></data>
   <data name="ExpandOnHoverTitle" xml:space="preserve"><value>鼠标悬浮时自动展开</value></data>
-  <data name="ExpandOnHoverDescription" xml:space="preserve"><value>鼠标在普通收纳窗上停留 350 毫秒后自动展开。</value></data>
   <data name="CollapseOnPointerLeaveTitle" xml:space="preserve"><value>鼠标离开后自动收缩</value></data>
-  <data name="CollapseOnPointerLeaveDescription" xml:space="preserve"><value>普通收纳窗展开后，鼠标离开窗口 400 毫秒后自动收起。</value></data>
+  <data name="HoverExpandDelayLabel" xml:space="preserve"><value>展开判定时间</value></data>
+  <data name="PointerLeaveCollapseDelayLabel" xml:space="preserve"><value>收缩判定时间</value></data>
+  <data name="StationPointerLeaveCollapseDelayTitle" xml:space="preserve"><value>中转站收缩时间</value></data>
+  <data name="StationActivationDistanceTitle" xml:space="preserve"><value>中转站触发距离</value></data>
+  <data name="StationHoverExpandDelayTitle" xml:space="preserve"><value>中转站展开等待时间</value></data>
+  <data name="DipFormat" xml:space="preserve"><value>{0} DIP</value></data>
+  <data name="MillisecondsFormat" xml:space="preserve"><value>{0} ms</value></data>
+  <data name="HoverDelayErrorTitle" xml:space="preserve"><value>无法保存悬浮判定设置</value></data>
   <data name="ExclusiveExpansionTitle" xml:space="preserve"><value>只允许展开一个收纳窗</value></data>
-  <data name="ExclusiveExpansionDescription" xml:space="preserve"><value>关闭后可同时展开浮动、定位和中转站窗口。</value></data>
   <data name="LanguageLabel" xml:space="preserve"><value>语言</value></data>
-  <data name="LanguageDescription" xml:space="preserve"><value>切换后立即应用，无需重启。</value></data>
   <data name="LanguageChinese" xml:space="preserve"><value>简体中文</value></data>
   <data name="LanguageEnglish" xml:space="preserve"><value>English</value></data>
   <data name="LanguageJapanese" xml:space="preserve"><value>日本語</value></data>
   <data name="ThemeTitle" xml:space="preserve"><value>主题</value></data>
-  <data name="ThemeLightAcrylic" xml:space="preserve"><value>浅色毛玻璃</value></data>
-  <data name="ThemeDarkAcrylic" xml:space="preserve"><value>深色毛玻璃</value></data>
-  <data name="ThemeSolidLight" xml:space="preserve"><value>实体白色</value></data>
-  <data name="ThemeSolidDark" xml:space="preserve"><value>实体黑色</value></data>
-  <data name="ThemeFrostedLight" xml:space="preserve"><value>白色磨砂（高不透明）</value></data>
-  <data name="ThemeFrostedDark" xml:space="preserve"><value>深色磨砂（高不透明）</value></data>
+  <data name="ThemeTargetLabel" xml:space="preserve"><value>修改目标</value></data>
+  <data name="ThemeTargetSettings" xml:space="preserve"><value>设置界面</value></data>
+  <data name="ThemeTargetOrganizer" xml:space="preserve"><value>收纳窗</value></data>
+  <data name="ThemeColorLabel" xml:space="preserve"><value>颜色</value></data>
+  <data name="ThemeColorPresetFormat" xml:space="preserve"><value>主题颜色 {0}</value></data>
+  <data name="ThemeCustomColor" xml:space="preserve"><value>自定义</value></data>
+  <data name="ThemeMaterialLabel" xml:space="preserve"><value>材质</value></data>
+  <data name="ThemeMaterialAcrylic" xml:space="preserve"><value>亚克力</value></data>
+  <data name="ThemeMaterialGlass" xml:space="preserve"><value>玻璃</value></data>
+  <data name="ThemeMaterialMatte" xml:space="preserve"><value>磨砂</value></data>
+  <data name="ThemeTransparencyLabel" xml:space="preserve"><value>背景透明度</value></data>
+  <data name="ThemeSaveErrorTitle" xml:space="preserve"><value>无法保存主题</value></data>
   <data name="AddTitle" xml:space="preserve"><value>添加收纳窗</value></data>
   <data name="NameLabel" xml:space="preserve"><value>名称</value></data>
   <data name="ModeLabel" xml:space="preserve"><value>模式</value></data>
   <data name="ModeFloating" xml:space="preserve"><value>悬浮窗模式</value></data>
   <data name="ModePositioned" xml:space="preserve"><value>定位模式</value></data>
   <data name="ModeStation" xml:space="preserve"><value>中转站模式</value></data>
+  <data name="ExpandedContentModeLabel" xml:space="preserve"><value>内容展开方式</value></data>
+  <data name="ExpandedContentModeIcon" xml:space="preserve"><value>图标模式</value></data>
+  <data name="ExpandedContentModeCompactList" xml:space="preserve"><value>精简模式</value></data>
   <data name="DisplayLabel" xml:space="preserve"><value>显示器</value></data>
   <data name="DockEdgeLabel" xml:space="preserve"><value>贴靠边</value></data>
   <data name="DockLeft" xml:space="preserve"><value>左侧</value></data>
@@ -47,12 +70,9 @@
   <data name="DisplayItemFormat" xml:space="preserve"><value>显示器 {0}（{1}×{2}）</value></data>
   <data name="RowsLabel" xml:space="preserve"><value>行数</value></data>
   <data name="ColumnsLabel" xml:space="preserve"><value>列数</value></data>
-  <data name="ThemeLabel" xml:space="preserve"><value>主题</value></data>
-  <data name="ThemeFollowGlobal" xml:space="preserve"><value>跟随全局</value></data>
   <data name="CompactScaleLabel" xml:space="preserve"><value>入口整体</value></data>
   <data name="CanvasScaleLabel" xml:space="preserve"><value>画布大小</value></data>
   <data name="ItemScaleLabel" xml:space="preserve"><value>内容比例</value></data>
-  <data name="NameScaleLabel" xml:space="preserve"><value>昵称大小</value></data>
   <data name="CreateOrganizer" xml:space="preserve"><value>创建收纳窗</value></data>
   <data name="OrganizerLimit" xml:space="preserve"><value>已达到 12 个收纳窗上限。</value></data>
   <data name="ManageTitle" xml:space="preserve"><value>管理</value></data>
@@ -74,13 +94,14 @@
   <data name="ContextManage" xml:space="preserve"><value>设置</value></data>
   <data name="ContextDuplicate" xml:space="preserve"><value>窗口复制</value></data>
   <data name="ContextSwitchMode" xml:space="preserve"><value>模式切换</value></data>
+  <data name="ContextSwitchContentFormat" xml:space="preserve"><value>切换为{0}</value></data>
   <data name="ContextRename" xml:space="preserve"><value>重命名</value></data>
   <data name="ContextOpenStorage" xml:space="preserve"><value>打开收纳目录</value></data>
   <data name="ContextDeleteWindow" xml:space="preserve"><value>删除窗口</value></data>
   <data name="CopyNameSuffix" xml:space="preserve"><value> - 副本</value></data>
   <data name="Collapse" xml:space="preserve"><value>收缩</value></data>
   <data name="TransparencyTitle" xml:space="preserve"><value>透明效果已降级</value></data>
-  <data name="TransparencyMessage" xml:space="preserve"><value>Windows 当前不提供实时毛玻璃，TuckPane 已使用匹配主题的纯色背景。</value></data>
+  <data name="TransparencyMessage" xml:space="preserve"><value>Windows 当前无法提供实时主题材质，TuckPane 已使用匹配颜色的纯色背景。</value></data>
   <data name="FilesMovingTitle" xml:space="preserve"><value>文件仍在移动</value></data>
   <data name="FilesMovingMessage" xml:space="preserve"><value>继续等待可以确保当前文件完整移动。确认退出将取消当前传输并清理临时副本。</value></data>
   <data name="CancelTransferAndExit" xml:space="preserve"><value>取消传输并退出</value></data>
@@ -101,7 +122,19 @@
   <data name="MaximumOrganizersError" xml:space="preserve"><value>最多只能创建 12 个收纳窗。</value></data>
   <data name="StationEdgeOccupiedError" xml:space="preserve"><value>这条屏幕边缘已经有一个中转站，请选择其他边。</value></data>
   <data name="StationDuplicateError" xml:space="preserve"><value>中转站不能复制。</value></data>
-  <data name="StationManageModeError" xml:space="preserve"><value>请在设置中更改中转站模式。</value></data>
+  <data name="StationManageModeError" xml:space="preserve"><value>中转站模式不能与悬浮窗或定位模式互相切换。</value></data>
+  <data name="StationContainsOrganizersError" xml:space="preserve"><value>中转站内仍有收纳窗，请先将它们拖出后再删除。</value></data>
+  <data name="ContainedOrganizerNoGridError" xml:space="preserve"><value>目标显示器没有可用网格，收纳窗已返回原中转站。</value></data>
+  <data name="OrganizerStationDropError" xml:space="preserve"><value>无法将收纳窗放入中转站：{0}</value></data>
+  <data name="MoveOrganizerFilesOnDeleteTitle" xml:space="preserve"><value>删除收纳窗时将文件移到桌面</value></data>
+  <data name="DeleteBehaviorErrorTitle" xml:space="preserve"><value>无法保存删除设置</value></data>
+  <data name="CompactNameScaleTitle" xml:space="preserve"><value>收起名称大小</value></data>
+  <data name="ExpandedNameScaleTitle" xml:space="preserve"><value>展开后名称大小</value></data>
+  <data name="UniformCompactNameScaleErrorTitle" xml:space="preserve"><value>无法保存名称大小</value></data>
+  <data name="DeleteOrganizerOnly" xml:space="preserve"><value>仅删除收纳窗</value></data>
+  <data name="DeleteKeepFilesFormat" xml:space="preserve"><value>只删除收纳窗；目录“{0}”及其中全部文件会保留在原位置。</value></data>
+  <data name="OrganizerDeletedFilesRetainedFormat" xml:space="preserve"><value>收纳窗已删除，文件保留在“{0}”。</value></data>
+  <data name="DeleteLegacyNoteMigrationFailed" xml:space="preserve"><value>仍有旧便签未能安全迁移；收纳窗和全部文件均已保留，请稍后重试。</value></data>
   <data name="NoPrimaryGridError" xml:space="preserve"><value>主显示器没有可用的桌面网格位置，未创建收纳窗。</value></data>
   <data name="PositionedRollbackError" xml:space="preserve"><value>当前显示器没有可用的桌面网格位置，已恢复悬浮窗模式。</value></data>
   <data name="TransferBeforeDelete" xml:space="preserve"><value>文件传输完成后才能删除窗口。</value></data>
@@ -163,22 +196,34 @@
   <data name="StorageProtectedPath" xml:space="preserve"><value>请选择专用子目录，不要选择磁盘、用户主目录、桌面、文档、下载或 TuckPane 数据根目录。</value></data>
   <data name="StorageFolderMissing" xml:space="preserve"><value>所选保存目录不存在。</value></data>
   <data name="StoragePathOverlap" xml:space="preserve"><value>所选目录与另一个收纳窗的保存目录重叠。</value></data>
-  <data name="AutomaticStoragePathFormat" xml:space="preserve"><value>自动：{0}\名称-ID</value></data>
+  <data name="DefaultStorageDirectoryMissing" xml:space="preserve"><value>默认存储目录不存在，请在“系统”设置中重新选择。</value></data>
+  <data name="DefaultStoragePathOccupied" xml:space="preserve"><value>默认收纳目录已存在或与另一个收纳窗的目录重叠。</value></data>
+  <data name="OrganizerIdOccupied" xml:space="preserve"><value>收纳窗 ID 已被占用，请恢复默认路径后重试。</value></data>
+  <data name="AutomaticStoragePathFormat" xml:space="preserve"><value>自动：{0}</value></data>
   <data name="StorageLocationLabel" xml:space="preserve"><value>保存位置</value></data>
+  <data name="DefaultStorageDirectoryTitle" xml:space="preserve"><value>默认存储与目录</value></data>
+  <data name="DefaultStorageDirectoryDescription" xml:space="preserve"><value>仅影响之后新建的收纳窗。</value></data>
   <data name="ChooseFolder" xml:space="preserve"><value>选择目录</value></data>
   <data name="UseDefaultLocation" xml:space="preserve"><value>恢复默认</value></data>
   <data name="SelectStorageFolderTitle" xml:space="preserve"><value>选择收纳窗的最终保存目录</value></data>
+  <data name="SelectDefaultStorageDirectoryTitle" xml:space="preserve"><value>选择默认存储目录</value></data>
+  <data name="DefaultStorageDirectoryErrorTitle" xml:space="preserve"><value>无法更新默认存储目录</value></data>
   <data name="SelectStorageFolderCommit" xml:space="preserve"><value>选择此文件夹</value></data>
   <data name="StorageFolderPickerError" xml:space="preserve"><value>无法选择保存位置</value></data>
   <data name="RecreateStorageErrorTitle" xml:space="preserve"><value>无法重建收纳目录</value></data>
   <data name="MoveToDesktopFailed" xml:space="preserve"><value>无法将项目移动到桌面。</value></data>
   <data name="LanguageErrorTitle" xml:space="preserve"><value>无法切换语言</value></data>
   <data name="CollapseOutsideErrorTitle" xml:space="preserve"><value>无法更新自动收缩设置</value></data>
+  <data name="NoteAlwaysOnTopErrorTitle" xml:space="preserve"><value>无法更新便签与待办置顶设置</value></data>
+  <data name="WindowAlignmentErrorTitle" xml:space="preserve"><value>无法更新窗口拖动对齐设置</value></data>
+  <data name="RememberExpandedOrganizerPositionErrorTitle" xml:space="preserve"><value>无法保存收纳窗展开位置设置</value></data>
   <data name="ExpandOnHoverErrorTitle" xml:space="preserve"><value>无法更新悬浮展开设置</value></data>
   <data name="CollapseOnPointerLeaveErrorTitle" xml:space="preserve"><value>无法更新鼠标离开收缩设置</value></data>
   <data name="ExclusiveExpansionErrorTitle" xml:space="preserve"><value>无法更新单窗展开设置</value></data>
   <data name="FileMenuErrorFormat" xml:space="preserve"><value>无法打开“{0}”的菜单：{1}</value></data>
   <data name="CutItemErrorFormat" xml:space="preserve"><value>无法剪切“{0}”：{1}</value></data>
+  <data name="CopyItemErrorFormat" xml:space="preserve"><value>无法复制“{0}”：{1}</value></data>
+  <data name="RenameItemErrorFormat" xml:space="preserve"><value>无法重命名“{0}”：{1}</value></data>
   <data name="DeleteItemErrorFormat" xml:space="preserve"><value>无法将“{0}”移入回收站：{1}</value></data>
   <data name="UnsupportedReparsePathFormat" xml:space="preserve"><value>目录中包含不支持的重解析点：{0}</value></data>
   <data name="CopyVerificationFailed" xml:space="preserve"><value>复制校验失败，源目录与目标临时目录不一致。</value></data>
@@ -203,6 +248,12 @@
   <data name="ContextNewNote" xml:space="preserve"><value>新建便签</value></data>
   <data name="ContextRenameNote" xml:space="preserve"><value>重命名便签</value></data>
   <data name="ContextDeleteNote" xml:space="preserve"><value>删除便签</value></data>
+  <data name="ContextRenameFile" xml:space="preserve"><value>重命名</value></data>
+  <data name="ContextCopyFile" xml:space="preserve"><value>复制</value></data>
+  <data name="RenameItemTitle" xml:space="preserve"><value>重命名项目</value></data>
+  <data name="RenameItemPlaceholder" xml:space="preserve"><value>输入新名称</value></data>
+  <data name="ItemNameRequired" xml:space="preserve"><value>名称不能为空。</value></data>
+  <data name="ItemNameDuplicate" xml:space="preserve"><value>当前收纳窗中已存在同名项目。</value></data>
   <data name="Rename" xml:space="preserve"><value>重命名</value></data>
   <data name="Delete" xml:space="preserve"><value>删除</value></data>
   <data name="Cut" xml:space="preserve"><value>剪切</value></data>
@@ -213,17 +264,20 @@
   <data name="NoteRuledLines" xml:space="preserve"><value>正文横线</value></data>
   <data name="CloseNote" xml:space="preserve"><value>关闭便签</value></data>
   <data name="NoteEditorErrorFormat" xml:space="preserve"><value>无法启动便签编辑器：{0}</value></data>
+  <data name="NoteClipboardWriteError" xml:space="preserve"><value>无法把文字写入剪贴板。</value></data>
   <data name="NoteSaveErrorFormat" xml:space="preserve"><value>无法保存便签：{0}</value></data>
   <data name="NoteDragSaveFailed" xml:space="preserve"><value>拖出前无法保存便签。</value></data>
   <data name="PortableNoteOpenErrorFormat" xml:space="preserve"><value>无法打开“{0}”：{1}</value></data>
   <data name="PortableNoteExtensionError" xml:space="preserve"><value>只有 .tucknote 文件能作为便签打开。</value></data>
+  <data name="PortableNoteCreateErrorTitle" xml:space="preserve"><value>无法创建便签</value></data>
+  <data name="PortableNoteLocalFolderRequired" xml:space="preserve"><value>便签只能创建在本机固定磁盘或移动磁盘的真实文件夹中。</value></data>
   <data name="NoteTooLarge" xml:space="preserve"><value>便签内容过大，无法保存。</value></data>
   <data name="NotePlaceholder" xml:space="preserve"><value>输入便签内容，或粘贴图片…</value></data>
   <data name="NotePastedImage" xml:space="preserve"><value>粘贴的图片</value></data>
   <data name="NoteResizeImage" xml:space="preserve"><value>调整图片大小</value></data>
   <data name="NoteNameRequired" xml:space="preserve"><value>便签名称不能为空。</value></data>
   <data name="NoteNameDuplicate" xml:space="preserve"><value>这个收纳窗中已存在同名便签。</value></data>
-  <data name="NoteRenameHint" xml:space="preserve"><value>双击标题或按 F2 重命名便签。</value></data>
+  <data name="NoteRenameHint" xml:space="preserve"><value>单击标题可重命名便签。</value></data>
   <data name="NoteThemeRainBlue" xml:space="preserve"><value>雨蓝</value></data>
   <data name="NoteThemeGraphite" xml:space="preserve"><value>石墨</value></data>
   <data name="NoteThemeSunYellow" xml:space="preserve"><value>暖黄</value></data>
@@ -231,4 +285,28 @@
   <data name="NoteThemeTransparentGlass" xml:space="preserve"><value>彩色玻璃</value></data>
   <data name="NoteThemeCloudPaper" xml:space="preserve"><value>云纸</value></data>
   <data name="NoteThemeWheatPaper" xml:space="preserve"><value>麦纸</value></data>
+  <data name="PerformanceProfileTitle" xml:space="preserve"><value>性能档位</value></data>
+  <data name="PerformanceProfilePowerSaver" xml:space="preserve"><value>节能</value></data>
+  <data name="PerformanceProfileBalanced" xml:space="preserve"><value>平衡</value></data>
+  <data name="PerformanceProfileHighPerformance" xml:space="preserve"><value>高性能</value></data>
+  <data name="PerformanceProfilePowerSaverDescription" xml:space="preserve"><value>减少后台检查并关闭自定义动画，适合长期后台运行。</value></data>
+  <data name="PerformanceProfileBalancedDescription" xml:space="preserve"><value>保持当前响应和完整动画，适合作为日常默认档位。</value></data>
+  <data name="PerformanceProfileHighPerformanceDescription" xml:space="preserve"><value>提高指针和桌面状态检查频率，获得更快响应。</value></data>
+  <data name="PerformanceProfileErrorTitle" xml:space="preserve"><value>无法更新性能档位</value></data>
+  <data name="ContextNewTodo" xml:space="preserve"><value>新建待办</value></data>
+  <data name="TodoRemainingFormat" xml:space="preserve"><value>还有 {0} 项待完成</value></data>
+  <data name="TodoFontSizeFormat" xml:space="preserve"><value>{0:0} DIP</value></data>
+  <data name="TodoAddPlaceholder" xml:space="preserve"><value>输入待办并按 Enter</value></data>
+  <data name="TodoColor" xml:space="preserve"><value>待办颜色</value></data>
+  <data name="CloseTodo" xml:space="preserve"><value>关闭待办</value></data>
+  <data name="TodoRenameHint" xml:space="preserve"><value>单击标题可重命名待办。</value></data>
+  <data name="TodoDragSaveFailed" xml:space="preserve"><value>移动前无法保存待办。</value></data>
+  <data name="TodoSaveErrorFormat" xml:space="preserve"><value>无法保存待办：{0}</value></data>
+  <data name="TodoUndo" xml:space="preserve"><value>撤销</value></data>
+  <data name="TodoEdit" xml:space="preserve"><value>修改</value></data>
+  <data name="TodoDelete" xml:space="preserve"><value>删除</value></data>
+  <data name="TodoNameRequired" xml:space="preserve"><value>待办名称不能为空。</value></data>
+  <data name="TodoNameDuplicate" xml:space="preserve"><value>这个收纳窗中已存在同名待办。</value></data>
+  <data name="PortableTodoOpenErrorFormat" xml:space="preserve"><value>无法打开“{0}”：{1}</value></data>
+  <data name="PortableTodoExtensionError" xml:space="preserve"><value>只有 .tucktodo 文件能作为待办打开。</value></data>
 </root>

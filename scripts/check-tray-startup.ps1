@@ -6,11 +6,16 @@ param(
     [switch]$CheckExpandedOrganizer,
 
     [ValidateSet('None', 'Disabled', 'Enabled')]
-    [string]$OutsideClickMode = 'None'
+    [string]$OutsideClickMode = 'None',
+
+    [switch]$CreateWindowOnly
 )
 
 $ErrorActionPreference = 'Stop'
 $expandOrganizer = $CheckExpandedOrganizer.IsPresent -or $OutsideClickMode -ne 'None'
+if ($CreateWindowOnly -and $expandOrganizer) {
+    throw 'CreateWindowOnly cannot be combined with organizer expansion or outside-click checks.'
+}
 $resolvedExecutable = [IO.Path]::GetFullPath($ExecutablePath)
 if (-not (Test-Path -LiteralPath $resolvedExecutable -PathType Leaf)) {
     throw "TuckPane executable was not found: $resolvedExecutable"
@@ -180,10 +185,13 @@ public static class TuckPaneTaskbarProbe
 '@
 }
 
-function Start-TuckPane([string]$Path, [string]$TestRoot, [bool]$ExpandOrganizer) {
+function Start-TuckPane([string]$Path, [string]$TestRoot, [bool]$ExpandOrganizer, [string[]]$Arguments = @()) {
     $startInfo = [Diagnostics.ProcessStartInfo]::new($Path)
     $startInfo.UseShellExecute = $false
     $startInfo.Environment['TUCKPANE_TEST_ROOT'] = $TestRoot
+    foreach ($argument in $Arguments) {
+        $startInfo.ArgumentList.Add($argument)
+    }
     if ($ExpandOrganizer) {
         $startInfo.Environment['GLASSFOLDER_TEST_EXPANDED'] = '1'
     }
@@ -200,6 +208,12 @@ function Get-TaskbarCandidates([Diagnostics.Process]$Process) {
 
 function Format-Window([TuckPaneWindowRecord]$Window) {
     return "HWND=0x$('{0:X}' -f $Window.Handle) Visible=$($Window.Visible) Owner=0x$('{0:X}' -f $Window.Owner) ExStyle=0x$('{0:X}' -f $Window.ExtendedStyle) Size=$([Math]::Round($Window.WidthDip, 1))x$([Math]::Round($Window.HeightDip, 1))dip Title=$($Window.Title)"
+}
+
+function Read-TuckPaneState([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    try { return ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($Path)) }
+    catch { return $null }
 }
 
 function Get-TuckPaneTaskbarButtons {
@@ -285,6 +299,70 @@ $secondary = $null
 $clickTargetForm = $null
 
 try {
+    if ($CreateWindowOnly) {
+        $folderPath = [IO.Path]::GetFullPath((Join-Path $testRoot '中文 空格目录'))
+        [IO.Directory]::CreateDirectory($folderPath) | Out-Null
+        $statePath = Join-Path $testRoot 'LocalAppData\TuckPane\state.json'
+        $consoleShown = $false
+
+        $primary = Start-TuckPane $resolvedExecutable $testRoot $false @('--create-organizer')
+        $createClock = [Diagnostics.Stopwatch]::StartNew()
+        $state = $null
+        $visibleWindows = @()
+        while ($createClock.Elapsed -lt [TimeSpan]::FromSeconds(15)) {
+            if ($primary.HasExited) {
+                throw "TuckPane exited during desktop organizer creation with code $($primary.ExitCode)."
+            }
+            $state = Read-TuckPaneState $statePath
+            $visibleWindows = @(Get-TuckPaneWindows $primary | Where-Object Visible)
+            if ((Get-TaskbarCandidates $primary).Count -gt 0) { $consoleShown = $true }
+            if ($null -ne $state -and @($state.Organizers).Count -eq 1 -and $visibleWindows.Count -eq 1) { break }
+            Start-Sleep -Milliseconds 25
+        }
+        if ($null -eq $state -or @($state.Organizers).Count -ne 1 -or $visibleWindows.Count -ne 1) {
+            throw "Cold --create-organizer did not create exactly one organizer. State=$(@($state.Organizers).Count), visible=$($visibleWindows.Count)."
+        }
+
+        $secondary = Start-TuckPane $resolvedExecutable $testRoot $false @('--create-organizer-in', $folderPath)
+        if (-not $secondary.WaitForExit(5000)) {
+            throw 'The folder organizer secondary launch did not exit after signaling the primary instance.'
+        }
+
+        $createClock.Restart()
+        while ($createClock.Elapsed -lt [TimeSpan]::FromSeconds(10)) {
+            $state = Read-TuckPaneState $statePath
+            $visibleWindows = @(Get-TuckPaneWindows $primary | Where-Object Visible)
+            if ((Get-TaskbarCandidates $primary).Count -gt 0) { $consoleShown = $true }
+            if ($null -ne $state -and @($state.Organizers).Count -eq 2 -and $visibleWindows.Count -eq 2) { break }
+            Start-Sleep -Milliseconds 25
+        }
+
+        $organizers = @($state.Organizers)
+        if ($organizers.Count -ne 2 -or $visibleWindows.Count -ne 2) {
+            throw "The two Shell commands did not leave exactly two organizers. State=$($organizers.Count), visible=$($visibleWindows.Count)."
+        }
+        $folderOrganizers = @($organizers | Where-Object {
+            $_.StorageAbsolutePath -eq $folderPath
+        })
+        if ($folderOrganizers.Count -ne 1) {
+            throw "No unique organizer was bound to '$folderPath'."
+        }
+        $folderOrganizer = $folderOrganizers[0]
+        if ($folderOrganizer.Name -ne [IO.Path]::GetFileName($folderPath) -or
+            -not [string]::IsNullOrEmpty([string]$folderOrganizer.StorageRelativePath)) {
+            throw 'The folder organizer name or storage fields were not persisted exactly.'
+        }
+
+        $taskbarCandidates = @(Get-TaskbarCandidates $primary)
+        $taskbarButtons = @(Get-TuckPaneTaskbarButtons)
+        if ($consoleShown -or $taskbarCandidates.Count -gt 0 -or $taskbarButtons.Count -gt 0) {
+            throw "A console/taskbar window appeared during Shell creation. Windows=$($taskbarCandidates.Count), buttons=$($taskbarButtons.Count)."
+        }
+
+        Write-Output 'TuckPane create-window-only check: PASS'
+        return
+    }
+
     $primary = Start-TuckPane $resolvedExecutable $testRoot $expandOrganizer
     $startupClock = [Diagnostics.Stopwatch]::StartNew()
     $firstWindowSeenAt = $null

@@ -13,20 +13,31 @@
       --text: #F1F4F5;
       --muted: #BAC3C8;
       --rule: #5F707A;
+      --caret: #FFFFFF;
+      --scroll-thumb: #343F47;
+      --scroll-thumb-hover: #2F3940;
       --font-size: 14px;
-      --ruled-line-height: 1.8em;
+      --ruled-line-height: 25.2px;
+      --ruled-background-offset: 11.2px;
     }
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--editor); }
     body { color: var(--text); font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif; }
     #editor {
       width: 100%; height: 100%; padding: 14px 16px 28px; overflow: auto; overflow-x: hidden;
-      outline: none; white-space: pre-wrap; overflow-wrap: anywhere; caret-color: var(--accent);
+      outline: none; white-space: pre-wrap; overflow-wrap: anywhere; caret-color: var(--caret);
       color: var(--text); background: var(--editor); font-size: var(--font-size); line-height: var(--ruled-line-height);
+      letter-spacing: 0.04em;
     }
+    #editor::-webkit-scrollbar { width: 10px; }
+    #editor::-webkit-scrollbar-track, #editor::-webkit-scrollbar-corner { background: var(--editor); }
+    #editor::-webkit-scrollbar-thumb {
+      background: var(--scroll-thumb); border: 2px solid var(--editor); border-radius: 999px;
+    }
+    #editor::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
     #editor[data-ruled-lines] {
       background-image: linear-gradient(to bottom, transparent calc(100% - 1px), var(--rule) 0);
-      background-position: 0 calc(14px - 0.3em);
+      background-position: 0 var(--ruled-background-offset);
       background-size: 100% var(--ruled-line-height);
       background-attachment: local;
     }
@@ -58,6 +69,45 @@
       let resize = null;
       let notifyTimer = 0;
       let pastedImageLabel = 'Pasted image';
+      const editorTopPadding = 14;
+      const ruledLineHeightRatio = 1.8;
+      const ruledLowerGapRatio = 0.2;
+      const imageVerticalMargin = 6;
+
+      const alignToDevicePixel = value => {
+        const scale = Math.max(1, Number(window.devicePixelRatio) || 1);
+        return Math.round(value * scale) / scale;
+      };
+
+      function applyFontMetrics(size) {
+        fontSize = Math.max(8, Math.min(48, Number(size) || 14));
+        const lineHeight = alignToDevicePixel(fontSize * ruledLineHeightRatio);
+        const lowerGap = alignToDevicePixel(fontSize * ruledLowerGapRatio);
+        const backgroundOffset = editorTopPadding - lowerGap;
+        document.documentElement.style.setProperty('--font-size', `${fontSize}px`);
+        document.documentElement.style.setProperty('--ruled-line-height', `${lineHeight}px`);
+        document.documentElement.style.setProperty('--ruled-background-offset', `${backgroundOffset}px`);
+        alignImagesToRuledGrid();
+      }
+
+      function alignImageToRuledGrid(image) {
+        if (!editor.hasAttribute('data-ruled-lines')) {
+          image.style.removeProperty('margin-bottom');
+          return;
+        }
+        const height = image.getBoundingClientRect().height;
+        if (height <= 0) return;
+        const lineHeight = alignToDevicePixel(fontSize * ruledLineHeightRatio);
+        const occupied = imageVerticalMargin + height + imageVerticalMargin;
+        const aligned = Math.ceil(occupied / lineHeight - 1e-6) * lineHeight;
+        image.style.marginBottom = `${alignToDevicePixel(Math.max(
+          imageVerticalMargin,
+          aligned - imageVerticalMargin - height))}px`;
+      }
+
+      function alignImagesToRuledGrid() {
+        editor.querySelectorAll('img').forEach(alignImageToRuledGrid);
+      }
 
       const post = payload => window.chrome?.webview?.postMessage(payload);
       const scheduleChanged = () => {
@@ -129,6 +179,7 @@
 
       function setRuledLines(show) {
         editor.toggleAttribute('data-ruled-lines', Boolean(show));
+        alignImagesToRuledGrid();
       }
 
       function insertImage(file) {
@@ -143,6 +194,7 @@
             image.style.width = `${Math.max(48, Math.min(maximum, image.naturalWidth || maximum))}px`;
             insertNodeAtSelection(image);
             insertNodeAtSelection(document.createElement('br'));
+            alignImageToRuledGrid(image);
             selectImage(image);
             scheduleChanged();
           };
@@ -176,7 +228,10 @@
 
       editor.addEventListener('input', scheduleChanged);
       editor.addEventListener('scroll', positionHandles, { passive: true });
-      window.addEventListener('resize', positionHandles);
+      window.addEventListener('resize', () => {
+        applyFontMetrics(fontSize);
+        positionHandles();
+      });
       editor.addEventListener('click', event => selectImage(event.target instanceof HTMLImageElement ? event.target : null));
       editor.addEventListener('focusin', event => {
         if (event.target instanceof HTMLImageElement) selectImage(event.target);
@@ -189,11 +244,16 @@
         if (images.length) images.forEach(insertImage);
         else insertText(event.clipboardData?.getData('text/plain') || '');
       });
+      editor.addEventListener('copy', event => {
+        const text = window.getSelection()?.toString() || '';
+        if (!text) return;
+        event.preventDefault();
+        setTimeout(() => post({ type: 'copyText', text }), 0);
+      });
       editor.addEventListener('wheel', event => {
         if (!event.ctrlKey) return;
         event.preventDefault();
-        fontSize = Math.max(8, Math.min(48, fontSize + (event.deltaY < 0 ? 1 : -1)));
-        document.documentElement.style.setProperty('--font-size', `${fontSize}px`);
+        applyFontMetrics(fontSize + (event.deltaY < 0 ? 1 : -1));
         post({ type: 'fontSize', fontSize });
         scheduleChanged();
       }, { passive: false });
@@ -209,6 +269,7 @@
           const width = Math.max(48, Math.min(editor.clientWidth - 40,
             selectedImage.getBoundingClientRect().width + (event.key === 'ArrowRight' ? 8 : -8)));
           selectedImage.style.width = `${Math.round(width)}px`;
+          alignImageToRuledGrid(selectedImage);
           positionHandles();
           scheduleChanged();
         }
@@ -228,6 +289,7 @@
           const width = Math.max(48, Math.min(editor.clientWidth - 40, resize.width + delta));
           selectedImage.style.width = `${Math.round(width)}px`;
           selectedImage.style.height = 'auto';
+          alignImageToRuledGrid(selectedImage);
           positionHandles();
         });
         const finish = event => {
@@ -245,10 +307,12 @@
           pastedImageLabel = imageLabel || 'Pasted image';
           handles.forEach(handle => handle.setAttribute('aria-label', resizeLabel || 'Resize image'));
           editor.innerHTML = cleanHtml(html);
-          editor.querySelectorAll('img').forEach(image => image.alt = pastedImageLabel);
+          editor.querySelectorAll('img').forEach(image => {
+            image.alt = pastedImageLabel;
+            if (!image.complete) image.addEventListener('load', () => alignImageToRuledGrid(image), { once: true });
+          });
           editor.dataset.placeholder = placeholder || '';
-          fontSize = Math.max(8, Math.min(48, Number(size) || 14));
-          document.documentElement.style.setProperty('--font-size', `${fontSize}px`);
+          applyFontMetrics(size);
           for (const [key, value] of Object.entries(palette || {}))
             document.documentElement.style.setProperty(`--${key}`, String(value));
           setRuledLines(ruledLines);

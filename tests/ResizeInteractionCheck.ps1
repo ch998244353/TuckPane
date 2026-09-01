@@ -14,15 +14,14 @@ New-Item -ItemType Directory -Path $localRoot, $itemsRoot -Force | Out-Null
 
 @'
 {
-  "SchemaVersion": 3,
-  "GlobalSettings": { "Theme": 0, "StartWithWindows": false, "Language": 0 },
+  "SchemaVersion": 7,
+  "GlobalSettings": { "ThemeColorArgb": 4293060073, "Material": 0, "ThemeTransparency": 0.35, "StartWithWindows": false, "Language": 0 },
   "ConsolePlacement": null,
   "Organizers": [
     {
       "Id": "22222222-2222-2222-2222-222222222222",
       "Name": "ResizeProbe",
       "CreatedAtUtc": "2026-08-23T00:00:00+00:00",
-      "ThemeOverride": null,
       "PlacementMode": 0,
       "Layout": { "Mode": 0, "Rows": 3, "Columns": 3 },
       "CompactScale": 0.8,

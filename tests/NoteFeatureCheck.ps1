@@ -5,6 +5,8 @@ param(
     [switch]$PortableNoteOnly,
     [switch]$RuledLinesOnly,
     [switch]$ChromeOnly,
+    [switch]$NotePolishOnly,
+    [switch]$ScrollStationOnly,
     [switch]$KeepRoot
 )
 
@@ -53,6 +55,7 @@ public static class TuckPaneNoteInput {
 '@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+if ($NotePolishOnly) { Add-Type -AssemblyName UIAutomationClient }
 $primaryDevice = [Windows.Forms.Screen]::PrimaryScreen.DeviceName
 
 function Wait-ForCondition([scriptblock]$Condition, [string]$Failure, [int]$TimeoutMs = 8000) {
@@ -109,20 +112,42 @@ function Open-NoteContextMenu([long]$MainHwnd, [string]$Selector) {
     winapp ui wait-for RenameNoteMenuItem -w $MainHwnd --timeout 3000 | Out-Null
 }
 
+function Test-NoteThemeChecked([long]$Hwnd, [string]$Theme) {
+    try {
+        $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$Hwnd)
+        $condition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
+            "NoteTheme-$Theme")
+        $element = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+        if ($null -eq $element) { return $false }
+        $toggle = [System.Windows.Automation.TogglePattern]$element.GetCurrentPattern(
+            [System.Windows.Automation.TogglePattern]::Pattern)
+        return $toggle.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On
+    }
+    catch { return $false }
+}
+
+function Assert-NoteTheme([long]$Hwnd, [string]$ColorId, [string]$Theme) {
+    winapp ui invoke $ColorId -w $Hwnd | Out-Null
+    Wait-ForCondition { Test-NoteThemeChecked $Hwnd $Theme } "The open note did not adopt the $Theme theme."
+    winapp ui send-keys escape -w $Hwnd | Out-Null
+}
+
 try {
     [IO.Directory]::CreateDirectory($storage) | Out-Null
     [IO.Directory]::CreateDirectory($local) | Out-Null
     $state = @{
         SchemaVersion = 5
         GlobalSettings = @{
-            Theme = 0; StartWithWindows = $false; Language = 0
+            ThemeColorArgb = 4293060073; Material = 0; ThemeTransparency = 0.35
+            StartWithWindows = $false; Language = 0
             CollapseOnOutsideClick = $false; ExpandOnHover = $false; CollapseOnPointerLeave = $false
         }
         ConsolePlacement = $null
         Organizers = @(@{
             Id = '77777777-7777-7777-7777-777777777777'
             Name = 'NoteProbe'; CreatedAtUtc = [DateTimeOffset]::UtcNow
-            ThemeOverride = $null; PlacementMode = 0; DockEdge = 2
+            PlacementMode = 0; DockEdge = 2
             Layout = @{ Mode = 0; Rows = 2; Columns = 2 }
             CompactScale = 1.0; CanvasScale = 0.7; ItemScale = 1.0; NameScale = 1.0
             ManualCanvasBaseWidthDip = $null; ManualCanvasBaseHeightDip = $null; Position = $null
@@ -146,7 +171,7 @@ try {
         $state.Organizers += @{
             Id = '88888888-8888-8888-8888-888888888888'
             Name = 'TargetProbe'; CreatedAtUtc = [DateTimeOffset]::UtcNow
-            ThemeOverride = $null; PlacementMode = 0; DockEdge = 2
+            PlacementMode = 0; DockEdge = 2
             Layout = @{ Mode = 0; Rows = 2; Columns = 2 }
             CompactScale = 1.0; CanvasScale = 0.7; ItemScale = 1.0; NameScale = 1.0
             ManualCanvasBaseWidthDip = $null; ManualCanvasBaseHeightDip = $null
@@ -179,10 +204,99 @@ try {
             '{"Version":1,"Html":""}',
             [Text.UTF8Encoding]::new($false))
     }
+    if ($NotePolishOnly) {
+        $firstNoteId = '11111111-1111-1111-1111-111111111111'
+        $secondNoteId = '22222222-2222-2222-2222-222222222222'
+        $firstNoteKey = 'note:' + $firstNoteId.Replace('-', '')
+        $secondNoteKey = 'note:' + $secondNoteId.Replace('-', '')
+        $polishPortableFileName = '便携主题探针.tucknote'
+        $polishPortableSelector = "PortableNoteItem-$polishPortableFileName"
+        $polishPortablePath = Join-Path $storage $polishPortableFileName
+        $longHtml = ('<div>正文起始：检查字距、光标与滚动条</div>' +
+            ((1..36 | ForEach-Object { "<div>第 $_ 行：TuckPane note polish visual probe</div>" }) -join ''))
+        $portableHtml = ('<div>便携正文起始</div>' +
+            ((1..36 | ForEach-Object { "<div>Portable line $_ for scrollbar inspection</div>" }) -join ''))
+        $state.Organizers[0].Position = @{
+            MonitorDevice = $primaryDevice; XDip = 160; YDip = 100
+            SavedWorkAreaWidthDip = 0; SavedWorkAreaHeightDip = 0
+        }
+        $state.Organizers[0].ItemOrder = @($firstNoteKey, $secondNoteKey, $polishPortableFileName)
+        $state.Organizers[0].Notes = @(
+            @{
+                Id = $firstNoteId; Name = '内部浅色探针'; Theme = 0; FontSize = 14
+                ShowRuledLines = $false
+                Placement = @{
+                    MonitorDevice = $primaryDevice; XDip = 860; YDip = 80
+                    WidthDip = 360; HeightDip = 300
+                }
+            },
+            @{
+                Id = $secondNoteId; Name = '内部深色探针'; Theme = 3; FontSize = 14
+                ShowRuledLines = $false
+                Placement = @{
+                    MonitorDevice = $primaryDevice; XDip = 1240; YDip = 80
+                    WidthDip = 360; HeightDip = 300
+                }
+            }
+        )
+        $notesRoot = Join-Path $local 'notes'
+        [IO.Directory]::CreateDirectory($notesRoot) | Out-Null
+        foreach ($noteId in @($firstNoteId, $secondNoteId)) {
+            [IO.File]::WriteAllText(
+                (Join-Path $notesRoot ($noteId.Replace('-', '') + '.json')),
+                (@{ Version = 1; Html = $longHtml } | ConvertTo-Json -Compress),
+                [Text.UTF8Encoding]::new($false))
+        }
+        [IO.File]::WriteAllText(
+            $polishPortablePath,
+            (@{
+                format = 'TuckPane.Note'; version = 1; theme = 5; fontSize = 14
+                showRuledLines = $false
+                placement = @{
+                    monitorDevice = $primaryDevice; xDip = 860; yDip = 430
+                    widthDip = 360; heightDip = 300
+                }
+                html = $portableHtml
+            } | ConvertTo-Json -Depth 5 -Compress),
+            [Text.UTF8Encoding]::new($false))
+    }
+    if ($ScrollStationOnly) {
+        $scrollNoteId = '33333333-3333-3333-3333-333333333333'
+        $scrollNoteKey = 'note:' + $scrollNoteId.Replace('-', '')
+        $scrollHtml = ('<div>滚轮探针起始</div>' +
+            ((1..40 | ForEach-Object { "<div>第 $_ 行：鼠标滚轮上下滑动探针</div>" }) -join ''))
+        $state.SchemaVersion = 6
+        $state.GlobalSettings.NoteTheme = 2
+        $state.Organizers[0].Name = '右侧中转站'
+        $state.Organizers[0].PlacementMode = 2
+        $state.Organizers[0].DockEdge = 2
+        $state.Organizers[0].Layout = @{ Mode = 0; Rows = 1; Columns = 1 }
+        $state.Organizers[0].ItemOrder = @($scrollNoteKey)
+        $state.Organizers[0].Notes = @(@{
+            Id = $scrollNoteId; Name = '学习计划'; Theme = 2; FontSize = 14
+            ShowRuledLines = $false
+            Placement = @{
+                MonitorDevice = $primaryDevice; XDip = 420; YDip = 120
+                WidthDip = 360; HeightDip = 300
+            }
+        })
+        $notesRoot = Join-Path $local 'notes'
+        [IO.Directory]::CreateDirectory($notesRoot) | Out-Null
+        [IO.File]::WriteAllText(
+            (Join-Path $notesRoot ($scrollNoteId.Replace('-', '') + '.json')),
+            (@{ Version = 1; Html = $scrollHtml } | ConvertTo-Json -Compress),
+            [Text.UTF8Encoding]::new($false))
+    }
     [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
 
     $env:TUCKPANE_TEST_ROOT = $runRoot
     $env:GLASSFOLDER_TEST_EXPANDED = '1'
+    if ($ScrollStationOnly) {
+        $primaryBounds = [Windows.Forms.Screen]::PrimaryScreen.Bounds
+        [TuckPaneNoteInput]::SetCursorPos(
+            $primaryBounds.Right - 1,
+            [int]($primaryBounds.Top + $primaryBounds.Height / 2)) | Out-Null
+    }
     $app = Start-Process -FilePath $resolvedExe -ArgumentList '--startup' -PassThru
     $expectedOrganizerCount = if ($PortableNoteOnly) { 2 } else { 1 }
     Wait-ForCondition { (Get-AppWindows $app.Id | Where-Object title -eq 'TuckPane').Count -eq $expectedOrganizerCount } `
@@ -231,8 +345,287 @@ try {
             if ($main.width -le 200) { throw 'The portable-note source organizer did not expand.' }
         }
     }
-    winapp ui wait-for CollapseButton -w $main.hwnd --timeout 5000 | Out-Null
+    if (-not $ScrollStationOnly) {
+        winapp ui wait-for CollapseButton -w $main.hwnd --timeout 5000 | Out-Null
+    }
     Set-ProbeForeground $main.hwnd
+
+    if ($ScrollStationOnly) {
+        $scrollId = $scrollNoteId.Replace('-', '')
+        $scrollSelector = "NoteItem-$scrollId"
+        winapp ui wait-for $scrollSelector -w $main.hwnd --timeout 5000 | Out-Null
+        $expandedShot = Join-Path $runRoot 'station-expanded-note.png'
+        winapp ui screenshot $scrollSelector -w $main.hwnd -o $expandedShot | Out-Null
+
+        winapp ui click $scrollSelector -w $main.hwnd | Out-Null
+        Wait-ForCondition { (Get-AppWindows $app.Id | Where-Object title -eq '学习计划').Count -eq 1 } `
+            'The Station note did not open.'
+        $scrollWindow = (Get-AppWindows $app.Id | Where-Object title -eq '学习计划')[0]
+        $scrollBody = @((winapp ui search '滚轮探针起始' -w $scrollWindow.hwnd --json 2>$null |
+            ConvertFrom-Json).matches)[0]
+        if ($null -eq $scrollBody) { throw 'The scroll probe body was not exposed to UI Automation.' }
+        winapp ui click $scrollBody.selector -w $scrollWindow.hwnd | Out-Null
+
+        foreach ($probe in @(
+            @{ Name = 'down'; Wheel = -4; Expect = 'less'; Target = '滚轮探针起始' },
+            @{ Name = 'up'; Wheel = 4; Expect = 'greater'; Target = '第 12 行：鼠标滚轮上下滑动探针' })) {
+            $beforeMarker = @((winapp ui search '滚轮探针起始' -w $scrollWindow.hwnd --json 2>$null |
+                ConvertFrom-Json).matches)[0]
+            $wheelTarget = @((winapp ui search $probe.Target -w $scrollWindow.hwnd --json 2>$null |
+                ConvertFrom-Json).matches)[0]
+            if ($null -eq $wheelTarget -or $wheelTarget.width -le 0 -or $wheelTarget.height -le 0) {
+                throw "The visible mouse-wheel $($probe.Name) target was not available."
+            }
+            $wheel = $probe.Wheel
+            winapp ui scroll $wheelTarget.selector -w $scrollWindow.hwnd --wheel $wheel | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "winapp mouse-wheel $($probe.Name) input failed." }
+            foreach ($frame in 1..3) {
+                winapp ui screenshot -w $scrollWindow.hwnd --capture-screen `
+                    -o (Join-Path $runRoot "note-wheel-$($probe.Name)-$frame.png") | Out-Null
+            }
+            $f2Json = winapp ui inspect -a $app.Id --interactive --json 2>$null
+            if ($LASTEXITCODE -ne 0) { throw "F2 visibility inspection failed after mouse-wheel $($probe.Name)." }
+            try { $f2Result = $f2Json | ConvertFrom-Json }
+            catch { throw "F2 visibility inspection returned invalid JSON after mouse-wheel $($probe.Name)." }
+            $visibleF2 = @($f2Result.windows.elements | Where-Object {
+                ($_.name -eq 'F2' -or $_.automationId -eq 'F2') -and $_.width -gt 0 -and $_.height -gt 0
+            })
+            if ($visibleF2.Count -gt 0) { throw "Mouse-wheel $($probe.Name) exposed a visible F2 prompt." }
+            $afterMarker = @((winapp ui search '滚轮探针起始' -w $scrollWindow.hwnd --json 2>$null |
+                ConvertFrom-Json).matches)[0]
+            if ($null -eq $beforeMarker -or $null -eq $afterMarker -or
+                ($probe.Expect -eq 'less' -and $afterMarker.y -ge $beforeMarker.y) -or
+                ($probe.Expect -eq 'greater' -and $afterMarker.y -le $beforeMarker.y)) {
+                throw "Mouse-wheel $($probe.Name) did not move the note body in the expected direction."
+            }
+        }
+
+        winapp ui send-keys f2 -w $scrollWindow.hwnd --via send-input | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Sending F2 to the note window failed.' }
+        Start-Sleep -Milliseconds 500
+        $titleEditorJson = winapp ui inspect -w $scrollWindow.hwnd --interactive --json 2>$null
+        if ($LASTEXITCODE -ne 0) { throw 'The post-F2 title-editor inspection failed.' }
+        try { $titleEditorResult = $titleEditorJson | ConvertFrom-Json }
+        catch { throw 'The post-F2 title-editor inspection returned invalid JSON.' }
+        $visibleTitleEditor = @($titleEditorResult.windows.elements | Where-Object {
+            $_.automationId -eq "NoteTitleEditor-$scrollId" -and $_.width -gt 0 -and $_.height -gt 0
+        })
+        if ($visibleTitleEditor.Count -gt 0) {
+            throw 'F2 still opened the note title editor.'
+        }
+        Wait-ForCondition {
+            if ($app.HasExited) { throw 'TuckPane exited while waiting for the Station to hide.' }
+            $stationWindowsJson = winapp ui list-windows -a $app.Id --json 2>$null
+            if ($LASTEXITCODE -ne 0) { throw 'The Station visibility query failed.' }
+            try { $stationWindows = @($stationWindowsJson | ConvertFrom-Json) }
+            catch { throw 'The Station visibility query returned invalid JSON.' }
+            @($stationWindows | Where-Object title -eq 'TuckPane').Count -eq 0
+        } `
+            'The Station did not hide after the pointer left its expanded window.'
+
+        $evidence = @($expandedShot) + @(foreach ($direction in @('down', 'up')) {
+            foreach ($frame in 1..3) { Join-Path $runRoot "note-wheel-$direction-$frame.png" }
+        })
+        foreach ($shot in $evidence) {
+            if (-not (Test-Path -LiteralPath $shot) -or (Get-Item -LiteralPath $shot).Length -eq 0) {
+                throw "The targeted visual evidence screenshot was not created: $shot"
+            }
+        }
+
+        Write-Host 'TuckPane note wheel and expanded Station icon UI: PASS'
+        return
+    }
+
+    if ($NotePolishOnly) {
+        Wait-ForCondition {
+            try {
+                $migrated = Get-State
+                return $migrated.SchemaVersion -eq 7 -and
+                    $migrated.GlobalSettings.NoteTheme -eq 2 -and
+                    @($migrated.Organizers[0].Notes | Where-Object Theme -ne 2).Count -eq 0
+            }
+            catch { return $false }
+        } 'Schema 5 note themes were not migrated to the global SunYellow theme.'
+        if ((Get-Content -LiteralPath $polishPortablePath -Raw | ConvertFrom-Json).theme -ne 5) {
+            throw 'Startup migration rewrote a closed portable note.'
+        }
+
+        $firstId = $firstNoteId.Replace('-', '')
+        $secondId = $secondNoteId.Replace('-', '')
+        winapp ui wait-for "NoteItem-$firstId" -w $main.hwnd --timeout 3000 | Out-Null
+        winapp ui wait-for "NoteItem-$secondId" -w $main.hwnd --timeout 3000 | Out-Null
+        winapp ui wait-for $polishPortableSelector -w $main.hwnd --timeout 3000 | Out-Null
+
+        Set-ProbeForeground $main.hwnd
+        winapp ui click "NoteItem-$firstId" -w $main.hwnd | Out-Null
+        Wait-ForCondition { (Get-AppWindows $app.Id | Where-Object title -eq '内部浅色探针').Count -eq 1 } `
+            'The first internal note did not open.'
+        $firstWindow = (Get-AppWindows $app.Id | Where-Object title -eq '内部浅色探针')[0]
+        winapp ui wait-for "NoteColor-$firstId" -w $firstWindow.hwnd --timeout 5000 | Out-Null
+
+        Set-ProbeForeground $main.hwnd
+        winapp ui click "NoteItem-$secondId" -w $main.hwnd | Out-Null
+        Wait-ForCondition { (Get-AppWindows $app.Id | Where-Object title -eq '内部深色探针').Count -eq 1 } `
+            'The second internal note did not open.'
+        $secondWindow = (Get-AppWindows $app.Id | Where-Object title -eq '内部深色探针')[0]
+        winapp ui wait-for "NoteColor-$secondId" -w $secondWindow.hwnd --timeout 5000 | Out-Null
+
+        Set-ProbeForeground $main.hwnd
+        winapp ui click $polishPortableSelector -w $main.hwnd | Out-Null
+        Wait-ForCondition { (Get-AppWindows $app.Id | Where-Object title -eq '便携主题探针').Count -eq 1 } `
+            'The portable note did not open.'
+        $portableWindow = (Get-AppWindows $app.Id | Where-Object title -eq '便携主题探针')[0]
+        $portableTitle = @((winapp ui search '便携主题探针' -w $portableWindow.hwnd --json 2>$null |
+            ConvertFrom-Json).matches | Where-Object automationId -like 'NoteTitle-*')[0]
+        if ($null -eq $portableTitle) { throw 'The portable note title was not exposed to UI Automation.' }
+        $portableColorId = $portableTitle.automationId.Replace('NoteTitle-', 'NoteColor-')
+        winapp ui wait-for $portableColorId -w $portableWindow.hwnd --timeout 5000 | Out-Null
+
+        Assert-NoteTheme $firstWindow.hwnd "NoteColor-$firstId" 'SunYellow'
+        Assert-NoteTheme $secondWindow.hwnd "NoteColor-$secondId" 'SunYellow'
+        Assert-NoteTheme $portableWindow.hwnd $portableColorId 'SunYellow'
+        $firstBody = @((winapp ui search '正文起始' -w $firstWindow.hwnd --json 2>$null |
+            ConvertFrom-Json).matches)[0]
+        if ($null -eq $firstBody) { throw 'The internal note body was not exposed to UI Automation.' }
+        winapp ui click $firstBody.selector -w $firstWindow.hwnd | Out-Null
+        $sunShot = Join-Path $runRoot 'note-polish-sun-yellow.png'
+        winapp ui screenshot -w $firstWindow.hwnd -o $sunShot | Out-Null
+
+        winapp ui invoke "NoteColor-$firstId" -w $firstWindow.hwnd | Out-Null
+        winapp ui wait-for NoteTheme-Graphite -w $firstWindow.hwnd --timeout 3000 | Out-Null
+        winapp ui invoke NoteTheme-Graphite -w $firstWindow.hwnd | Out-Null
+        Wait-ForCondition {
+            $themed = Get-State
+            $themed.GlobalSettings.NoteTheme -eq 1 -and
+                @($themed.Organizers[0].Notes | Where-Object Theme -ne 1).Count -eq 0
+        } 'Selecting Graphite did not update the global theme and every internal note.'
+        Assert-NoteTheme $firstWindow.hwnd "NoteColor-$firstId" 'Graphite'
+        Assert-NoteTheme $secondWindow.hwnd "NoteColor-$secondId" 'Graphite'
+        Assert-NoteTheme $portableWindow.hwnd $portableColorId 'Graphite'
+        if ((Get-Content -LiteralPath $polishPortablePath -Raw | ConvertFrom-Json).theme -ne 5) {
+            throw 'Changing the global theme rewrote the portable note before a normal save.'
+        }
+
+        $graphiteShot = Join-Path $runRoot 'note-polish-graphite-internal.png'
+        $portableShot = Join-Path $runRoot 'note-polish-graphite-portable.png'
+        $secondBody = @((winapp ui search '正文起始' -w $secondWindow.hwnd --json 2>$null |
+            ConvertFrom-Json).matches)[0]
+        if ($null -eq $secondBody) { throw 'The second internal note body was not exposed to UI Automation.' }
+        winapp ui click $secondBody.selector -w $secondWindow.hwnd | Out-Null
+        winapp ui screenshot -w $secondWindow.hwnd -o $graphiteShot | Out-Null
+
+        $portableBody = @((winapp ui search '便携正文起始' -w $portableWindow.hwnd --json 2>$null |
+            ConvertFrom-Json).matches)[0]
+        if ($null -eq $portableBody) { throw 'The portable note body was not exposed to UI Automation.' }
+        winapp ui click $portableBody.selector -w $portableWindow.hwnd | Out-Null
+        winapp ui screenshot -w $portableWindow.hwnd -o $portableShot | Out-Null
+        winapp ui send-keys 'ctrl+end' -w $portableWindow.hwnd | Out-Null
+        $portableProbe = ' NOTE_POLISH_SAVE_PROBE '
+        winapp ui send-keys --verbatim $portableProbe -w $portableWindow.hwnd | Out-Null
+        Wait-ForCondition {
+            try {
+                $savedPortable = Get-Content -LiteralPath $polishPortablePath -Raw | ConvertFrom-Json
+                return $savedPortable.theme -eq 1 -and $savedPortable.html -like "*$portableProbe*"
+            }
+            catch { return $false }
+        } 'Editing the portable note did not save its body with the global Graphite theme.'
+
+        $firstTitle = @((winapp ui search '内部浅色探针' -w $firstWindow.hwnd --json 2>$null |
+            ConvertFrom-Json).matches | Where-Object automationId -eq "NoteTitle-$firstId")[0]
+        if ($null -eq $firstTitle) { throw 'The internal note title was not exposed to UI Automation.' }
+        winapp ui click $firstTitle.selector -w $firstWindow.hwnd | Out-Null
+        $firstTitleEditor = "NoteTitleEditor-$firstId"
+        winapp ui wait-for $firstTitleEditor -w $firstWindow.hwnd --timeout 3000 | Out-Null
+        $committedTitle = '单击改名已提交'
+        winapp ui set-value $firstTitleEditor $committedTitle -w $firstWindow.hwnd | Out-Null
+        winapp ui focus "NoteColor-$firstId" -w $firstWindow.hwnd | Out-Null
+        Wait-ForCondition {
+            (Get-State).Organizers[0].Notes[0].Name -eq $committedTitle -and
+                (Get-AppWindows $app.Id | Where-Object title -eq $committedTitle).Count -eq 1
+        } 'Single-click title editing did not commit the internal note name.'
+        $firstTitle = @((winapp ui search $committedTitle -w $firstWindow.hwnd --json 2>$null |
+            ConvertFrom-Json).matches | Where-Object automationId -eq "NoteTitle-$firstId")[0]
+        winapp ui click $firstTitle.selector -w $firstWindow.hwnd | Out-Null
+        winapp ui wait-for $firstTitleEditor -w $firstWindow.hwnd --timeout 3000 | Out-Null
+        winapp ui set-value $firstTitleEditor '不应保存的名称' -w $firstWindow.hwnd | Out-Null
+        winapp ui send-keys escape -w $firstWindow.hwnd | Out-Null
+        Start-Sleep -Milliseconds 200
+        if ((Get-State).Organizers[0].Notes[0].Name -ne $committedTitle) {
+            throw 'Escape did not cancel single-click title editing.'
+        }
+
+        $dragBefore = [TuckPaneNoteInput+Rect]::new()
+        [TuckPaneNoteInput]::GetWindowRect([IntPtr]$firstWindow.hwnd, [ref]$dragBefore) | Out-Null
+        $color = (winapp ui search "NoteColor-$firstId" -w $firstWindow.hwnd --json 2>$null |
+            ConvertFrom-Json).matches[0]
+        winapp ui drag "$([int]($color.x - 24)),$([int]($color.y + $color.height / 2))" `
+            "$([int]($color.x + 46)),$([int]($color.y + $color.height / 2 + 50))" -w $firstWindow.hwnd | Out-Null
+        $dragAfter = [TuckPaneNoteInput+Rect]::new()
+        [TuckPaneNoteInput]::GetWindowRect([IntPtr]$firstWindow.hwnd, [ref]$dragAfter) | Out-Null
+        if ($dragAfter.Left -eq $dragBefore.Left -and $dragAfter.Top -eq $dragBefore.Top) {
+            throw 'The title area beside the clickable text no longer drags the note.'
+        }
+
+        winapp ui invoke "CloseNote-$firstId" -w $firstWindow.hwnd | Out-Null
+        winapp ui invoke "CloseNote-$secondId" -w $secondWindow.hwnd | Out-Null
+        $portableCloseId = $portableTitle.automationId.Replace('NoteTitle-', 'CloseNote-')
+        winapp ui invoke $portableCloseId -w $portableWindow.hwnd | Out-Null
+        Wait-ForCondition {
+            (Get-AppWindows $app.Id | Where-Object title -in @($committedTitle, '内部深色探针', '便携主题探针')).Count -eq 0
+        } 'The polish probe notes did not close before creating a new note.'
+
+        $collapse = (winapp ui search CollapseButton -w $main.hwnd --json 2>$null | ConvertFrom-Json).matches[0]
+        $blankX = [int]($collapse.x - 200)
+        $blankY = [int]($collapse.y + 200)
+        $newNoteInvoked = $false
+        foreach ($attempt in 1..3) {
+            Set-ProbeForeground $main.hwnd
+            winapp ui drag "$blankX,$blankY" "$blankX,$blankY" -w $main.hwnd --right --hold-ms 60 | Out-Null
+            Start-Sleep -Milliseconds 250
+            $menu = winapp ui search NewNoteMenuItem -w $main.hwnd --json 2>$null | ConvertFrom-Json
+            if ($menu.matchCount -gt 0) {
+                winapp ui invoke NewNoteMenuItem -w $main.hwnd | Out-Null
+                if ($LASTEXITCODE -eq 0) { $newNoteInvoked = $true; break }
+            }
+            winapp ui send-keys escape -w $main.hwnd | Out-Null
+        }
+        if (-not $newNoteInvoked) { throw 'The targeted New note command could not be invoked.' }
+        Wait-ForCondition { (Get-State).Organizers[0].Notes.Count -eq 3 } 'The third note was not created.'
+        $newNote = @((Get-State).Organizers[0].Notes |
+            Where-Object Id -notin @($firstNoteId, $secondNoteId))[0]
+        if ($null -eq $newNote -or $newNote.Theme -ne 1) {
+            throw 'A newly created note did not inherit the global Graphite theme.'
+        }
+        $organizerShot = Join-Path $runRoot 'note-polish-organizer-icons.png'
+        winapp ui screenshot -w $main.hwnd -o $organizerShot | Out-Null
+
+        foreach ($shot in @($sunShot, $graphiteShot, $portableShot, $organizerShot)) {
+            if (-not (Test-Path -LiteralPath $shot) -or (Get-Item -LiteralPath $shot).Length -eq 0) {
+                throw "The visual evidence screenshot was not created: $shot"
+            }
+        }
+
+        Stop-Process -Id $app.Id -Force
+        $app.WaitForExit(5000) | Out-Null
+        $app.Dispose()
+        $app = Start-Process -FilePath $resolvedExe -ArgumentList '--startup' -PassThru
+        Wait-ForCondition { (Get-AppWindows $app.Id | Where-Object title -eq 'TuckPane').Count -eq 1 } `
+            'The organizer did not restart with the same isolated root.'
+        Wait-ForCondition {
+            try {
+                $restarted = Get-State
+                return $restarted.SchemaVersion -eq 7 -and
+                    $restarted.GlobalSettings.NoteTheme -eq 1 -and
+                    $restarted.Organizers[0].Notes.Count -eq 3 -and
+                    @($restarted.Organizers[0].Notes | Where-Object Theme -ne 1).Count -eq 0 -and
+                    (Get-Content -LiteralPath $polishPortablePath -Raw | ConvertFrom-Json).theme -eq 1
+            }
+            catch { return $false }
+        } 'The global Graphite theme did not survive restart.'
+
+        Write-Host 'TuckPane global note theme, single-click title, and polish evidence UI: PASS'
+        return
+    }
 
     if ($ChromeOnly) {
         $chromeId = '99999999999999999999999999999999'
@@ -323,9 +716,9 @@ try {
                 $edgeChanges.Top, $edgeChanges.Bottom, $edgeChanges.Left, $edgeChanges.Right,
                 $innerContrasts.Top, $innerContrasts.Bottom, $innerContrasts.Left, $innerContrasts.Right))
         }
-        if (($extendedStyle -band 0x8) -eq 0) { $failures.Add('Note lost WS_EX_TOPMOST.') }
-        if (($extendedStyle -band 0x80) -eq 0) { $failures.Add('Note lost WS_EX_TOOLWINDOW.') }
-        if (($extendedStyle -band 0x40000) -ne 0) { $failures.Add('Note unexpectedly has WS_EX_APPWINDOW.') }
+        if (($extendedStyle -band 0x8) -ne 0) { $failures.Add('Note unexpectedly remained WS_EX_TOPMOST.') }
+        if (($extendedStyle -band 0x80) -ne 0) { $failures.Add('Note unexpectedly remained WS_EX_TOOLWINDOW.') }
+        if (($extendedStyle -band 0x40000) -eq 0) { $failures.Add('Note lost WS_EX_APPWINDOW.') }
         if (($windowStyle -band 0x40000) -eq 0) { $failures.Add('Note lost WS_THICKFRAME.') }
         if ($failures.Count -gt 0) { throw ($failures -join [Environment]::NewLine) }
         Write-Host 'TuckPane note chrome: PASS'
@@ -569,7 +962,7 @@ try {
     if ($TitleDragOnly) {
         $title = @((winapp ui search $note.Name -w $noteWindow.hwnd --json 2>$null |
             ConvertFrom-Json).matches | Where-Object automationId -like 'NoteTitle-*')[0]
-        winapp ui click $title.selector -w $noteWindow.hwnd --double | Out-Null
+        winapp ui click $title.selector -w $noteWindow.hwnd | Out-Null
         $titleEditor = "NoteTitleEditor-$id"
         $longTitle = '这是一个足以占满标题栏的超长内部便签名称'
         winapp ui wait-for $titleEditor -w $noteWindow.hwnd --timeout 3000 | Out-Null
@@ -583,15 +976,12 @@ try {
             'Inline renaming an internal note did not update its window title.'
         $title = @((winapp ui search $longTitle -w $noteWindow.hwnd --json 2>$null |
             ConvertFrom-Json).matches | Where-Object automationId -like 'NoteTitle-*')[0]
-        winapp ui click $title.selector -w $noteWindow.hwnd --double | Out-Null
+        winapp ui click $title.selector -w $noteWindow.hwnd | Out-Null
         winapp ui wait-for $titleEditor -w $noteWindow.hwnd --timeout 3000 | Out-Null
         winapp ui set-value $titleEditor '取消改名' -w $noteWindow.hwnd | Out-Null
         winapp ui send-keys escape -w $noteWindow.hwnd | Out-Null
         Start-Sleep -Milliseconds 200
         if ((Get-State).Organizers[0].Notes[0].Name -ne $longTitle) { throw 'Escape did not cancel inline note renaming.' }
-        winapp ui send-keys f2 -w $noteWindow.hwnd | Out-Null
-        winapp ui wait-for $titleEditor -w $noteWindow.hwnd --timeout 3000 | Out-Null
-        winapp ui send-keys escape -w $noteWindow.hwnd | Out-Null
         $longBefore = [TuckPaneNoteInput+Rect]::new()
         [TuckPaneNoteInput]::GetWindowRect([IntPtr]$noteWindow.hwnd, [ref]$longBefore) | Out-Null
         $color = (winapp ui search "NoteColor-$id" -w $noteWindow.hwnd --json 2>$null | ConvertFrom-Json).matches[0]
@@ -666,9 +1056,9 @@ try {
     winapp ui wait-for "CloseNote-$id" -w $noteWindow.hwnd --timeout 5000 | Out-Null
     $extendedStyle = [TuckPaneNoteInput]::GetWindowLongPtr([IntPtr]$noteWindow.hwnd, -20).ToInt64()
     $windowStyle = [TuckPaneNoteInput]::GetWindowLongPtr([IntPtr]$noteWindow.hwnd, -16).ToInt64()
-    if (($extendedStyle -band 0x8) -eq 0 -or ($extendedStyle -band 0x80) -eq 0 -or
-        ($extendedStyle -band 0x40000) -ne 0 -or ($windowStyle -band 0x40000) -eq 0) {
-        throw 'The note is not a topmost, resizable tool window hidden from switchers.'
+    if (($extendedStyle -band 0x8) -ne 0 -or ($extendedStyle -band 0x80) -ne 0 -or
+        ($extendedStyle -band 0x40000) -eq 0 -or ($windowStyle -band 0x40000) -eq 0) {
+        throw 'The note is not a non-topmost, resizable app window shown in switchers.'
     }
     $monitor = [TuckPaneNoteInput]::MonitorFromWindow([IntPtr]$noteWindow.hwnd, 2)
     [int]$scalePercent = 100

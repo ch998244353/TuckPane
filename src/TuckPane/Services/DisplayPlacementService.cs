@@ -1,4 +1,5 @@
 using TuckPane.Models;
+using TuckPane.Core;
 
 namespace TuckPane.Services;
 
@@ -12,12 +13,21 @@ internal static class DisplayPlacementService
     internal const double StationBottomInsetDip = 12;
     internal const double ExpandedTopInsetDip = 40.5;
     internal const double ExpandedBottomInsetDip = 28;
+    internal const double ExpandedTitleBandDip = 56;
     internal const double ItemGapDip = 12;
     internal const double MaximumItemScale = 1.65;
     private const double IconCellFraction = .68;
     private const double StationIconCellFraction = .82;
     private const double NameCellFraction = .15;
     private const double PreviousIconCellFraction = .62;
+
+    internal static double ResolveExpandedSideInset(
+        OrganizerPlacementMode placementMode,
+        OrganizerExpandedContentMode contentMode) =>
+        placementMode == OrganizerPlacementMode.Station ||
+        contentMode == OrganizerExpandedContentMode.CompactList
+            ? StationSideInsetDip
+            : ExpandedSideInsetDip;
 
     public static IReadOnlyList<DisplayInfo> GetDisplays()
     {
@@ -47,17 +57,26 @@ internal static class DisplayPlacementService
             ?? displays.First();
     }
 
-    public static NativeMethods.RECT Restore(WidgetPosition? saved, int widthPx, int heightPx)
+    public static NativeMethods.RECT Restore(
+        WidgetPosition? saved,
+        int widthPx,
+        int heightPx,
+        WindowAlignmentInsets? alignmentInsets = null)
     {
         IReadOnlyList<DisplayInfo> displays = GetDisplays();
         DisplayInfo display = displays.FirstOrDefault(d => string.Equals(d.Device, saved?.MonitorDevice, StringComparison.OrdinalIgnoreCase))
             ?? displays.FirstOrDefault(d => d.Monitor.Left == 0 && d.Monitor.Top == 0)
             ?? displays.First();
 
-        return RestoreToDisplay(saved, display, widthPx, heightPx);
+        return RestoreToDisplay(saved, display, widthPx, heightPx, alignmentInsets);
     }
 
-    internal static NativeMethods.RECT RestoreToDisplay(WidgetPosition? saved, DisplayInfo display, int widthPx, int heightPx)
+    internal static NativeMethods.RECT RestoreToDisplay(
+        WidgetPosition? saved,
+        DisplayInfo display,
+        int widthPx,
+        int heightPx,
+        WindowAlignmentInsets? alignmentInsets = null)
     {
         int x = saved is null || string.IsNullOrWhiteSpace(saved.MonitorDevice)
             ? display.Work.Left + (display.Work.Width - widthPx) / 2
@@ -65,7 +84,10 @@ internal static class DisplayPlacementService
         int y = saved is null || string.IsNullOrWhiteSpace(saved.MonitorDevice)
             ? display.Work.Top + (int)Math.Round(96 * display.Scale)
             : display.Work.Top + (int)Math.Round(saved.YDip * display.Scale);
-        return Clamp(new NativeMethods.RECT { Left = x, Top = y, Right = x + widthPx, Bottom = y + heightPx }, display.Work);
+        var bounds = new NativeMethods.RECT { Left = x, Top = y, Right = x + widthPx, Bottom = y + heightPx };
+        return alignmentInsets is WindowAlignmentInsets insets
+            ? WindowAlignmentMath.ClampFrame(bounds, display.Work, insets)
+            : Clamp(bounds, display.Work);
     }
 
     public static NativeMethods.RECT Clamp(NativeMethods.RECT bounds, NativeMethods.RECT work)
@@ -268,6 +290,8 @@ internal static class DisplayPlacementService
         double sideInsetDip = ExpandedSideInsetDip)
     {
         NativeMethods.RECT insetWork = GetExpandedWorkArea(display);
+        int titleHeightPx = Math.Max(0, (int)Math.Round(ExpandedTitleBandDip * display.Scale));
+        int availablePanelHeight = Math.Max(1, insetWork.Height - titleHeightPx);
         int columns = Math.Clamp(layout.Columns, 1, OrganizerLimits.MaximumStationColumns);
         int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumStationRows);
         double width;
@@ -277,7 +301,7 @@ internal static class DisplayPlacementService
         {
             width = baseWidth * Math.Clamp(canvasScale, .1, 1.2) * display.Scale;
             height = baseHeight * Math.Clamp(canvasScale, .1, 1.2) * display.Scale;
-            double fit = Math.Min(1, Math.Min(insetWork.Width / width, insetWork.Height / height));
+            double fit = Math.Min(1, Math.Min(insetWork.Width / width, availablePanelHeight / height));
             width *= fit;
             height *= fit;
         }
@@ -289,13 +313,13 @@ internal static class DisplayPlacementService
             height = cell * rows + gap * (rows - 1) + (ExpandedTopInsetDip + ExpandedBottomInsetDip) * display.Scale;
         }
         int widthPx = Math.Max(1, (int)Math.Round(width));
-        int heightPx = Math.Max(1, (int)Math.Round(height));
+        int heightPx = Math.Min(availablePanelHeight, Math.Max(1, (int)Math.Round(height)));
         int centerX = compact.Left + compact.Width / 2;
         int centerY = compact.Top + (int)Math.Round(19.5 * display.Scale);
         var desired = new NativeMethods.RECT
         {
             Left = centerX - widthPx / 2,
-            Top = centerY - heightPx / 2,
+            Top = centerY - heightPx / 2 - titleHeightPx,
             Right = centerX - widthPx / 2 + widthPx,
             Bottom = centerY - heightPx / 2 + heightPx
         };
@@ -388,7 +412,7 @@ internal static class DisplayPlacementService
         NativeMethods.POINT point,
         DisplayInfo display,
         OrganizerDockEdge edge,
-        int thicknessPx = 4)
+        int distanceDip)
     {
         NativeMethods.RECT bounds = display.Monitor;
         if (point.X < bounds.Left || point.X >= bounds.Right ||
@@ -396,7 +420,7 @@ internal static class DisplayPlacementService
         {
             return false;
         }
-        int thickness = Math.Max(1, thicknessPx);
+        int thickness = Math.Max(1, (int)Math.Round(distanceDip * Math.Max(1, display.Scale)));
         return edge switch
         {
             OrganizerDockEdge.Left => point.X < bounds.Left + thickness,
@@ -405,6 +429,32 @@ internal static class DisplayPlacementService
             _ => point.Y >= bounds.Bottom - thickness
         };
     }
+
+    internal static bool IsStationExpandedSafeRegion(
+        NativeMethods.POINT point,
+        DisplayInfo display,
+        OrganizerDockEdge edge,
+        NativeMethods.RECT expandedBounds,
+        int activationDistanceDip)
+    {
+        if (Contains(expandedBounds, point) ||
+            IsStationHotZone(point, display, edge, activationDistanceDip)) return true;
+        NativeMethods.RECT monitor = display.Monitor;
+        return edge switch
+        {
+            OrganizerDockEdge.Left => point.X >= monitor.Left && point.X < expandedBounds.Left &&
+                point.Y >= expandedBounds.Top && point.Y < expandedBounds.Bottom,
+            OrganizerDockEdge.Top => point.Y >= monitor.Top && point.Y < expandedBounds.Top &&
+                point.X >= expandedBounds.Left && point.X < expandedBounds.Right,
+            OrganizerDockEdge.Right => point.X >= expandedBounds.Right && point.X < monitor.Right &&
+                point.Y >= expandedBounds.Top && point.Y < expandedBounds.Bottom,
+            _ => point.Y >= expandedBounds.Bottom && point.Y < monitor.Bottom &&
+                point.X >= expandedBounds.Left && point.X < expandedBounds.Right
+        };
+    }
+
+    private static bool Contains(NativeMethods.RECT bounds, NativeMethods.POINT point) =>
+        point.X >= bounds.Left && point.X < bounds.Right && point.Y >= bounds.Top && point.Y < bounds.Bottom;
 
     internal static NativeMethods.RECT CalculateStationDraggedBounds(
         NativeMethods.RECT pressBounds,
@@ -482,7 +532,8 @@ internal static class DisplayPlacementService
         int rows = Math.Clamp(layout.Rows, 1, OrganizerLimits.MaximumStationRows);
         double gap = ItemGapDip * display.Scale;
         double availableWidth = display.Work.Width - margin * 2 - sideInsetDip * 2 * display.Scale - gap * (columns - 1);
-        double availableHeight = display.Work.Height - margin * 2 - (ExpandedTopInsetDip + ExpandedBottomInsetDip) * display.Scale - gap * (rows - 1);
+        double availableHeight = display.Work.Height - margin * 2 -
+            (ExpandedTitleBandDip + ExpandedTopInsetDip + ExpandedBottomInsetDip) * display.Scale - gap * (rows - 1);
         return Math.Max(1, Math.Min(availableWidth / columns, availableHeight / rows));
     }
 

@@ -1,12 +1,14 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$ExePath,
-    [switch]$StationCoveredOnly
+    [switch]$StationCoveredOnly,
+    [switch]$HoverCollapseOnly
 )
 
 $ErrorActionPreference = 'Stop'
 $resolvedExe = [IO.Path]::GetFullPath($ExePath)
 if (-not (Test-Path -LiteralPath $resolvedExe -PathType Leaf)) { throw "Executable not found: $resolvedExe" }
+if ($StationCoveredOnly -or $HoverCollapseOnly) { Add-Type -AssemblyName UIAutomationClient }
 
 Add-Type -TypeDefinition @'
 using System;
@@ -25,6 +27,7 @@ public static class WindowLayerProbe
     private const int SmCyScreen = 1;
     private const uint SwpNoSize = 0x0001;
     private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpShowWindow = 0x0040;
     private static readonly IntPtr HwndTopmost = new IntPtr(-1);
@@ -116,7 +119,22 @@ public static class WindowLayerProbe
     public static extern bool SetCursorPos(int x, int y);
 
     [DllImport("user32.dll")]
+    public static extern bool GetCursorPos(out System.Drawing.Point point);
+
+    [DllImport("user32.dll")]
+    public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+
+    [DllImport("user32.dll")]
     public static extern IntPtr WindowFromPoint(System.Drawing.Point point);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsChild(IntPtr parent, IntPtr window);
+
+    public static bool IsPointOverWindow(IntPtr window, System.Drawing.Point point)
+    {
+        IntPtr hit = WindowFromPoint(point);
+        return hit == window || IsChild(window, hit);
+    }
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetClassName(IntPtr window, StringBuilder text, int capacity);
@@ -296,6 +314,7 @@ public static class WindowLayerProbe
         if (!SetWindowPos(probe, HwndNotTopmost, 20, 700, 240, 180, SwpNoActivate | SwpShowWindow))
             throw new InvalidOperationException("MoveProbeAway failed: " + Marshal.GetLastWin32Error());
     }
+
 }
 '@
 
@@ -325,6 +344,167 @@ function Wait-WindowHidden([IntPtr]$Window, [int]$TimeoutSeconds = 5) {
     return -not [WindowLayerProbe]::IsWindowVisible($Window)
 }
 
+if ($StationCoveredOnly -or $HoverCollapseOnly) {
+function Find-AppAutomationElement([int]$ProcessId, [string]$AutomationId, [bool]$VisibleOnly = $true) {
+    $condition = [System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $ProcessId),
+        [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $AutomationId))
+    $element = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+        [System.Windows.Automation.TreeScope]::Descendants, $condition)
+    if ($VisibleOnly -and $null -ne $element -and $element.Current.IsOffscreen) { return $null }
+    return $element
+}
+
+function Wait-AppAutomationElement([int]$ProcessId, [string]$AutomationId, [int]$TimeoutSeconds = 5) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $element = Find-AppAutomationElement $ProcessId $AutomationId
+        if ($null -ne $element) { return $element }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    return $null
+}
+
+function Select-AutomationElement([System.Windows.Automation.AutomationElement]$Element) {
+    $pattern = $null
+    if ($Element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) {
+        ([System.Windows.Automation.SelectionItemPattern]$pattern).Select()
+        return
+    }
+    if ($Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+        ([System.Windows.Automation.InvokePattern]$pattern).Invoke()
+        return
+    }
+    throw "Element cannot be selected: $($Element.Current.AutomationId)"
+}
+
+function Set-AutomationRange([System.Windows.Automation.AutomationElement]$Element, [double]$Value) {
+    $pattern = $null
+    if (-not $Element.TryGetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern, [ref]$pattern)) {
+        throw "Element does not support RangeValuePattern: $($Element.Current.AutomationId)"
+    }
+    ([System.Windows.Automation.RangeValuePattern]$pattern).SetValue($Value)
+}
+
+function Close-AutomationWindow([System.Windows.Automation.AutomationElement]$Element) {
+    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    for ($current = $Element; $null -ne $current; $current = $walker.GetParent($current)) {
+        if ($current.Current.ControlType -ne [System.Windows.Automation.ControlType]::Window) { continue }
+        $pattern = $null
+        if (-not $current.TryGetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern, [ref]$pattern)) {
+            throw 'The settings window does not support WindowPattern.'
+        }
+        ([System.Windows.Automation.WindowPattern]$pattern).Close()
+        return
+    }
+    throw 'The settings window was not found from the slider element.'
+}
+
+function Wait-HoverDelayState([string]$Path, [int]$ExpandMs, [int]$CollapseMs, [int]$TimeoutSeconds = 5) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        Start-Sleep -Milliseconds 100
+        try {
+            $state = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+            if ($state.GlobalSettings.HoverExpandDelayMs -eq $ExpandMs -and
+                $state.GlobalSettings.PointerLeaveCollapseDelayMs -eq $CollapseMs) { return }
+        }
+        catch { }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Hover delays were not persisted as $ExpandMs/$CollapseMs ms."
+}
+}
+
+function Test-HoverCollapseBehavior([Diagnostics.Process]$Process, [string]$ModeName) {
+    $compactWindow = Wait-OrganizerWindow $Process.Id $false
+    if ($compactWindow -eq [IntPtr]::Zero) { throw "$ModeName compact organizer was not found." }
+    $initialBounds = New-Object WindowLayerProbe+Rect
+    [WindowLayerProbe]::GetWindowRect($compactWindow, [ref]$initialBounds) | Out-Null
+    $compactX = [int](($initialBounds.Left + $initialBounds.Right) / 2)
+    $compactY = [int](($initialBounds.Top + $initialBounds.Bottom) / 2)
+    [WindowLayerProbe]::BringNormalToTop($compactWindow)
+    [WindowLayerProbe]::SetCursorPos($compactX, $compactY) | Out-Null
+    if (-not [WindowLayerProbe]::IsPointOverWindow(
+        $compactWindow, [Drawing.Point]::new($compactX, $compactY))) {
+        throw "$ModeName compact organizer is covered at the hover test point."
+    }
+    Start-Sleep -Milliseconds 450
+    if ([WindowLayerProbe]::FindOrganizerWindow($Process.Id, $true) -ne [IntPtr]::Zero) {
+        throw "$ModeName expanded before the configured 800 ms hover threshold."
+    }
+
+    $expandedWindow = Wait-OrganizerWindow $Process.Id $true 4
+    if ($expandedWindow -eq [IntPtr]::Zero) { throw "$ModeName did not expand after the configured hover threshold." }
+    Start-Sleep -Milliseconds 400
+    $expandedBounds = New-Object WindowLayerProbe+Rect
+    [WindowLayerProbe]::GetWindowRect($expandedWindow, [ref]$expandedBounds) | Out-Null
+    $primary = [WindowLayerProbe]::GetPrimaryMonitorBounds()
+    $dragStartX = [int](($expandedBounds.Left + $expandedBounds.Right) / 2)
+    $dragStartY = [int](($expandedBounds.Top + $expandedBounds.Bottom) / 2)
+    $dragDeltaX = if ($expandedBounds.Right + 100 -lt $primary.Right) { 80 } else { -80 }
+    $dragDeltaY = if ($expandedBounds.Bottom + 80 -lt $primary.Bottom) { 60 } else { -60 }
+    [WindowLayerProbe]::SetCursorPos($dragStartX, $dragStartY) | Out-Null
+    [WindowLayerProbe]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+    try {
+        Start-Sleep -Milliseconds 450
+        [WindowLayerProbe]::SetCursorPos($dragStartX + $dragDeltaX, $dragStartY + $dragDeltaY) | Out-Null
+        Start-Sleep -Milliseconds 250
+    }
+    finally {
+        [WindowLayerProbe]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+    }
+    Start-Sleep -Milliseconds 300
+    $movedBounds = New-Object WindowLayerProbe+Rect
+    [WindowLayerProbe]::GetWindowRect($expandedWindow, [ref]$movedBounds) | Out-Null
+    if ($movedBounds.Left -eq $expandedBounds.Left -and $movedBounds.Top -eq $expandedBounds.Top) {
+        throw "$ModeName expanded organizer did not move through the real long-press drag path."
+    }
+    $insideX = [int](($movedBounds.Left + $movedBounds.Right) / 2)
+    $insideY = [int](($movedBounds.Top + $movedBounds.Bottom) / 2)
+    [WindowLayerProbe]::SetCursorPos($insideX, $insideY) | Out-Null
+
+    $outsideX = if ($insideX -gt ($primary.Left + $primary.Right) / 2) { $primary.Left + 4 } else { $primary.Right - 4 }
+    $outsideY = if ($insideY -gt ($primary.Top + $primary.Bottom) / 2) { $primary.Top + 4 } else { $primary.Bottom - 4 }
+    [WindowLayerProbe]::SetCursorPos($outsideX, $outsideY) | Out-Null
+    Start-Sleep -Milliseconds 450
+    if ([WindowLayerProbe]::FindOrganizerWindow($Process.Id, $true) -eq [IntPtr]::Zero) {
+        throw "$ModeName collapsed before the configured 900 ms leave threshold."
+    }
+    [WindowLayerProbe]::SetCursorPos($insideX, $insideY) | Out-Null
+    Start-Sleep -Milliseconds 1100
+    if ([WindowLayerProbe]::FindOrganizerWindow($Process.Id, $true) -eq [IntPtr]::Zero) {
+        throw "$ModeName did not cancel collapse when the pointer returned before the threshold."
+    }
+    [WindowLayerProbe]::SetCursorPos($outsideX, $outsideY) | Out-Null
+    Start-Sleep -Milliseconds 450
+    if ([WindowLayerProbe]::FindOrganizerWindow($Process.Id, $true) -eq [IntPtr]::Zero) {
+        throw "$ModeName collapsed before the second leave threshold."
+    }
+    $compactWindow = Wait-OrganizerWindow $Process.Id $false 4
+    if ($compactWindow -eq [IntPtr]::Zero) { throw "$ModeName did not collapse after the configured leave threshold." }
+    $deadline = [DateTime]::UtcNow.AddSeconds(4)
+    $stableSamples = 0
+    $previousBounds = $null
+    do {
+        Start-Sleep -Milliseconds 100
+        $finalBounds = New-Object WindowLayerProbe+Rect
+        [WindowLayerProbe]::GetWindowRect($compactWindow, [ref]$finalBounds) | Out-Null
+        $compactSizeRestored = $finalBounds.Right - $finalBounds.Left -eq $initialBounds.Right - $initialBounds.Left -and
+            $finalBounds.Bottom - $finalBounds.Top -eq $initialBounds.Bottom - $initialBounds.Top
+        $unchanged = $null -ne $previousBounds -and
+            $finalBounds.Left -eq $previousBounds.Left -and $finalBounds.Top -eq $previousBounds.Top -and
+            $finalBounds.Right -eq $previousBounds.Right -and $finalBounds.Bottom -eq $previousBounds.Bottom
+        $stableSamples = if ($compactSizeRestored -and $unchanged) { $stableSamples + 1 } else { 0 }
+        $previousBounds = $finalBounds
+    } while ($stableSamples -lt 2 -and [DateTime]::UtcNow -lt $deadline)
+    if ($stableSamples -lt 2) { throw "$ModeName compact bounds did not settle after collapse." }
+    if ($finalBounds.Left -ne $initialBounds.Left -or $finalBounds.Top -ne $initialBounds.Top) {
+        throw "$ModeName collapsed to $($finalBounds.Left),$($finalBounds.Top), expected $($initialBounds.Left),$($initialBounds.Top)."
+    }
+}
+
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $runRoot = Join-Path $projectRoot "artifacts\layer-runs\$([Guid]::NewGuid().ToString('N'))"
 $localRoot = Join-Path $runRoot 'LocalAppData\TuckPane'
@@ -340,13 +520,14 @@ $layoutColumns = if ($StationCoveredOnly) { 1 } else { 3 }
 $compactScale = if ($StationCoveredOnly) { '1.559999942779541' } else { '0.8' }
 $canvasScale = if ($StationCoveredOnly) { '0.34582272344925186' } else { '0.7' }
 $itemScale = if ($StationCoveredOnly) { '0.8' } else { '1.0' }
+$schemaVersion = 7
+$hoverSettingsJson = if ($HoverCollapseOnly) { ', "ExpandOnHover": true, "CollapseOnPointerLeave": true, "HoverExpandDelayMs": 350, "PointerLeaveCollapseDelayMs": 400' } else { '' }
 $floatingPeerJson = if ($StationCoveredOnly) { @'
 ,
     {
       "Id": "66666666-6666-6666-6666-666666666666",
       "Name": "LayerPeer",
       "CreatedAtUtc": "2026-08-23T00:00:00+00:00",
-      "ThemeOverride": null,
       "PlacementMode": 0,
       "Layout": { "Mode": 0, "Rows": 3, "Columns": 3 },
       "CompactScale": 0.8,
@@ -361,15 +542,14 @@ $floatingPeerJson = if ($StationCoveredOnly) { @'
 '@ } else { '' }
 [IO.File]::WriteAllText((Join-Path $localRoot 'state.json'), @"
 {
-  "SchemaVersion": 3,
-  "GlobalSettings": { "Theme": 0, "StartWithWindows": false, "Language": 0 },
+  "SchemaVersion": $schemaVersion,
+  "GlobalSettings": { "ThemeColorArgb": 4293060073, "Material": 0, "ThemeTransparency": 0.35, "StartWithWindows": false, "Language": 0$hoverSettingsJson },
   "ConsolePlacement": null,
   "Organizers": [
     {
       "Id": "55555555-5555-5555-5555-555555555555",
       "Name": "LayerProbe",
       "CreatedAtUtc": "2026-08-23T00:00:00+00:00",
-      "ThemeOverride": null,
       "PlacementMode": $placementMode,
       "DockEdge": 2,
       "Layout": { "Mode": 0, "Rows": $layoutRows, "Columns": $layoutColumns },
@@ -387,12 +567,67 @@ $floatingPeerJson = if ($StationCoveredOnly) { @'
 "@, [Text.UTF8Encoding]::new($false))
 
 $probeWindow = [WindowLayerProbe]::CreateProbeWindow()
+$originalCursor = [Drawing.Point]::Empty
+[WindowLayerProbe]::GetCursorPos([ref]$originalCursor) | Out-Null
 $probeProcess = $null
 try {
     $env:TUCKPANE_TEST_ROOT = $runRoot
     Remove-Item Env:GLASSFOLDER_TEST_EXPANDED -ErrorAction SilentlyContinue
     Remove-Item Env:GLASSFOLDER_TEST_TRANSITION_CYCLES -ErrorAction SilentlyContinue
     Remove-Item Env:TUCKPANE_TEST_RESIZE_AUTORUN -ErrorAction SilentlyContinue
+
+    if ($HoverCollapseOnly) {
+        [WindowLayerProbe]::DestroyWindow($probeWindow) | Out-Null
+        $probeWindow = [IntPtr]::Zero
+        $statePath = Join-Path $localRoot 'state.json'
+        $probeProcess = Start-Process -FilePath $resolvedExe -ArgumentList '--startup' -PassThru
+        if ((Wait-OrganizerWindow $probeProcess.Id $false) -eq [IntPtr]::Zero) {
+            throw 'Floating compact organizer was not found before the settings check.'
+        }
+
+        $consoleOpener = Start-Process -FilePath $resolvedExe -PassThru
+        $consoleOpener.WaitForExit(5000) | Out-Null
+        $generalNav = Wait-AppAutomationElement $probeProcess.Id 'GeneralNavItem' 5
+        if ($null -eq $generalNav) { throw 'The General settings navigation item was not found.' }
+        Select-AutomationElement $generalNav
+        $expandSlider = Wait-AppAutomationElement $probeProcess.Id 'HoverExpandDelaySlider' 5
+        $collapseSlider = Wait-AppAutomationElement $probeProcess.Id 'PointerLeaveCollapseDelaySlider' 5
+        if ($null -eq $expandSlider -or $null -eq $collapseSlider) { throw 'The two hover delay sliders were not found.' }
+        if (-not $expandSlider.Current.IsEnabled -or -not $collapseSlider.Current.IsEnabled) {
+            throw 'An enabled hover option did not expose an enabled delay slider.'
+        }
+        if ($null -ne (Find-AppAutomationElement $probeProcess.Id 'CollapseToCenterToggle' $false)) {
+            throw 'CollapseToCenterToggle is still exposed in settings.'
+        }
+        Set-AutomationRange $expandSlider 800
+        Set-AutomationRange $collapseSlider 900
+        Wait-HoverDelayState $statePath 800 900
+        Close-AutomationWindow $collapseSlider
+        Start-Sleep -Milliseconds 300
+        if ($probeProcess.HasExited) { throw 'Closing settings exited TuckPane.' }
+
+        Test-HoverCollapseBehavior $probeProcess 'Floating'
+        Stop-Process -Id $probeProcess.Id -Force
+        $probeProcess.WaitForExit(5000) | Out-Null
+        $probeProcess = $null
+
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        $state.Organizers[0].PlacementMode = 1
+        $state.Organizers[0].Position = $null
+        $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $statePath -Encoding utf8
+        $probeProcess = Start-Process -FilePath $resolvedExe -ArgumentList '--startup' -PassThru
+        Start-Sleep -Milliseconds 1800
+        Test-HoverCollapseBehavior $probeProcess 'Positioned'
+
+        [pscustomobject]@{
+            Passed = $true
+            DelaySlidersPersisted = $true
+            CollapseToCenterRemoved = $true
+            FloatingThresholdsAndOrigin = $true
+            PositionedThresholdsAndOrigin = $true
+        } | Format-List
+        return
+    }
 
     if ($StationCoveredOnly) {
         $primaryBounds = [WindowLayerProbe]::GetPrimaryMonitorBounds()
@@ -414,11 +649,23 @@ try {
         if ([WindowLayerProbe]::WindowFromPoint([Drawing.Point]::new($safeX, $safeY)) -ne $probeWindow) {
             throw 'The covering probe window does not cover the primary-screen center.'
         }
+        $layerPeer = [WindowLayerProbe]::FindOrganizerWindow($probeProcess.Id, $false)
+        if ($layerPeer -eq [IntPtr]::Zero) { throw 'The preconfigured LayerPeer organizer was not found.' }
+        if (-not [WindowLayerProbe]::IsAbove($probeWindow, $layerPeer)) {
+            throw 'The covering normal window was not above LayerPeer before Station expansion.'
+        }
         $foregroundBefore = [WindowLayerProbe]::GetForegroundWindow()
         [WindowLayerProbe]::SetCursorPos($primaryBounds.Right - 1, $safeY) | Out-Null
 
         $expandedWindow = Wait-VisibleStationWindow $probeProcess.Id 6
         if ($expandedWindow -eq [IntPtr]::Zero) { throw 'The primary right-edge Station did not expand.' }
+        foreach ($sample in 1..15) {
+            Start-Sleep -Milliseconds 100
+            if (-not [WindowLayerProbe]::IsWindowVisible($expandedWindow) -or
+                [WindowLayerProbe]::FindVisibleStationWindow($probeProcess.Id) -ne $expandedWindow) {
+                throw 'The Station did not remain continuously expanded while the pointer stayed on the edge.'
+            }
+        }
         $desktopIconView = [WindowLayerProbe]::FindDesktopIconView()
         if ($desktopIconView -eq [IntPtr]::Zero) { throw 'Explorer desktop icon view was not found.' }
         if ([WindowLayerProbe]::GetOwner($expandedWindow) -eq $desktopIconView) {
@@ -440,6 +687,9 @@ try {
         if (-not [WindowLayerProbe]::IsAbove($expandedWindow, $probeWindow)) {
             throw 'The expanded Station is behind the covering normal window.'
         }
+        if (-not [WindowLayerProbe]::IsAbove($probeWindow, $layerPeer)) {
+            throw 'Expanding the Station raised LayerPeer above the covering normal window.'
+        }
 
         [WindowLayerProbe]::SetCursorPos($safeX, $safeY) | Out-Null
         if (-not (Wait-WindowHidden $expandedWindow 5)) {
@@ -448,16 +698,25 @@ try {
         if ([WindowLayerProbe]::IsTopmost($expandedWindow)) {
             throw 'The hidden Station still keeps WS_EX_TOPMOST.'
         }
+        foreach ($sample in 1..12) {
+            Start-Sleep -Milliseconds 100
+            if ([WindowLayerProbe]::FindVisibleStationWindow($probeProcess.Id) -ne [IntPtr]::Zero) {
+                throw 'The Station reopened after the pointer left its expanded safe region.'
+            }
+        }
 
         [pscustomobject]@{
             Passed = $true
             StationExpanded = $true
+            StableAtEdgeFor1500Ms = $true
             ExpandedDetachedFromDesktop = $true
             ExpandedTopmost = $true
             ExpandedNoActivate = $true
             ExpandedDidNotActivate = $true
             ExpandedAboveCoveringWindow = $true
+            LayerPeerStayedBehindCover = $true
             HiddenAfterPointerLeave = $true
+            StayedHiddenAfterPointerLeave = $true
             HiddenTopmostCleared = $true
         } | Format-List
         return
@@ -570,6 +829,7 @@ finally {
         $probeProcess.WaitForExit(5000) | Out-Null
     }
     if ($probeWindow -ne [IntPtr]::Zero) { [WindowLayerProbe]::DestroyWindow($probeWindow) | Out-Null }
+    [WindowLayerProbe]::SetCursorPos($originalCursor.X, $originalCursor.Y) | Out-Null
     Remove-Item Env:TUCKPANE_TEST_ROOT -ErrorAction SilentlyContinue
     Remove-Item Env:GLASSFOLDER_TEST_EXPANDED -ErrorAction SilentlyContinue
     Remove-Item Env:GLASSFOLDER_TEST_TRANSITION_CYCLES -ErrorAction SilentlyContinue

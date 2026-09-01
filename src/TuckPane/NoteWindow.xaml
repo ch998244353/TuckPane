@@ -6,9 +6,6 @@
         x:Name="WindowFrame"
         CornerRadius="8">
         <Grid x:Name="WindowRoot">
-            <Grid.KeyboardAccelerators>
-                <KeyboardAccelerator Key="F2" Invoked="RenameKeyboardAccelerator_Invoked" />
-            </Grid.KeyboardAccelerators>
             <Grid.RowDefinitions>
                 <RowDefinition Height="44" />
                 <RowDefinition Height="*" />
@@ -37,9 +34,8 @@
                     FontFamily="Segoe UI Variable Text"
                     FontSize="15"
                     FontWeight="SemiBold"
-                    IsDoubleTapEnabled="True"
                     TextTrimming="CharacterEllipsis"
-                    DoubleTapped="NoteTitleText_DoubleTapped"
+                    Tapped="NoteTitleText_Tapped"
                     SizeChanged="TitleDragSurface_SizeChanged" />
                 <TextBox
                     x:Name="NoteTitleEditor"
@@ -64,6 +60,7 @@
                     Margin="0,0,2,0"
                     Background="Transparent"
                     BorderThickness="0"
+                    CornerRadius="8"
                     HorizontalContentAlignment="Center"
                     Padding="0"
                     VerticalContentAlignment="Center"
@@ -78,6 +75,7 @@
                     Margin="0,0,2,0"
                     Background="Transparent"
                     BorderThickness="0"
+                    CornerRadius="8"
                     HorizontalContentAlignment="Center"
                     Padding="0"
                     VerticalContentAlignment="Center"
@@ -91,6 +89,7 @@
                     Height="34"
                     Background="Transparent"
                     BorderThickness="0"
+                    CornerRadius="8"
                     HorizontalContentAlignment="Center"
                     Padding="0"
                     VerticalContentAlignment="Center"

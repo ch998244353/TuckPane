@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using TuckPane.Models;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace TuckPane.Services;
 
@@ -51,6 +52,7 @@ internal enum ShellDragOutcome
 internal readonly record struct ShellDragResult(
     ShellDragOutcome Outcome,
     NativeMethods.POINT? DesktopDropPoint,
+    bool DesktopCopyRequested,
     TimeSpan PreparationDuration,
     TimeSpan? FirstFeedbackDelay,
     int CallbackCount,
@@ -67,6 +69,7 @@ internal static class ShellDragService
     private const uint GlobalMoveable = 0x0002;
     private const uint GlobalZeroInit = 0x0040;
     private const uint MouseKeyLeft = 0x0001;
+    private const uint MouseKeyControl = 0x0008;
     private const int Success = 0;
     private const int DragDropDrop = 0x00040100;
     private const int DragDropCancel = 0x00040101;
@@ -79,7 +82,11 @@ internal static class ShellDragService
 
     internal static bool RequiresNativeDrag(WidgetItemKind kind) => Enum.IsDefined(kind);
 
-    internal static void SetCutClipboard(string path)
+    internal static void SetCutClipboard(string path) => SetClipboard(path, DropEffectMove);
+
+    internal static void SetCopyClipboard(string path) => SetClipboard(path, DropEffectCopy);
+
+    private static void SetClipboard(string path, uint preferredEffect)
     {
         int oleResult = OleInitialize(IntPtr.Zero);
         if (oleResult < 0) Marshal.ThrowExceptionForHR(oleResult);
@@ -89,7 +96,7 @@ internal static class ShellDragService
             object dataObject = Marshal.GetObjectForIUnknown(data.Pointer);
             try
             {
-                SetPreferredDropEffect((IDataObject)dataObject, DropEffectMove);
+                SetPreferredDropEffect((IDataObject)dataObject, preferredEffect);
                 Marshal.ThrowExceptionForHR(OleSetClipboard(data.Pointer));
                 Marshal.ThrowExceptionForHR(OleFlushClipboard());
             }
@@ -132,6 +139,55 @@ internal static class ShellDragService
             if (dataObject is not null && Marshal.IsComObject(dataObject)) _ = Marshal.ReleaseComObject(dataObject);
             if (pointer != IntPtr.Zero) _ = Marshal.Release(pointer);
             OleUninitialize();
+        }
+    }
+
+    internal static bool HasFileDrop(DataPackageView dataView) =>
+        TryUseDataObject(dataView, dataObject =>
+        {
+            FORMATETC format = CreateFormat(CfHDrop);
+            return dataObject.QueryGetData(ref format) == 0;
+        });
+
+    internal static bool TryGetFileDropPaths(DataPackageView dataView, out string[] paths)
+    {
+        string[] result = [];
+        bool read = TryUseDataObject(dataView, dataObject =>
+        {
+            result = ReadFileDropPaths(dataObject)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return result.Length > 0;
+        });
+        paths = result;
+        return read;
+    }
+
+    private static bool TryUseDataObject(DataPackageView dataView, Func<IDataObject, bool> action)
+    {
+        IntPtr unknown = IntPtr.Zero;
+        IntPtr dataObjectPointer = IntPtr.Zero;
+        object? dataObject = null;
+        try
+        {
+            unknown = Marshal.GetIUnknownForObject(dataView);
+            Guid interfaceId = DataObjectInterface;
+            if (Marshal.QueryInterface(unknown, in interfaceId, out dataObjectPointer) < 0 ||
+                dataObjectPointer == IntPtr.Zero) return false;
+            dataObject = Marshal.GetTypedObjectForIUnknown(dataObjectPointer, typeof(IDataObject));
+            return action((IDataObject)dataObject);
+        }
+        catch (Exception ex) when (ex is COMException or InvalidCastException or
+                                   ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (dataObject is not null && Marshal.IsComObject(dataObject)) _ = Marshal.ReleaseComObject(dataObject);
+            if (dataObjectPointer != IntPtr.Zero) _ = Marshal.Release(dataObjectPointer);
+            if (unknown != IntPtr.Zero) _ = Marshal.Release(unknown);
         }
     }
 
@@ -218,7 +274,11 @@ internal static class ShellDragService
         return Move(owner, session, default, cancellationRequested);
     }
 
-    internal static ShellDragSession Prepare(string path, double grabRatioX = .5, double grabRatioY = .5)
+    internal static ShellDragSession Prepare(
+        string path,
+        double grabRatioX = .5,
+        double grabRatioY = .5,
+        bool preferMove = false)
     {
         long started = Stopwatch.GetTimestamp();
         ShellDataObject data = CreateDataObject(path);
@@ -226,6 +286,12 @@ internal static class ShellDragService
         bool dragImageInitialized = false;
         try
         {
+            if (preferMove)
+            {
+                object dataObject = Marshal.GetObjectForIUnknown(data.Pointer);
+                try { SetPreferredDropEffect((IDataObject)dataObject, DropEffectMove); }
+                finally { if (Marshal.IsComObject(dataObject)) _ = Marshal.ReleaseComObject(dataObject); }
+            }
             try
             {
                 bitmap = IconCacheService.CreateDragBitmap(path, DragImageSize);
@@ -254,7 +320,8 @@ internal static class ShellDragService
         IntPtr owner,
         ShellDragSession session,
         NativeMethods.RECT desktopExclusionBounds,
-        Func<bool>? cancellationRequested = null)
+        Func<bool>? cancellationRequested = null,
+        bool allowLink = true)
     {
         ArgumentNullException.ThrowIfNull(session);
         session.ThrowIfDisposed();
@@ -269,7 +336,7 @@ internal static class ShellDragService
             int result = DoDragDrop(
                 session.Data.Pointer,
                 dropSourcePointer,
-                DropEffectCopy | DropEffectMove | DropEffectLink,
+                DropEffectCopy | DropEffectMove | (allowLink ? DropEffectLink : 0),
                 out uint performed);
             session.DragDuration = Stopwatch.GetElapsedTime(dragStarted);
             session.FirstFeedbackDelay = dropSource.FirstFeedbackDelay;
@@ -280,6 +347,7 @@ internal static class ShellDragService
             return new ShellDragResult(
                 outcome,
                 dropSource.DesktopDropPoint,
+                dropSource.DesktopCopyRequested,
                 session.PreparationDuration,
                 session.FirstFeedbackDelay,
                 session.CallbackCount,
@@ -364,6 +432,7 @@ internal static class ShellDragService
 
         public bool DesktopRequested { get; private set; }
         public NativeMethods.POINT? DesktopDropPoint { get; private set; }
+        public bool DesktopCopyRequested { get; private set; }
         public TimeSpan? FirstFeedbackDelay { get; private set; }
         public int CallbackCount { get; private set; }
         public TimeSpan MaximumCallbackInterval { get; private set; }
@@ -378,6 +447,7 @@ internal static class ShellDragService
                 if (DragBoundaryMath.Contains(desktopExclusionBounds, dropPoint)) return DragDropCancel;
                 DesktopRequested = true;
                 DesktopDropPoint = dropPoint;
+                DesktopCopyRequested = (keyState & MouseKeyControl) != 0;
                 return DragDropCancel;
             }
             return DragDropDrop;

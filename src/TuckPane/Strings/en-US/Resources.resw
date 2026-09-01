@@ -5,39 +5,62 @@
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
   <data name="AppTitle" xml:space="preserve"><value>TuckPane</value></data>
+  <data name="NavSystem" xml:space="preserve"><value>System</value></data>
+  <data name="NavDisplay" xml:space="preserve"><value>Display</value></data>
+  <data name="NavInteraction" xml:space="preserve"><value>Interaction</value></data>
   <data name="NavGeneral" xml:space="preserve"><value>General</value></data>
   <data name="NavTheme" xml:space="preserve"><value>Theme</value></data>
   <data name="NavAdd" xml:space="preserve"><value>Add</value></data>
   <data name="NavManage" xml:space="preserve"><value>Manage</value></data>
   <data name="GeneralTitle" xml:space="preserve"><value>General</value></data>
+  <data name="SystemTitle" xml:space="preserve"><value>System</value></data>
+  <data name="DisplaySettingsTitle" xml:space="preserve"><value>Display</value></data>
+  <data name="InteractionTitle" xml:space="preserve"><value>Interaction</value></data>
   <data name="StartupTitle" xml:space="preserve"><value>Start TuckPane with Windows</value></data>
-  <data name="StartupDescription" xml:space="preserve"><value>Restore organizers silently without opening the console.</value></data>
   <data name="CollapseOutsideTitle" xml:space="preserve"><value>Collapse when clicking outside</value></data>
-  <data name="CollapseOutsideDescription" xml:space="preserve"><value>Automatically collapse an expanded organizer when you click elsewhere.</value></data>
+  <data name="NoteAlwaysOnTopTitle" xml:space="preserve"><value>Keep notes and to-dos always on top</value></data>
+  <data name="WindowAlignmentTitle" xml:space="preserve"><value>Align windows while dragging</value></data>
+  <data name="RememberExpandedOrganizerPositionTitle" xml:space="preserve"><value>Remember expanded organizer positions</value></data>
+  <data name="UniformFloatingCompactScaleTitle" xml:space="preserve"><value>Use one floating entry size</value></data>
+  <data name="UniformPositionedCompactScaleTitle" xml:space="preserve"><value>Use one positioned entry size</value></data>
+  <data name="UniformCompactScaleErrorTitle" xml:space="preserve"><value>Could not update the uniform entry size</value></data>
   <data name="ExpandOnHoverTitle" xml:space="preserve"><value>Expand when hovering</value></data>
-  <data name="ExpandOnHoverDescription" xml:space="preserve"><value>Expand an ordinary organizer after hovering over it for 350 milliseconds.</value></data>
   <data name="CollapseOnPointerLeaveTitle" xml:space="preserve"><value>Collapse after pointer leaves</value></data>
-  <data name="CollapseOnPointerLeaveDescription" xml:space="preserve"><value>Collapse an expanded ordinary organizer 400 milliseconds after the pointer leaves it.</value></data>
+  <data name="HoverExpandDelayLabel" xml:space="preserve"><value>Expand delay</value></data>
+  <data name="PointerLeaveCollapseDelayLabel" xml:space="preserve"><value>Collapse delay</value></data>
+  <data name="StationPointerLeaveCollapseDelayTitle" xml:space="preserve"><value>Station collapse delay</value></data>
+  <data name="StationActivationDistanceTitle" xml:space="preserve"><value>Station activation distance</value></data>
+  <data name="StationHoverExpandDelayTitle" xml:space="preserve"><value>Station expansion delay</value></data>
+  <data name="DipFormat" xml:space="preserve"><value>{0} DIP</value></data>
+  <data name="MillisecondsFormat" xml:space="preserve"><value>{0} ms</value></data>
+  <data name="HoverDelayErrorTitle" xml:space="preserve"><value>Could not save pointer interaction settings</value></data>
   <data name="ExclusiveExpansionTitle" xml:space="preserve"><value>Expand only one organizer</value></data>
-  <data name="ExclusiveExpansionDescription" xml:space="preserve"><value>Turn this off to keep floating, positioned, and station windows open together.</value></data>
   <data name="LanguageLabel" xml:space="preserve"><value>Language</value></data>
-  <data name="LanguageDescription" xml:space="preserve"><value>Changes apply immediately without restarting.</value></data>
   <data name="LanguageChinese" xml:space="preserve"><value>简体中文</value></data>
   <data name="LanguageEnglish" xml:space="preserve"><value>English</value></data>
   <data name="LanguageJapanese" xml:space="preserve"><value>日本語</value></data>
   <data name="ThemeTitle" xml:space="preserve"><value>Theme</value></data>
-  <data name="ThemeLightAcrylic" xml:space="preserve"><value>Light acrylic</value></data>
-  <data name="ThemeDarkAcrylic" xml:space="preserve"><value>Dark acrylic</value></data>
-  <data name="ThemeSolidLight" xml:space="preserve"><value>Solid light</value></data>
-  <data name="ThemeSolidDark" xml:space="preserve"><value>Solid dark</value></data>
-  <data name="ThemeFrostedLight" xml:space="preserve"><value>Opaque light acrylic</value></data>
-  <data name="ThemeFrostedDark" xml:space="preserve"><value>Opaque dark acrylic</value></data>
+  <data name="ThemeTargetLabel" xml:space="preserve"><value>Edit target</value></data>
+  <data name="ThemeTargetSettings" xml:space="preserve"><value>Settings</value></data>
+  <data name="ThemeTargetOrganizer" xml:space="preserve"><value>Organizers</value></data>
+  <data name="ThemeColorLabel" xml:space="preserve"><value>Color</value></data>
+  <data name="ThemeColorPresetFormat" xml:space="preserve"><value>Theme color {0}</value></data>
+  <data name="ThemeCustomColor" xml:space="preserve"><value>Custom</value></data>
+  <data name="ThemeMaterialLabel" xml:space="preserve"><value>Material</value></data>
+  <data name="ThemeMaterialAcrylic" xml:space="preserve"><value>Acrylic</value></data>
+  <data name="ThemeMaterialGlass" xml:space="preserve"><value>Glass</value></data>
+  <data name="ThemeMaterialMatte" xml:space="preserve"><value>Matte</value></data>
+  <data name="ThemeTransparencyLabel" xml:space="preserve"><value>Background transparency</value></data>
+  <data name="ThemeSaveErrorTitle" xml:space="preserve"><value>Couldn't save theme</value></data>
   <data name="AddTitle" xml:space="preserve"><value>Add organizer</value></data>
   <data name="NameLabel" xml:space="preserve"><value>Name</value></data>
   <data name="ModeLabel" xml:space="preserve"><value>Mode</value></data>
   <data name="ModeFloating" xml:space="preserve"><value>Floating mode</value></data>
   <data name="ModePositioned" xml:space="preserve"><value>Positioned mode</value></data>
   <data name="ModeStation" xml:space="preserve"><value>Station mode</value></data>
+  <data name="ExpandedContentModeLabel" xml:space="preserve"><value>Expanded content</value></data>
+  <data name="ExpandedContentModeIcon" xml:space="preserve"><value>Icon mode</value></data>
+  <data name="ExpandedContentModeCompactList" xml:space="preserve"><value>Compact mode</value></data>
   <data name="DisplayLabel" xml:space="preserve"><value>Display</value></data>
   <data name="DockEdgeLabel" xml:space="preserve"><value>Dock edge</value></data>
   <data name="DockLeft" xml:space="preserve"><value>Left</value></data>
@@ -47,12 +70,9 @@
   <data name="DisplayItemFormat" xml:space="preserve"><value>Display {0} ({1}×{2})</value></data>
   <data name="RowsLabel" xml:space="preserve"><value>Rows</value></data>
   <data name="ColumnsLabel" xml:space="preserve"><value>Columns</value></data>
-  <data name="ThemeLabel" xml:space="preserve"><value>Theme</value></data>
-  <data name="ThemeFollowGlobal" xml:space="preserve"><value>Follow global</value></data>
   <data name="CompactScaleLabel" xml:space="preserve"><value>Entry size</value></data>
   <data name="CanvasScaleLabel" xml:space="preserve"><value>Canvas size</value></data>
   <data name="ItemScaleLabel" xml:space="preserve"><value>Content scale</value></data>
-  <data name="NameScaleLabel" xml:space="preserve"><value>Label size</value></data>
   <data name="CreateOrganizer" xml:space="preserve"><value>Create organizer</value></data>
   <data name="OrganizerLimit" xml:space="preserve"><value>The 12-organizer limit has been reached.</value></data>
   <data name="ManageTitle" xml:space="preserve"><value>Manage</value></data>
@@ -74,13 +94,14 @@
   <data name="ContextManage" xml:space="preserve"><value>Settings</value></data>
   <data name="ContextDuplicate" xml:space="preserve"><value>Duplicate window</value></data>
   <data name="ContextSwitchMode" xml:space="preserve"><value>Switch mode</value></data>
+  <data name="ContextSwitchContentFormat" xml:space="preserve"><value>Switch to {0}</value></data>
   <data name="ContextRename" xml:space="preserve"><value>Rename</value></data>
   <data name="ContextOpenStorage" xml:space="preserve"><value>Open storage folder</value></data>
   <data name="ContextDeleteWindow" xml:space="preserve"><value>Delete window</value></data>
   <data name="CopyNameSuffix" xml:space="preserve"><value> - Copy</value></data>
   <data name="Collapse" xml:space="preserve"><value>Collapse</value></data>
   <data name="TransparencyTitle" xml:space="preserve"><value>Transparency is unavailable</value></data>
-  <data name="TransparencyMessage" xml:space="preserve"><value>Windows cannot provide live acrylic right now. TuckPane is using the matching solid fallback.</value></data>
+  <data name="TransparencyMessage" xml:space="preserve"><value>Windows cannot provide live theme effects right now. TuckPane is using the matching solid fallback.</value></data>
   <data name="FilesMovingTitle" xml:space="preserve"><value>Files are still moving</value></data>
   <data name="FilesMovingMessage" xml:space="preserve"><value>Waiting ensures the current files finish moving. Exiting now cancels the transfer and removes temporary copies.</value></data>
   <data name="CancelTransferAndExit" xml:space="preserve"><value>Cancel transfer and exit</value></data>
@@ -101,7 +122,19 @@
   <data name="MaximumOrganizersError" xml:space="preserve"><value>You can create up to 12 organizers.</value></data>
   <data name="StationEdgeOccupiedError" xml:space="preserve"><value>A station already uses this screen edge. Choose another edge.</value></data>
   <data name="StationDuplicateError" xml:space="preserve"><value>Stations cannot be duplicated.</value></data>
-  <data name="StationManageModeError" xml:space="preserve"><value>Change station mode from Settings.</value></data>
+  <data name="StationManageModeError" xml:space="preserve"><value>Station mode cannot be changed to or from Floating or Positioned mode.</value></data>
+  <data name="StationContainsOrganizersError" xml:space="preserve"><value>This Station still contains organizers. Drag them out before deleting it.</value></data>
+  <data name="ContainedOrganizerNoGridError" xml:space="preserve"><value>No desktop grid position is available on the target display. The organizer was returned to its Station.</value></data>
+  <data name="OrganizerStationDropError" xml:space="preserve"><value>Could not place the organizer in the Station: {0}</value></data>
+  <data name="MoveOrganizerFilesOnDeleteTitle" xml:space="preserve"><value>Move organizer files to Desktop when deleting</value></data>
+  <data name="DeleteBehaviorErrorTitle" xml:space="preserve"><value>Could not save delete setting</value></data>
+  <data name="CompactNameScaleTitle" xml:space="preserve"><value>Collapsed name size</value></data>
+  <data name="ExpandedNameScaleTitle" xml:space="preserve"><value>Expanded name size</value></data>
+  <data name="UniformCompactNameScaleErrorTitle" xml:space="preserve"><value>Could not save name size</value></data>
+  <data name="DeleteOrganizerOnly" xml:space="preserve"><value>Delete organizer only</value></data>
+  <data name="DeleteKeepFilesFormat" xml:space="preserve"><value>Only the organizer will be deleted. The directory “{0}” and all its files will remain in place.</value></data>
+  <data name="OrganizerDeletedFilesRetainedFormat" xml:space="preserve"><value>The organizer was deleted. Its files remain in “{0}”.</value></data>
+  <data name="DeleteLegacyNoteMigrationFailed" xml:space="preserve"><value>Some legacy notes could not be migrated safely. The organizer and all files were retained; try again later.</value></data>
   <data name="NoPrimaryGridError" xml:space="preserve"><value>No desktop grid position is available on the primary display. The organizer was not created.</value></data>
   <data name="PositionedRollbackError" xml:space="preserve"><value>No desktop grid position is available on this display. Floating mode was restored.</value></data>
   <data name="TransferBeforeDelete" xml:space="preserve"><value>Wait for the file transfer to finish before deleting the organizer.</value></data>
@@ -163,22 +196,34 @@
   <data name="StorageProtectedPath" xml:space="preserve"><value>Choose a dedicated subfolder instead of a drive, profile, Desktop, Documents, Downloads, or TuckPane data root.</value></data>
   <data name="StorageFolderMissing" xml:space="preserve"><value>The selected save directory does not exist.</value></data>
   <data name="StoragePathOverlap" xml:space="preserve"><value>The selected directory overlaps another organizer's save directory.</value></data>
-  <data name="AutomaticStoragePathFormat" xml:space="preserve"><value>Automatic: {0}\Name-ID</value></data>
+  <data name="DefaultStorageDirectoryMissing" xml:space="preserve"><value>The default storage directory is missing. Choose it again in System settings.</value></data>
+  <data name="DefaultStoragePathOccupied" xml:space="preserve"><value>The default organizer folder already exists or overlaps another organizer's folder.</value></data>
+  <data name="OrganizerIdOccupied" xml:space="preserve"><value>The organizer ID is already in use. Restore the default location and try again.</value></data>
+  <data name="AutomaticStoragePathFormat" xml:space="preserve"><value>Automatic: {0}</value></data>
   <data name="StorageLocationLabel" xml:space="preserve"><value>Save location</value></data>
+  <data name="DefaultStorageDirectoryTitle" xml:space="preserve"><value>Default storage directory</value></data>
+  <data name="DefaultStorageDirectoryDescription" xml:space="preserve"><value>Only affects organizers created from now on.</value></data>
   <data name="ChooseFolder" xml:space="preserve"><value>Choose folder</value></data>
   <data name="UseDefaultLocation" xml:space="preserve"><value>Use default</value></data>
   <data name="SelectStorageFolderTitle" xml:space="preserve"><value>Choose the final organizer save directory</value></data>
+  <data name="SelectDefaultStorageDirectoryTitle" xml:space="preserve"><value>Choose the default storage directory</value></data>
+  <data name="DefaultStorageDirectoryErrorTitle" xml:space="preserve"><value>Could not update the default storage directory</value></data>
   <data name="SelectStorageFolderCommit" xml:space="preserve"><value>Select folder</value></data>
   <data name="StorageFolderPickerError" xml:space="preserve"><value>Could not choose the save location</value></data>
   <data name="RecreateStorageErrorTitle" xml:space="preserve"><value>Could not recreate the storage folder</value></data>
   <data name="MoveToDesktopFailed" xml:space="preserve"><value>Could not move the item to the Desktop.</value></data>
   <data name="LanguageErrorTitle" xml:space="preserve"><value>Could not change language</value></data>
   <data name="CollapseOutsideErrorTitle" xml:space="preserve"><value>Could not update automatic collapse</value></data>
+  <data name="NoteAlwaysOnTopErrorTitle" xml:space="preserve"><value>Could not update note and to-do always-on-top</value></data>
+  <data name="WindowAlignmentErrorTitle" xml:space="preserve"><value>Could not update window alignment</value></data>
+  <data name="RememberExpandedOrganizerPositionErrorTitle" xml:space="preserve"><value>Could not save expanded organizer position setting</value></data>
   <data name="ExpandOnHoverErrorTitle" xml:space="preserve"><value>Could not update hover expansion</value></data>
   <data name="CollapseOnPointerLeaveErrorTitle" xml:space="preserve"><value>Could not update pointer-leave collapse</value></data>
   <data name="ExclusiveExpansionErrorTitle" xml:space="preserve"><value>Could not update single-window expansion</value></data>
   <data name="FileMenuErrorFormat" xml:space="preserve"><value>Could not open the menu for “{0}”: {1}</value></data>
   <data name="CutItemErrorFormat" xml:space="preserve"><value>Could not cut “{0}”: {1}</value></data>
+  <data name="CopyItemErrorFormat" xml:space="preserve"><value>Could not copy “{0}”: {1}</value></data>
+  <data name="RenameItemErrorFormat" xml:space="preserve"><value>Could not rename “{0}”: {1}</value></data>
   <data name="DeleteItemErrorFormat" xml:space="preserve"><value>Could not move “{0}” to the Recycle Bin: {1}</value></data>
   <data name="UnsupportedReparsePathFormat" xml:space="preserve"><value>The directory contains an unsupported reparse point: {0}</value></data>
   <data name="CopyVerificationFailed" xml:space="preserve"><value>Copy verification failed because the source and temporary destination differ.</value></data>
@@ -203,6 +248,12 @@
   <data name="ContextNewNote" xml:space="preserve"><value>New note</value></data>
   <data name="ContextRenameNote" xml:space="preserve"><value>Rename note</value></data>
   <data name="ContextDeleteNote" xml:space="preserve"><value>Delete note</value></data>
+  <data name="ContextRenameFile" xml:space="preserve"><value>Rename</value></data>
+  <data name="ContextCopyFile" xml:space="preserve"><value>Copy</value></data>
+  <data name="RenameItemTitle" xml:space="preserve"><value>Rename item</value></data>
+  <data name="RenameItemPlaceholder" xml:space="preserve"><value>Enter a new name</value></data>
+  <data name="ItemNameRequired" xml:space="preserve"><value>The name cannot be empty.</value></data>
+  <data name="ItemNameDuplicate" xml:space="preserve"><value>An item with that name already exists in this organizer.</value></data>
   <data name="Rename" xml:space="preserve"><value>Rename</value></data>
   <data name="Delete" xml:space="preserve"><value>Delete</value></data>
   <data name="Cut" xml:space="preserve"><value>Cut</value></data>
@@ -213,17 +264,20 @@
   <data name="NoteRuledLines" xml:space="preserve"><value>Ruled lines</value></data>
   <data name="CloseNote" xml:space="preserve"><value>Close note</value></data>
   <data name="NoteEditorErrorFormat" xml:space="preserve"><value>The note editor could not start: {0}</value></data>
+  <data name="NoteClipboardWriteError" xml:space="preserve"><value>The text could not be copied to the clipboard.</value></data>
   <data name="NoteSaveErrorFormat" xml:space="preserve"><value>The note could not be saved: {0}</value></data>
   <data name="NoteDragSaveFailed" xml:space="preserve"><value>The note could not be saved before dragging.</value></data>
   <data name="PortableNoteOpenErrorFormat" xml:space="preserve"><value>Could not open “{0}”: {1}</value></data>
   <data name="PortableNoteExtensionError" xml:space="preserve"><value>Only .tucknote files can be opened as notes.</value></data>
+  <data name="PortableNoteCreateErrorTitle" xml:space="preserve"><value>Could not create note</value></data>
+  <data name="PortableNoteLocalFolderRequired" xml:space="preserve"><value>Notes can only be created in real folders on local fixed or removable drives.</value></data>
   <data name="NoteTooLarge" xml:space="preserve"><value>This note is too large to save.</value></data>
   <data name="NotePlaceholder" xml:space="preserve"><value>Type a note or paste an image…</value></data>
   <data name="NotePastedImage" xml:space="preserve"><value>Pasted image</value></data>
   <data name="NoteResizeImage" xml:space="preserve"><value>Resize image</value></data>
   <data name="NoteNameRequired" xml:space="preserve"><value>The note name cannot be empty.</value></data>
   <data name="NoteNameDuplicate" xml:space="preserve"><value>A note with this name already exists in this organizer.</value></data>
-  <data name="NoteRenameHint" xml:space="preserve"><value>Double-click the title or press F2 to rename the note.</value></data>
+  <data name="NoteRenameHint" xml:space="preserve"><value>Click the title to rename the note.</value></data>
   <data name="NoteThemeRainBlue" xml:space="preserve"><value>Rain blue</value></data>
   <data name="NoteThemeGraphite" xml:space="preserve"><value>Graphite</value></data>
   <data name="NoteThemeSunYellow" xml:space="preserve"><value>Warm yellow</value></data>
@@ -231,4 +285,28 @@
   <data name="NoteThemeTransparentGlass" xml:space="preserve"><value>Color glass</value></data>
   <data name="NoteThemeCloudPaper" xml:space="preserve"><value>Cloud paper</value></data>
   <data name="NoteThemeWheatPaper" xml:space="preserve"><value>Wheat paper</value></data>
+  <data name="PerformanceProfileTitle" xml:space="preserve"><value>Performance profile</value></data>
+  <data name="PerformanceProfilePowerSaver" xml:space="preserve"><value>Power saver</value></data>
+  <data name="PerformanceProfileBalanced" xml:space="preserve"><value>Balanced</value></data>
+  <data name="PerformanceProfileHighPerformance" xml:space="preserve"><value>High performance</value></data>
+  <data name="PerformanceProfilePowerSaverDescription" xml:space="preserve"><value>Checks less often and disables custom animations for long-running background use.</value></data>
+  <data name="PerformanceProfileBalancedDescription" xml:space="preserve"><value>Keeps the current responsiveness and full animations for everyday use.</value></data>
+  <data name="PerformanceProfileHighPerformanceDescription" xml:space="preserve"><value>Checks pointer and desktop state more often for faster response.</value></data>
+  <data name="PerformanceProfileErrorTitle" xml:space="preserve"><value>Could not update performance profile</value></data>
+  <data name="ContextNewTodo" xml:space="preserve"><value>New to-do</value></data>
+  <data name="TodoRemainingFormat" xml:space="preserve"><value>{0} remaining</value></data>
+  <data name="TodoFontSizeFormat" xml:space="preserve"><value>{0:0} DIP</value></data>
+  <data name="TodoAddPlaceholder" xml:space="preserve"><value>Type a to-do and press Enter</value></data>
+  <data name="TodoColor" xml:space="preserve"><value>To-do color</value></data>
+  <data name="CloseTodo" xml:space="preserve"><value>Close to-do</value></data>
+  <data name="TodoRenameHint" xml:space="preserve"><value>Click the title to rename this to-do.</value></data>
+  <data name="TodoDragSaveFailed" xml:space="preserve"><value>Could not save the to-do before moving it.</value></data>
+  <data name="TodoSaveErrorFormat" xml:space="preserve"><value>Could not save the to-do: {0}</value></data>
+  <data name="TodoUndo" xml:space="preserve"><value>Undo</value></data>
+  <data name="TodoEdit" xml:space="preserve"><value>Edit</value></data>
+  <data name="TodoDelete" xml:space="preserve"><value>Delete</value></data>
+  <data name="TodoNameRequired" xml:space="preserve"><value>The to-do name cannot be empty.</value></data>
+  <data name="TodoNameDuplicate" xml:space="preserve"><value>A to-do with this name already exists in this organizer.</value></data>
+  <data name="PortableTodoOpenErrorFormat" xml:space="preserve"><value>Could not open “{0}”: {1}</value></data>
+  <data name="PortableTodoExtensionError" xml:space="preserve"><value>Only .tucktodo files can be opened as to-dos.</value></data>
 </root>

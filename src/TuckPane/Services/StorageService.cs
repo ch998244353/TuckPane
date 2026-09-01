@@ -35,8 +35,11 @@ public sealed class StorageService
         IProgress<TransferProgress>? progress,
         CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(_itemsRoot);
-        DropValidationResult validation = DropValidator.ValidateBatch(sourcePaths, _itemsRoot);
+        DropValidationResult validation = await Task.Run(() =>
+        {
+            Directory.CreateDirectory(_itemsRoot);
+            return DropValidator.ValidateBatch(sourcePaths, _itemsRoot);
+        }, cancellationToken);
         if (!validation.IsValid) throw new InvalidOperationException(string.Join(Environment.NewLine, validation.Errors));
 
         var outcomes = new List<TransferOutcome>();
@@ -45,7 +48,7 @@ public sealed class StorageService
             cancellationToken.ThrowIfCancellationRequested();
             TransferOutcome outcome = DropValidator.IsExecutable(sourcePath)
                 ? CreateExecutableShortcut(sourcePath)
-                : await MoveOneAsync(sourcePath, progress, cancellationToken);
+                : await Task.Run(() => MoveOneAsync(sourcePath, progress, cancellationToken), cancellationToken);
             outcomes.Add(outcome);
             if (outcome.Status is TransferStatus.Failed or TransferStatus.Cancelled) break;
         }
@@ -57,8 +60,11 @@ public sealed class StorageService
         IProgress<TransferProgress>? progress,
         CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(_itemsRoot);
-        DropValidationResult validation = DropValidator.ValidateBatch(sourcePaths, _itemsRoot);
+        DropValidationResult validation = await Task.Run(() =>
+        {
+            Directory.CreateDirectory(_itemsRoot);
+            return DropValidator.ValidateBatch(sourcePaths, _itemsRoot);
+        }, cancellationToken);
         if (!validation.IsValid) throw new InvalidOperationException(string.Join(Environment.NewLine, validation.Errors));
 
         var outcomes = new List<TransferOutcome>();
@@ -67,7 +73,7 @@ public sealed class StorageService
             cancellationToken.ThrowIfCancellationRequested();
             TransferOutcome outcome = DropValidator.IsExecutable(sourcePath)
                 ? CreateExecutableShortcut(sourcePath)
-                : await CopyOneAsync(sourcePath, progress, cancellationToken);
+                : await Task.Run(() => CopyOneAsync(sourcePath, progress, cancellationToken), cancellationToken);
             outcomes.Add(outcome);
             if (outcome.Status is TransferStatus.Failed or TransferStatus.Cancelled) break;
         }
@@ -201,6 +207,19 @@ public sealed class StorageService
             cancellationToken);
     }
 
+    public async Task<TransferOutcome> CopyItemToDesktopAsync(
+        string sourcePath,
+        IProgress<TransferProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        if (string.IsNullOrWhiteSpace(desktop))
+            return new(sourcePath, null, TransferStatus.Failed, AppStrings.Get("DesktopUnavailable"));
+        IReadOnlyList<TransferOutcome> outcomes = await new StorageService(desktop)
+            .CopyBatchAsync([sourcePath], progress, cancellationToken);
+        return outcomes[0];
+    }
+
     internal static async Task<TransferOutcome> MoveItemToDirectoryAsync(
         string sourcePath,
         string destinationDirectory,
@@ -322,10 +341,19 @@ public sealed class StorageService
         {
             if (SameVolume(source, destination))
             {
-                if (isDirectory) Directory.Move(source, destination);
-                else File.Move(source, destination);
-                progress?.Report(new TransferProgress(itemName, 1, 1));
-                return new(source, destination, TransferStatus.Moved, AppStrings.Get("Moved"));
+                try
+                {
+                    if (isDirectory) Directory.Move(source, destination);
+                    else File.Move(source, destination);
+                    progress?.Report(new TransferProgress(itemName, 1, 1));
+                    return new(source, destination, TransferStatus.Moved, AppStrings.Get("Moved"));
+                }
+                catch (IOException ex) when (IsSharingViolation(ex) &&
+                                             (File.Exists(source) || Directory.Exists(source)) &&
+                                             !File.Exists(destination) && !Directory.Exists(destination))
+                {
+                    AppLogger.Info($"源项目正被占用，改为验证复制后保留源项目：{source}");
+                }
             }
 
             string destinationRoot = Path.GetDirectoryName(destination) ?? throw new IOException(AppStrings.Get("MoveToDesktopFailed"));
@@ -408,7 +436,7 @@ public sealed class StorageService
 
     private static string GetDisplayName(string relativeName, WidgetItemKind kind)
     {
-        if (kind is WidgetItemKind.Folder or WidgetItemKind.Shortcut or WidgetItemKind.InternetShortcut or WidgetItemKind.PortableNote)
+        if (kind is WidgetItemKind.Folder or WidgetItemKind.Shortcut or WidgetItemKind.InternetShortcut or WidgetItemKind.PortableNote or WidgetItemKind.PortableTodo)
             return Path.GetFileNameWithoutExtension(relativeName);
         return ExplorerShowsExtensions() ? relativeName : Path.GetFileNameWithoutExtension(relativeName);
     }
@@ -446,6 +474,9 @@ public sealed class StorageService
 
     private static bool SameVolume(string first, string second) =>
         string.Equals(Path.GetPathRoot(first), Path.GetPathRoot(second), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSharingViolation(IOException exception) =>
+        (exception.HResult & 0xFFFF) is 32 or 33;
 
     private static async Task CopyDirectoryAsync(string source, string destination, Action<int> reportBytes, CancellationToken cancellationToken)
     {

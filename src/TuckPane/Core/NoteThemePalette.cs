@@ -42,13 +42,13 @@ internal static class NoteThemePalette
 {
     internal static IReadOnlyList<NoteThemeColors> All { get; } =
     [
-        new(NoteTheme.RainBlue, "NoteThemeRainBlue", "#34414A", "#43515B", "#9BB6C5", "#5F707A", "#F1F4F5", "#BAC3C8"),
-        new(NoteTheme.Graphite, "NoteThemeGraphite", "#3A3C3E", "#494C4F", "#C0A778", "#64686B", "#F3F0EA", "#BDB8AF"),
-        new(NoteTheme.SunYellow, "NoteThemeSunYellow", "#BDB48A", "#D9D0AA", "#E9D27C", "#9D936A", "#342F20", "#6F684C"),
-        new(NoteTheme.InkBlack, "NoteThemeInkBlack", "#101315", "#1B1F22", "#A9B2B8", "#343A3F", "#F1F3F4", "#A4ABB0"),
-        new(NoteTheme.TransparentGlass, "NoteThemeTransparentGlass", "#2E3943", "#53636E", "#AFC5D0", "#788993", "#FFFFFF", "#D2DBE0"),
-        new(NoteTheme.CloudPaper, "NoteThemeCloudPaper", "#AEB8BD", "#CBD2D5", "#58798B", "#939FA5", "#273138", "#606D73"),
-        new(NoteTheme.WheatPaper, "NoteThemeWheatPaper", "#BBAE9C", "#D6C9B7", "#7D624F", "#A2927E", "#302820", "#685C52")
+        new(NoteTheme.RainBlue, "NoteThemeRainBlue", "#40505B", "#4B5D68", "#A8C2CF", "#A1B2BB", "#F3F6F7", "#D0D9DD"),
+        new(NoteTheme.Graphite, "NoteThemeGraphite", "#35383B", "#42464A", "#C9AE7B", "#8D9296", "#F4F1EB", "#C2BDB4"),
+        new(NoteTheme.SunYellow, "NoteThemeSunYellow", "#D2C79C", "#E9DFB7", "#765A22", "#897A4A", "#3A3222", "#6C6248"),
+        new(NoteTheme.InkBlack, "NoteThemeInkBlack", "#161A1D", "#23282C", "#9EABB3", "#68747C", "#F2F4F5", "#ADB5BA"),
+        new(NoteTheme.TransparentGlass, "NoteThemeTransparentGlass", "#3B4954", "#566A77", "#B3CAD5", "#B1C3CB", "#F7FAFB", "#E1E9ED"),
+        new(NoteTheme.CloudPaper, "NoteThemeCloudPaper", "#D7DEE1", "#E8EDEF", "#587889", "#788A93", "#29353B", "#5A6970"),
+        new(NoteTheme.WheatPaper, "NoteThemeWheatPaper", "#D5C5B1", "#E9DDCB", "#85664E", "#90775E", "#332A22", "#6A5B4F")
     ];
 
     internal static NoteThemeColors Get(NoteTheme theme) =>

@@ -5,11 +5,15 @@ namespace TuckPane.Services;
 
 internal static class NativeMethods
 {
+    internal static bool SupportsWindows11DwmAttributes =>
+        OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000);
+
     internal const int GWL_STYLE = -16;
     internal const int GWL_EXSTYLE = -20;
     internal const int GWLP_WNDPROC = -4;
     internal const int GWLP_HWNDPARENT = -8;
     internal const long WS_EX_TOOLWINDOW = 0x00000080L;
+    internal const long WS_EX_TRANSPARENT = 0x00000020L;
     internal const long WS_EX_APPWINDOW = 0x00040000L;
     internal const long WS_EX_NOACTIVATE = 0x08000000L;
     internal const long WS_POPUP = 0x80000000L;
@@ -29,6 +33,7 @@ internal static class NativeMethods
     internal const uint SWP_FRAMECHANGED = 0x0020;
     internal const uint SWP_SHOWWINDOW = 0x0040;
     internal const uint SWP_HIDEWINDOW = 0x0080;
+    internal const uint SWP_NOOWNERZORDER = 0x0200;
     internal const uint LWA_ALPHA = 0x00000002;
     internal const uint MONITOR_DEFAULTTONEAREST = 2;
     internal const uint MONITOR_DEFAULTTOPRIMARY = 1;
@@ -59,6 +64,7 @@ internal static class NativeMethods
     internal const uint WM_NCLBUTTONDOWN = 0x00A1;
     internal const uint WM_NCLBUTTONUP = 0x00A2;
     internal const int HTCLIENT = 1;
+    internal const int HTTRANSPARENT = -1;
     internal const int HTCAPTION = 2;
     internal const int HTLEFT = 10;
     internal const int HTRIGHT = 11;
@@ -103,6 +109,7 @@ internal static class NativeMethods
     internal const uint IMAGE_ICON = 1;
     internal const uint LR_LOADFROMFILE = 0x0010;
     internal const uint LR_DEFAULTSIZE = 0x0040;
+    internal const uint SIIGBF_ICONONLY = 0x00000004;
     internal const uint MF_STRING = 0x00000000;
     internal const uint MF_SEPARATOR = 0x00000800;
     internal const uint MF_CHECKED = 0x00000008;
@@ -300,6 +307,42 @@ internal static class NativeMethods
         public uint Private;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct SIZE
+    {
+        public int Width;
+        public int Height;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BITMAP
+    {
+        public int Type;
+        public int Width;
+        public int Height;
+        public int WidthBytes;
+        public ushort Planes;
+        public ushort BitsPixel;
+        public IntPtr Bits;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct WNDCLASSEX
+    {
+        public uint Size;
+        public uint Style;
+        public IntPtr WindowProc;
+        public int ClassExtra;
+        public int WindowExtra;
+        public IntPtr Instance;
+        public IntPtr Icon;
+        public IntPtr Cursor;
+        public IntPtr Background;
+        public string? MenuName;
+        public string ClassName;
+        public IntPtr SmallIcon;
+    }
+
     internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     internal delegate bool MonitorEnumProc(IntPtr monitor, IntPtr hdc, ref RECT rect, IntPtr data);
     internal delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
@@ -321,6 +364,45 @@ internal static class NativeMethods
         [PreserveSig] int GetIcon(int index, uint flags, out IntPtr icon);
     }
 
+    [ComImport]
+    [Guid("00021401-0000-0000-C000-000000000046")]
+    internal class ShellLink
+    {
+    }
+
+    [ComImport]
+    [Guid("000214F9-0000-0000-C000-000000000046")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellLinkW
+    {
+        [PreserveSig] int GetPath(StringBuilder file, int capacity, IntPtr findData, uint flags);
+        [PreserveSig] int GetIDList(out IntPtr itemIdList);
+        [PreserveSig] int SetIDList(IntPtr itemIdList);
+        [PreserveSig] int GetDescription(StringBuilder description, int capacity);
+        [PreserveSig] int SetDescription(string description);
+        [PreserveSig] int GetWorkingDirectory(StringBuilder directory, int capacity);
+        [PreserveSig] int SetWorkingDirectory(string directory);
+        [PreserveSig] int GetArguments(StringBuilder arguments, int capacity);
+        [PreserveSig] int SetArguments(string arguments);
+        [PreserveSig] int GetHotkey(out ushort hotkey);
+        [PreserveSig] int SetHotkey(ushort hotkey);
+        [PreserveSig] int GetShowCmd(out int showCommand);
+        [PreserveSig] int SetShowCmd(int showCommand);
+        [PreserveSig] int GetIconLocation(StringBuilder iconPath, int capacity, out int iconIndex);
+        [PreserveSig] int SetIconLocation(string iconPath, int iconIndex);
+        [PreserveSig] int SetRelativePath(string path, uint reserved);
+        [PreserveSig] int Resolve(IntPtr hWnd, uint flags);
+        [PreserveSig] int SetPath(string path);
+    }
+
+    [ComImport]
+    [Guid("BCC18B79-BA16-442F-80C4-8A59C30C463B")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellItemImageFactory
+    {
+        [PreserveSig] int GetImage(SIZE size, uint flags, out IntPtr bitmap);
+    }
+
     [DllImport("user32.dll", EntryPoint = "FindWindowW", CharSet = CharSet.Unicode)]
     internal static extern IntPtr FindWindow(string? className, string? windowName);
 
@@ -338,6 +420,12 @@ internal static class NativeMethods
         IntPtr menu,
         IntPtr instance,
         IntPtr parameter);
+
+    [DllImport("user32.dll", EntryPoint = "RegisterClassExW", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern ushort RegisterClassEx(ref WNDCLASSEX windowClass);
+
+    [DllImport("user32.dll", EntryPoint = "DefWindowProcW")]
+    internal static extern IntPtr DefWindowProc(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -572,6 +660,13 @@ internal static class NativeMethods
     [DllImport("shell32.dll", EntryPoint = "SHGetFileInfoW", CharSet = CharSet.Unicode)]
     internal static extern UIntPtr SHGetFileInfo(string path, uint attributes, ref SHFILEINFO info, uint infoSize, uint flags);
 
+    [DllImport("shell32.dll", EntryPoint = "SHCreateItemFromParsingName", CharSet = CharSet.Unicode, PreserveSig = true)]
+    internal static extern int SHCreateItemFromParsingName(
+        string path,
+        IntPtr bindContext,
+        ref Guid interfaceId,
+        [MarshalAs(UnmanagedType.Interface)] out IShellItemImageFactory imageFactory);
+
     [DllImport("shell32.dll", EntryPoint = "SHDefExtractIconW", CharSet = CharSet.Unicode)]
     internal static extern int SHDefExtractIcon(
         string iconFile,
@@ -631,6 +726,22 @@ internal static class NativeMethods
 
     [DllImport("gdi32.dll")]
     internal static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+    [DllImport("gdi32.dll", EntryPoint = "GetObjectW")]
+    internal static extern int GetObject(IntPtr value, int size, out BITMAP bitmap);
+
+    [DllImport("gdi32.dll")]
+    internal static extern int GetDIBits(
+        IntPtr hdc,
+        IntPtr bitmap,
+        uint start,
+        uint lines,
+        byte[] bits,
+        ref BITMAPINFO bitmapInfo,
+        uint usage);
+
+    [DllImport("gdi32.dll")]
+    internal static extern IntPtr CreateSolidBrush(uint color);
 
     [DllImport("gdi32.dll")]
     internal static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFO bitmapInfo, uint usage, out IntPtr bits, IntPtr section, uint offset);

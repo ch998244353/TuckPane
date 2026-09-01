@@ -32,6 +32,26 @@ internal static class OrganizerNoteRules
             .Replace('\r', '\n')
             .Replace("\n", "<br>", StringComparison.Ordinal);
 
+    internal static string? RebaseTopLevelPortablePath(string sourceRoot, string destinationRoot, string path)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string? parent = Path.GetDirectoryName(fullPath);
+        return parent is not null && Path.TrimEndingDirectorySeparator(parent).Equals(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceRoot)),
+            StringComparison.OrdinalIgnoreCase)
+            ? Path.Combine(Path.GetFullPath(destinationRoot), Path.GetFileName(fullPath))
+            : null;
+    }
+
+    internal static string ResolvePortablePathAfterMove(
+        string sourceRoot,
+        string? destinationRoot,
+        string path,
+        bool moveSucceeded) =>
+        moveSucceeded && destinationRoot is not null
+            ? RebaseTopLevelPortablePath(sourceRoot, destinationRoot, path) ?? Path.GetFullPath(path)
+            : Path.GetFullPath(path);
+
     internal static WidgetItem CreateItem(NoteDefinition note) =>
         new(note.Name, string.Empty, ItemKey(note.Id), WidgetItemKind.Note, note.Id);
 }

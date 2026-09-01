@@ -95,7 +95,24 @@ public sealed class StateStore
                 if (current is null) return null;
                 current.GlobalSettings ??= new GlobalSettings();
                 if (schemaVersion < 3) current.GlobalSettings.Language = AppLanguage.ChineseSimplified;
-                return new(current, schemaVersion < 5, path);
+                if (schemaVersion < 6) current.GlobalSettings.NoteTheme = NoteTheme.SunYellow;
+                if (schemaVersion < 7)
+                {
+                    current.GlobalSettings.ThemeColorArgb = GlobalSettings.DefaultThemeColorArgb;
+                    current.GlobalSettings.Material = ThemeMaterial.Acrylic;
+                    current.GlobalSettings.ThemeTransparency = GlobalSettings.DefaultThemeTransparency;
+                }
+                if (schemaVersion < 8)
+                {
+                    ThemeValues organizerTheme = current.GlobalSettings.GetTheme(ThemeTarget.Organizer);
+                    current.GlobalSettings.SetTheme(ThemeTarget.Settings, organizerTheme);
+                }
+                if (schemaVersion < 9)
+                {
+                    foreach (OrganizerDefinition organizer in current.Organizers ?? [])
+                        organizer.StorageOwnedByApp = string.IsNullOrWhiteSpace(organizer.StorageAbsolutePath);
+                }
+                return new(current, schemaVersion < 9, path);
             }
 
             AppStateV1 legacy = JsonSerializer.Deserialize<AppStateV1>(json, JsonOptions) ?? new AppStateV1();
@@ -117,6 +134,7 @@ public sealed class StateStore
             Name = string.IsNullOrWhiteSpace(legacy.WidgetName) ? "文件夹" : legacy.WidgetName.Trim(),
             CreatedAtUtc = createdAtUtc == default ? DateTimeOffset.UtcNow : createdAtUtc,
             StorageRelativePath = "Items",
+            StorageOwnedByApp = true,
             Position = legacy.Position,
             ItemOrder = legacy.ItemOrder.ToList(),
             Layout = new OrganizerLayout { Mode = OrganizerLayoutMode.Grid, Rows = 3, Columns = 3 }
@@ -125,7 +143,7 @@ public sealed class StateStore
         {
             GlobalSettings = new GlobalSettings
             {
-                Theme = GlassTheme.Light,
+                NoteTheme = NoteTheme.SunYellow,
                 StartWithWindows = legacy.StartWithWindows
             },
             Organizers = [organizer]
@@ -134,10 +152,57 @@ public sealed class StateStore
 
     internal static AppStateV2 Normalize(AppStateV2 state)
     {
-        state.SchemaVersion = 5;
+        state.SchemaVersion = 9;
         state.GlobalSettings ??= new GlobalSettings();
-        if (!Enum.IsDefined(state.GlobalSettings.Theme)) state.GlobalSettings.Theme = GlassTheme.Light;
+        if (string.IsNullOrWhiteSpace(state.GlobalSettings.DefaultStorageDirectory))
+        {
+            state.GlobalSettings.DefaultStorageDirectory = null;
+        }
+        else
+        {
+            try
+            {
+                string path = state.GlobalSettings.DefaultStorageDirectory.Trim();
+                state.GlobalSettings.DefaultStorageDirectory = Path.IsPathFullyQualified(path) &&
+                    !path.StartsWith(@"\\", StringComparison.Ordinal)
+                    ? Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    : null;
+            }
+            catch
+            {
+                state.GlobalSettings.DefaultStorageDirectory = null;
+            }
+        }
+        state.GlobalSettings.SetTheme(
+            ThemeTarget.Organizer,
+            GlobalSettings.NormalizeTheme(state.GlobalSettings.GetTheme(ThemeTarget.Organizer)));
+        state.GlobalSettings.SetTheme(
+            ThemeTarget.Settings,
+            GlobalSettings.NormalizeTheme(state.GlobalSettings.GetTheme(ThemeTarget.Settings)));
+        if (!Enum.IsDefined(state.GlobalSettings.NoteTheme)) state.GlobalSettings.NoteTheme = NoteTheme.SunYellow;
         if (!Enum.IsDefined(state.GlobalSettings.Language)) state.GlobalSettings.Language = AppLanguage.ChineseSimplified;
+        if (!Enum.IsDefined(state.GlobalSettings.PerformanceProfile))
+            state.GlobalSettings.PerformanceProfile = PerformanceProfile.Balanced;
+        state.GlobalSettings.HoverExpandDelayMs = GlobalSettings.NormalizeHoverDelayMs(state.GlobalSettings.HoverExpandDelayMs);
+        state.GlobalSettings.PointerLeaveCollapseDelayMs = GlobalSettings.NormalizeHoverDelayMs(state.GlobalSettings.PointerLeaveCollapseDelayMs);
+        state.GlobalSettings.StationPointerLeaveCollapseDelayMs = GlobalSettings.NormalizeHoverDelayMs(
+            state.GlobalSettings.StationPointerLeaveCollapseDelayMs);
+        state.GlobalSettings.StationActivationDistanceDip = GlobalSettings.NormalizeStationActivationDistanceDip(
+            state.GlobalSettings.StationActivationDistanceDip);
+        state.GlobalSettings.StationHoverExpandDelayMs = GlobalSettings.NormalizeStationHoverExpandDelayMs(
+            state.GlobalSettings.StationHoverExpandDelayMs);
+        state.GlobalSettings.UniformFloatingCompactScale = GlobalSettings.NormalizeCompactScale(
+            OrganizerPlacementMode.Floating,
+            state.GlobalSettings.UniformFloatingCompactScale);
+        state.GlobalSettings.UniformPositionedCompactScale = GlobalSettings.NormalizeCompactScale(
+            OrganizerPlacementMode.Positioned,
+            state.GlobalSettings.UniformPositionedCompactScale);
+        state.GlobalSettings.UniformFloatingCompactNameScale = GlobalSettings.NormalizeCompactNameScale(
+            state.GlobalSettings.UniformFloatingCompactNameScale);
+        state.GlobalSettings.UniformPositionedCompactNameScale = GlobalSettings.NormalizeCompactNameScale(
+            state.GlobalSettings.UniformPositionedCompactNameScale);
+        state.GlobalSettings.ExpandedNameScale = GlobalSettings.NormalizeCompactNameScale(
+            state.GlobalSettings.ExpandedNameScale);
         state.Organizers ??= [];
         var normalizedOrganizers = new List<OrganizerDefinition>();
         var stationEdges = new HashSet<OrganizerDockEdge>();
@@ -164,11 +229,24 @@ public sealed class StateStore
             }
             organizer.Name = string.IsNullOrWhiteSpace(organizer.Name) ? "收纳窗" : organizer.Name.Trim();
             if (organizer.CreatedAtUtc == default) organizer.CreatedAtUtc = DateTimeOffset.UtcNow;
-            if (organizer.ThemeOverride is GlassTheme theme && !Enum.IsDefined(theme)) organizer.ThemeOverride = null;
             if (!Enum.IsDefined(organizer.PlacementMode)) organizer.PlacementMode = OrganizerPlacementMode.Floating;
             if (!Enum.IsDefined(organizer.DockEdge)) organizer.DockEdge = OrganizerDockEdge.Right;
             organizer.Layout ??= new OrganizerLayout();
             bool station = organizer.PlacementMode == OrganizerPlacementMode.Station;
+            if (!Enum.IsDefined(organizer.ExpandedContentMode) || station)
+                organizer.ExpandedContentMode = OrganizerExpandedContentMode.Icon;
+            organizer.CompactListCanvasWidthDip = double.IsFinite(organizer.CompactListCanvasWidthDip)
+                ? Math.Clamp(
+                    organizer.CompactListCanvasWidthDip,
+                    OrganizerLimits.MinimumCompactListCanvasWidthDip,
+                    OrganizerLimits.MaximumCompactListCanvasSizeDip)
+                : OrganizerLimits.DefaultCompactListCanvasWidthDip;
+            organizer.CompactListCanvasHeightDip = double.IsFinite(organizer.CompactListCanvasHeightDip)
+                ? Math.Clamp(
+                    organizer.CompactListCanvasHeightDip,
+                    OrganizerLimits.MinimumCompactListCanvasHeightDip,
+                    OrganizerLimits.MaximumCompactListCanvasSizeDip)
+                : OrganizerLimits.DefaultCompactListCanvasHeightDip;
             if (organizer.Layout.Mode != OrganizerLayoutMode.Grid)
             {
                 organizer.Layout.Mode = OrganizerLayoutMode.Grid;
@@ -186,16 +264,15 @@ public sealed class StateStore
                     station ? OrganizerLimits.MinimumStationColumns : OrganizerLimits.MinimumGridDimension,
                     station ? OrganizerLimits.MaximumStationColumns : OrganizerLimits.MaximumLayoutDimension);
             }
-            double maximumCompactScale = organizer.PlacementMode == OrganizerPlacementMode.Positioned
-                ? OrganizerLimits.MaximumPositionedCompactScale
-                : OrganizerLimits.MaximumCompactScale;
-            organizer.CompactScale = Math.Clamp(
-                organizer.CompactScale,
-                OrganizerLimits.MinimumCompactScale,
-                maximumCompactScale);
+            organizer.CompactScale = state.GlobalSettings.ResolveCompactScale(
+                organizer.PlacementMode,
+                organizer.CompactScale);
             organizer.CanvasScale = Math.Clamp(organizer.CanvasScale, .1, 1.2);
             organizer.ItemScale = Math.Clamp(organizer.ItemScale, .5, 1.65);
-            organizer.NameScale = Math.Clamp(organizer.NameScale, .6, 1);
+            organizer.NameScale = GlobalSettings.NormalizeCompactNameScale(organizer.NameScale);
+            organizer.CompactListItemScale = double.IsFinite(organizer.CompactListItemScale)
+                ? Math.Clamp(organizer.CompactListItemScale, .5, 1.65)
+                : 1;
             if (station)
             {
                 organizer.ManualCanvasBaseWidthDip = null;
@@ -223,6 +300,7 @@ public sealed class StateStore
             else
             {
                 organizer.StorageAbsolutePath = null;
+                organizer.StorageOwnedByApp = true;
                 organizer.StorageRelativePath = string.IsNullOrWhiteSpace(organizer.StorageRelativePath)
                     ? AppPaths.CreateStorageRelativePath(organizer.Name, organizer.Id)
                     : organizer.StorageRelativePath;
@@ -250,7 +328,7 @@ public sealed class StateStore
                     ? OrganizerNoteRules.CreateDefaultName(noteNames)
                     : name;
                 noteNames.Add(note.Name);
-                if (!Enum.IsDefined(note.Theme)) note.Theme = NoteTheme.RainBlue;
+                note.Theme = state.GlobalSettings.NoteTheme;
                 note.FontSize = double.IsFinite(note.FontSize)
                     ? Math.Clamp(note.FontSize, OrganizerNoteRules.MinimumFontSize, OrganizerNoteRules.MaximumFontSize)
                     : 14;
@@ -270,11 +348,44 @@ public sealed class StateStore
             }
             organizer.ItemOrder = (organizer.ItemOrder ?? [])
                 .Where(name => !string.IsNullOrWhiteSpace(name))
-                .Select(name => name.StartsWith("note:", StringComparison.OrdinalIgnoreCase)
+                .Select(name => name.StartsWith("note:", StringComparison.OrdinalIgnoreCase) ||
+                    OrganizerInteractionMath.TryParseOrganizerItemKey(name, out _)
                     ? name
                     : Path.GetFileName(name)!)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        var organizersById = state.Organizers.ToDictionary(organizer => organizer.Id);
+        foreach (OrganizerDefinition organizer in state.Organizers)
+        {
+            if (organizer.ContainerStationId is not Guid stationId ||
+                !organizersById.TryGetValue(stationId, out OrganizerDefinition? station) ||
+                !OrganizerInteractionMath.CanContainOrganizer(
+                    organizer.PlacementMode,
+                    station.PlacementMode,
+                    organizer.Id,
+                    station.Id))
+            {
+                organizer.ContainerStationId = null;
+            }
+        }
+
+        foreach (OrganizerDefinition organizer in state.Organizers)
+        {
+            HashSet<string> containedKeys = organizer.PlacementMode == OrganizerPlacementMode.Station
+                ? state.Organizers
+                    .Where(candidate => candidate.ContainerStationId == organizer.Id)
+                    .Select(candidate => OrganizerInteractionMath.OrganizerItemKey(candidate.Id))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : [];
+            organizer.ItemOrder = organizer.ItemOrder
+                .Where(key => !OrganizerInteractionMath.TryParseOrganizerItemKey(key, out _) || containedKeys.Contains(key))
+                .ToList();
+            foreach (string key in containedKeys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase))
+            {
+                if (!organizer.ItemOrder.Contains(key, StringComparer.OrdinalIgnoreCase)) organizer.ItemOrder.Add(key);
+            }
         }
 
         if (state.ConsolePlacement is not null)

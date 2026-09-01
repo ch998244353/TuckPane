@@ -25,21 +25,24 @@ internal sealed class NativeWindowChromeController : IDisposable
     {
         if (_disposed || _window == IntPtr.Zero || !NativeMethods.IsWindow(_window)) return;
 
-        int noBorder = NativeMethods.DWMWA_COLOR_NONE;
-        LogResult(NativeMethods.DwmSetWindowAttribute(
-            _window,
-            NativeMethods.DWMWA_BORDER_COLOR,
-            ref noBorder,
-            sizeof(int)), "DwmSetWindowAttribute(DWMWA_BORDER_COLOR)");
-
         int frameThickness = 1;
-        int getFrame = NativeMethods.DwmGetWindowAttribute(
-            _window,
-            NativeMethods.DWMWA_VISIBLE_FRAME_BORDER_THICKNESS,
-            out int visibleFrame,
-            sizeof(int));
-        LogResult(getFrame, "DwmGetWindowAttribute(DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)");
-        if (getFrame >= 0 && visibleFrame > 0) frameThickness = visibleFrame;
+        if (NativeMethods.SupportsWindows11DwmAttributes)
+        {
+            int noBorder = NativeMethods.DWMWA_COLOR_NONE;
+            LogResult(NativeMethods.DwmSetWindowAttribute(
+                _window,
+                NativeMethods.DWMWA_BORDER_COLOR,
+                ref noBorder,
+                sizeof(int)), "DwmSetWindowAttribute(DWMWA_BORDER_COLOR)");
+
+            int getFrame = NativeMethods.DwmGetWindowAttribute(
+                _window,
+                NativeMethods.DWMWA_VISIBLE_FRAME_BORDER_THICKNESS,
+                out int visibleFrame,
+                sizeof(int));
+            LogResult(getFrame, "DwmGetWindowAttribute(DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)");
+            if (getFrame >= 0 && visibleFrame > 0) frameThickness = visibleFrame;
+        }
         _visibleFrameThickness = frameThickness;
 
         var margins = new NativeMethods.MARGINS { Top = frameThickness };

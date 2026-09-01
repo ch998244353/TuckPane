@@ -16,6 +16,11 @@ internal static class OrganizerLimits
     internal const int MaximumLayoutDimension = 6;
     internal const int MaximumStationRows = 9;
     internal const int MaximumStationColumns = 9;
+    internal const double DefaultCompactListCanvasWidthDip = 280;
+    internal const double DefaultCompactListCanvasHeightDip = 360;
+    internal const double MinimumCompactListCanvasWidthDip = 180;
+    internal const double MinimumCompactListCanvasHeightDip = 105;
+    internal const double MaximumCompactListCanvasSizeDip = 10000;
 
     internal static double CalculateCompactPreviewIconFraction(double itemScale)
     {
@@ -24,4 +29,10 @@ internal static class OrganizerLimits
             ? .5 + (normalized - .5) * .4
             : .7 + (normalized - 1) / .65 * .25;
     }
+
+    internal static double CalculateCompactWindowWidthDip(double compactScale, double nameScale) =>
+        CompactWindowWidthDip * compactScale * nameScale;
+
+    internal static double CalculateCompactWindowHeightDip(double compactScale, double nameScale) =>
+        43 * compactScale + 23 * compactScale * nameScale;
 }

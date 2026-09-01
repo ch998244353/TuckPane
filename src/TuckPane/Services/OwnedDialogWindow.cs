@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using TuckPane.Models;
 using Windows.Graphics;
+using WinUIEx;
 using WinRT.Interop;
 
 namespace TuckPane.Services;
@@ -13,7 +14,10 @@ namespace TuckPane.Services;
 internal sealed class OwnedDialogWindow : Window
 {
     private readonly IntPtr _owner;
+    private readonly AppHost _host;
     private readonly Grid _root;
+    private readonly ThemeSurface _surface;
+    private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private readonly Button _primaryButton;
     private readonly TaskCompletionSource<bool> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Func<bool>? _tryAccept;
@@ -23,28 +27,35 @@ internal sealed class OwnedDialogWindow : Window
     private OwnedDialogWindow(
         IntPtr owner,
         DisplayInfo display,
-        GlassTheme theme,
+        AppHost host,
         string title,
         FrameworkElement body,
         string primaryText,
         string cancelText)
     {
         _owner = owner;
+        _host = host;
         Title = title;
 
         _root = new Grid
         {
-            Padding = new Thickness(24, 20, 24, 20),
-            RowSpacing = 18,
-            Background = new SolidColorBrush(GlassThemePalette.SurfaceColor(theme)),
-            RequestedTheme = GlassThemePalette.IsDark(theme) ? ElementTheme.Dark : ElementTheme.Light
+            Background = new SolidColorBrush(Colors.Transparent)
         };
-        _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         _root.KeyDown += Root_KeyDown;
 
+        var surfaceHost = new Grid { IsHitTestVisible = false };
+        var content = new Grid
+        {
+            Padding = new Thickness(24, 20, 24, 20),
+            RowSpacing = 18
+        };
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        _root.Children.Add(surfaceHost);
+        _root.Children.Add(content);
+
         Grid.SetRow(body, 0);
-        _root.Children.Add(body);
+        content.Children.Add(body);
 
         _primaryButton = new Button
         {
@@ -64,8 +75,10 @@ internal sealed class OwnedDialogWindow : Window
         actions.Children.Add(_primaryButton);
         actions.Children.Add(cancelButton);
         Grid.SetRow(actions, 1);
-        _root.Children.Add(actions);
+        content.Children.Add(actions);
         Content = _root;
+        SystemBackdrop = new TransparentTintBackdrop(Colors.Transparent);
+        _surface = new ThemeSurface(surfaceHost);
 
         IntPtr hwnd = WindowNative.GetWindowHandle(this);
         AppWindow appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
@@ -90,19 +103,28 @@ internal sealed class OwnedDialogWindow : Window
         }
 
         Closed += OwnedDialogWindow_Closed;
+        _host.ThemeChanged += Host_ThemeChanged;
+        ApplyTheme();
     }
 
     internal static Task<bool> ShowTextInputAsync(
         IntPtr owner,
         DisplayInfo display,
-        GlassTheme theme,
+        AppHost host,
         string title,
         string defaultText,
         string primaryText,
         string cancelText,
-        Func<string, string?> validateAndAccept)
+        Func<string, string?> validateAndAccept,
+        int maxLength = 120,
+        string? placeholderText = null)
     {
-        var input = new TextBox { Text = defaultText, MaxLength = 120 };
+        var input = new TextBox
+        {
+            Text = defaultText,
+            MaxLength = maxLength,
+            PlaceholderText = placeholderText
+        };
         var error = new TextBlock
         {
             Foreground = new SolidColorBrush(Colors.IndianRed),
@@ -113,7 +135,7 @@ internal sealed class OwnedDialogWindow : Window
         body.Children.Add(input);
         body.Children.Add(error);
 
-        var window = new OwnedDialogWindow(owner, display, theme, title, body, primaryText, cancelText);
+        var window = new OwnedDialogWindow(owner, display, host, title, body, primaryText, cancelText);
         window._tryAccept = () =>
         {
             string? validationError = validateAndAccept(input.Text);
@@ -135,7 +157,7 @@ internal sealed class OwnedDialogWindow : Window
     internal static Task<bool> ShowConfirmationAsync(
         IntPtr owner,
         DisplayInfo display,
-        GlassTheme theme,
+        AppHost host,
         string title,
         string message,
         string primaryText,
@@ -151,7 +173,7 @@ internal sealed class OwnedDialogWindow : Window
                 VerticalAlignment = VerticalAlignment.Center
             }
         };
-        var window = new OwnedDialogWindow(owner, display, theme, title, body, primaryText, cancelText)
+        var window = new OwnedDialogWindow(owner, display, host, title, body, primaryText, cancelText)
         {
             _tryAccept = static () => true
         };
@@ -201,9 +223,20 @@ internal sealed class OwnedDialogWindow : Window
 
     private void OwnedDialogWindow_Closed(object sender, WindowEventArgs args)
     {
+        _host.ThemeChanged -= Host_ThemeChanged;
+        _surface.Dispose();
         RestoreOwner();
         _completion.TrySetResult(_accepted);
     }
+
+    private void ApplyTheme()
+    {
+        ThemeValues theme = _host.State.GlobalSettings.GetTheme(ThemeTarget.Organizer);
+        _root.RequestedTheme = ThemePalette.IsDark(theme) ? ElementTheme.Dark : ElementTheme.Light;
+        _surface.SetTheme(theme, _uiSettings.AdvancedEffectsEnabled);
+    }
+
+    private void Host_ThemeChanged(object? sender, EventArgs e) => ApplyTheme();
 
     private void RestoreOwner()
     {

@@ -104,6 +104,21 @@ public sealed class NoteStore
 
     public Task<bool> ExistsAsync(Guid noteId) => Task.FromResult(File.Exists(GetPath(noteId)));
 
+    internal static string ValidatePortableDirectory(string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Path.IsPathFullyQualified(directory))
+            throw new InvalidOperationException(AppStrings.Get("StorageAbsoluteRequired"));
+        if (directory.StartsWith(@"\\", StringComparison.Ordinal))
+            throw new InvalidOperationException(AppStrings.Get("PortableNoteLocalFolderRequired"));
+        string fullPath = Path.GetFullPath(directory);
+        if (!Directory.Exists(fullPath)) throw new DirectoryNotFoundException(AppStrings.Get("StorageFolderMissing"));
+        string root = Path.GetPathRoot(fullPath) ?? string.Empty;
+        DriveType driveType = new DriveInfo(root).DriveType;
+        if (driveType is not DriveType.Fixed and not DriveType.Removable)
+            throw new InvalidOperationException(AppStrings.Get("PortableNoteLocalFolderRequired"));
+        return Path.TrimEndingDirectorySeparator(fullPath);
+    }
+
     internal async Task<string> CreatePortableStagingAsync(string noteName, PortableNoteDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
@@ -123,6 +138,80 @@ public sealed class NoteStore
             if (File.Exists(temporary)) File.Delete(temporary);
             if (Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
             throw;
+        }
+    }
+
+    internal async Task<string> CreatePortableAsync(string directory, string noteName, PortableNoteDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ValidatePortableDocument(document);
+        string fullDirectory = Path.GetFullPath(directory);
+        if (!Directory.Exists(fullDirectory)) throw new DirectoryNotFoundException(fullDirectory);
+        string requestedPath = Path.Combine(fullDirectory, CreatePortableFileName(noteName));
+        await _gate.WaitAsync();
+        try
+        {
+            for (int attempt = 0; attempt < 128; attempt++)
+            {
+                string path = StorageService.GetUniquePath(requestedPath);
+                string temporary = Path.Combine(fullDirectory, $".{Guid.NewGuid():N}.tmp");
+                try
+                {
+                    await WritePortableTemporaryAsync(temporary, document);
+                    File.Move(temporary, path);
+                    return path;
+                }
+                catch (IOException) when (File.Exists(path) || Directory.Exists(path))
+                {
+                    AppLogger.Info($"便携便签名称被并发占用，重新编号：{path}");
+                }
+                finally
+                {
+                    if (File.Exists(temporary)) File.Delete(temporary);
+                }
+            }
+            throw new IOException("目标目录冲突过于频繁，未创建便签。");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    internal async Task<string> CreateTodoAsync(string directory, string todoName, PortableTodoDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ValidateTodoDocument(document);
+        string fullDirectory = Path.GetFullPath(directory);
+        if (!Directory.Exists(fullDirectory)) throw new DirectoryNotFoundException(fullDirectory);
+        string requestedPath = Path.Combine(fullDirectory, CreateTodoFileName(todoName));
+        await _gate.WaitAsync();
+        try
+        {
+            for (int attempt = 0; attempt < 128; attempt++)
+            {
+                string path = StorageService.GetUniquePath(requestedPath);
+                string temporary = Path.Combine(fullDirectory, $".{Guid.NewGuid():N}.tmp");
+                try
+                {
+                    await WritePortableTemporaryAsync(temporary, document);
+                    File.Move(temporary, path);
+                    return path;
+                }
+                catch (IOException) when (File.Exists(path) || Directory.Exists(path))
+                {
+                    AppLogger.Info($"便携待办名称被并发占用，重新编号：{path}");
+                }
+                finally
+                {
+                    if (File.Exists(temporary)) File.Delete(temporary);
+                }
+            }
+            throw new IOException("目标目录冲突过于频繁，未创建待办。");
+        }
+        finally
+        {
+            _gate.Release();
         }
     }
 
@@ -172,12 +261,134 @@ public sealed class NoteStore
         }
     }
 
-    internal static string CreatePortableFileName(string? noteName)
+    internal async Task<PortableTodoDocument> LoadTodoAsync(string path)
     {
-        string safe = string.Concat((string.IsNullOrWhiteSpace(noteName) ? "便签" : noteName.Trim())
+        string fullPath = Path.GetFullPath(path);
+        await using var stream = new FileStream(fullPath, new FileStreamOptions
+        {
+            Mode = FileMode.Open,
+            Access = FileAccess.Read,
+            Share = FileShare.Read,
+            Options = FileOptions.Asynchronous | FileOptions.SequentialScan
+        });
+        if (stream.Length > MaximumPortableFileLength)
+            throw new InvalidDataException("The portable todo exceeds 64 MiB.");
+        try
+        {
+            PortableTodoDocument document = await JsonSerializer.DeserializeAsync<PortableTodoDocument>(stream, PortableJsonOptions)
+                ?? throw new InvalidDataException("The portable todo is empty.");
+            ValidateTodoDocument(document);
+            return document;
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("The portable todo is not valid TuckPane.Todo JSON v1.", ex);
+        }
+    }
+
+    internal async Task SaveTodoAsync(string path, PortableTodoDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ValidateTodoDocument(document);
+        string fullPath = Path.GetFullPath(path);
+        string directory = Path.GetDirectoryName(fullPath) ?? throw new InvalidOperationException("The portable todo has no parent directory.");
+        if (!File.Exists(fullPath)) throw new FileNotFoundException("The portable todo was moved or deleted.", fullPath);
+        string temporary = Path.Combine(directory, $".{Guid.NewGuid():N}.tmp");
+        await _gate.WaitAsync();
+        try
+        {
+            await WritePortableTemporaryAsync(temporary, document);
+            File.Replace(temporary, fullPath, destinationBackupFileName: null);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+            _gate.Release();
+        }
+    }
+
+    internal async Task<IReadOnlyList<string>> ApplyThemeToTopLevelPortableFilesAsync(
+        string directory,
+        NoteTheme theme,
+        IReadOnlySet<string>? excludedPaths = null)
+    {
+        string root = Path.GetFullPath(directory);
+        if (!Directory.Exists(root)) return [];
+        string[] paths;
+        try { paths = Directory.GetFiles(root, "*.tucknote", SearchOption.TopDirectoryOnly); }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"无法枚举便签主题同步目录：{root}", ex);
+            return [root];
+        }
+
+        var failed = new List<string>();
+        foreach (string path in paths)
+        {
+            string fullPath = Path.GetFullPath(path);
+            if (excludedPaths?.Contains(fullPath) == true) continue;
+            try
+            {
+                PortableNoteDocument portable = await LoadPortableAsync(fullPath);
+                portable.Theme = theme;
+                await SavePortableAsync(fullPath, portable);
+            }
+            catch (Exception ex)
+            {
+                failed.Add(fullPath);
+                AppLogger.Error($"无法同步便签文件主题：{fullPath}", ex);
+            }
+        }
+        return failed;
+    }
+
+    internal async Task<IReadOnlyList<string>> ApplyThemeToTopLevelTodoFilesAsync(
+        string directory,
+        NoteTheme theme,
+        IReadOnlySet<string>? excludedPaths = null)
+    {
+        string root = Path.GetFullPath(directory);
+        if (!Directory.Exists(root)) return [];
+        string[] paths;
+        try { paths = Directory.GetFiles(root, "*.tucktodo", SearchOption.TopDirectoryOnly); }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"无法枚举待办主题同步目录：{root}", ex);
+            return [root];
+        }
+
+        var failed = new List<string>();
+        foreach (string path in paths)
+        {
+            string fullPath = Path.GetFullPath(path);
+            if (excludedPaths?.Contains(fullPath) == true) continue;
+            try
+            {
+                PortableTodoDocument portable = await LoadTodoAsync(fullPath);
+                portable.Theme = theme;
+                await SaveTodoAsync(fullPath, portable);
+            }
+            catch (Exception ex)
+            {
+                failed.Add(fullPath);
+                AppLogger.Error($"无法同步待办文件主题：{fullPath}", ex);
+            }
+        }
+        return failed;
+    }
+
+    internal static string CreatePortableFileName(string? noteName) =>
+        CreatePortableFileName(noteName, "便签", ".tucknote");
+
+    internal static string CreateTodoFileName(string? todoName) =>
+        CreatePortableFileName(todoName, "待办", ".tucktodo");
+
+    private static string CreatePortableFileName(string? name, string fallback, string extension)
+    {
+        string safe = string.Concat((string.IsNullOrWhiteSpace(name) ? fallback : name.Trim())
             .Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character))
             .TrimEnd(' ', '.');
-        if (safe.Length == 0) safe = "便签";
+        if (safe.Length == 0) safe = fallback;
         if (safe.Length > 120)
         {
             int length = 120;
@@ -186,10 +397,10 @@ public sealed class NoteStore
         }
         string deviceName = safe.Split('.', 2)[0];
         if (IsReservedDeviceName(deviceName)) safe = '_' + safe;
-        return safe + ".tucknote";
+        return safe + extension;
     }
 
-    private static async Task WritePortableTemporaryAsync(string temporary, PortableNoteDocument document)
+    private static async Task WritePortableTemporaryAsync<TDocument>(string temporary, TDocument document)
     {
         await using var stream = new FileStream(temporary, new FileStreamOptions
         {
@@ -222,6 +433,37 @@ public sealed class NoteStore
             !double.IsFinite(placement.WidthDip) || !double.IsFinite(placement.HeightDip) ||
             placement.WidthDip is < 280 or > 1600 || placement.HeightDip is < 220 or > 1200)
             throw new InvalidDataException("The portable note placement is invalid.");
+    }
+
+    private static void ValidateTodoDocument(PortableTodoDocument document)
+    {
+        if (!string.Equals(document.Format, "TuckPane.Todo", StringComparison.Ordinal))
+            throw new InvalidDataException("Unknown portable todo format.");
+        if (document.Version != 1) throw new InvalidDataException("Unsupported portable todo version.");
+        if (!Enum.IsDefined(document.Theme)) throw new InvalidDataException("Unknown portable todo theme.");
+        if (!double.IsFinite(document.FontSize) ||
+            document.FontSize < OrganizerNoteRules.MinimumFontSize ||
+            document.FontSize > OrganizerNoteRules.MaximumFontSize)
+            throw new InvalidDataException("The portable todo font size is invalid.");
+        if (document.Tasks is null) throw new InvalidDataException("The portable todo task list is missing.");
+        var ids = new HashSet<Guid>();
+        foreach (PortableTodoTask task in document.Tasks)
+        {
+            if (task is null || task.Id == Guid.Empty || !ids.Add(task.Id))
+                throw new InvalidDataException("The portable todo contains an invalid or duplicate task ID.");
+            string normalized = TodoRules.NormalizeText(task.Text);
+            if (task.Text is null || normalized.Length == 0 || normalized != task.Text)
+                throw new InvalidDataException("The portable todo contains invalid task text.");
+            if (task.Done != task.CompletedAtUtc.HasValue ||
+                task.CompletedAtUtc is DateTimeOffset completed && completed.Offset != TimeSpan.Zero)
+                throw new InvalidDataException("The portable todo contains an invalid completion timestamp.");
+        }
+        if (document.Placement is not { } placement) return;
+        if (placement.MonitorDevice is null ||
+            !double.IsFinite(placement.XDip) || !double.IsFinite(placement.YDip) ||
+            !double.IsFinite(placement.WidthDip) || !double.IsFinite(placement.HeightDip) ||
+            placement.WidthDip is < 280 or > 1600 || placement.HeightDip is < 340 or > 1200)
+            throw new InvalidDataException("The portable todo placement is invalid.");
     }
 
     internal static bool IsReservedDeviceName(string name)

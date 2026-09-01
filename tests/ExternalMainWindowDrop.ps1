@@ -3,15 +3,23 @@ param(
     [string]$ProbeExe = (Join-Path $PSScriptRoot 'TuckPane.LogicChecks\bin\x64\Release\net10.0-windows10.0.22621.0\TuckPane.LogicChecks.exe'),
     [int[]]$Modes = @(0, 1, 2),
     [switch]$Aug26Only,
+    [switch]$FileActionsOnly,
     [switch]$KeepRoot
 )
 
 $ErrorActionPreference = 'Stop'
+if ($FileActionsOnly -and ($Modes.Count -ne 1 -or $Modes[0] -ne 0)) {
+    throw '-FileActionsOnly requires exactly -Modes 0.'
+}
 Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type -TypeDefinition @'
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using System.Windows.Forms;
 public static class TuckPaneDropInput {
     public delegate bool EnumWindowProc(IntPtr window, IntPtr parameter);
     [StructLayout(LayoutKind.Sequential)] public struct Point { public int X; public int Y; }
@@ -48,7 +56,47 @@ public static class TuckPaneDropInput {
         return result;
     }
 }
-'@
+
+public sealed class TuckPaneClipboardState {
+    public bool HasFileDrop;
+    public string[] Paths = Array.Empty<string>();
+    public uint PreferredEffect;
+}
+
+public static class TuckPaneClipboardProbe {
+    public static TuckPaneClipboardState Read() {
+        TuckPaneClipboardState result = null;
+        Exception failure = null;
+        var thread = new Thread(() => {
+            for (int attempt = 0; attempt < 20; attempt++) {
+                try {
+                    System.Windows.Forms.IDataObject data = Clipboard.GetDataObject();
+                    if (data == null) throw new InvalidOperationException("Clipboard is empty.");
+                    result = new TuckPaneClipboardState { HasFileDrop = data.GetDataPresent(DataFormats.FileDrop) };
+                    if (result.HasFileDrop && data.GetData(DataFormats.FileDrop) is string[] paths) result.Paths = paths;
+                    object preferred = data.GetData("Preferred DropEffect", false);
+                    byte[] bytes = preferred is MemoryStream stream ? stream.ToArray() : preferred as byte[];
+                    if (bytes != null && bytes.Length >= sizeof(uint)) result.PreferredEffect = BitConverter.ToUInt32(bytes, 0);
+                    return;
+                }
+                catch (ExternalException ex) when (attempt < 19) {
+                    failure = ex;
+                    Thread.Sleep(50);
+                }
+                catch (Exception ex) {
+                    failure = ex;
+                    return;
+                }
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        if (result == null) throw failure ?? new InvalidOperationException("Clipboard could not be read.");
+        return result;
+    }
+}
+'@ -ReferencedAssemblies System.Windows.Forms,System.Threading.Thread
 
 function Wait-VisibleWindow([int]$AppPid, [int]$TimeoutMs = 10000) {
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
@@ -59,6 +107,17 @@ function Wait-VisibleWindow([int]$AppPid, [int]$TimeoutMs = 10000) {
         Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "TuckPane window did not become visible for PID $AppPid."
+}
+
+function Wait-AppWindowTitle([int]$AppPid, [string]$Title, [int]$TimeoutMs = 5000) {
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+    do {
+        $window = @(winapp ui list-windows -a $AppPid --json 2>$null | ConvertFrom-Json) |
+            Where-Object title -eq $Title | Select-Object -First 1
+        if ($null -ne $window) { return $window }
+        Start-Sleep -Milliseconds 50
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Window '$Title' did not become visible for PID $AppPid."
 }
 
 function Expand-Station([int]$AppPid) {
@@ -307,38 +366,123 @@ function Test-Reorder([int]$AppPid, [long]$Hwnd, [string]$SourceName, [string]$T
     if (($after -join '|') -eq ($before -join '|')) { throw "Internal reorder did not persist for '$SourceName'." }
 }
 
-function Test-ContextMenu([int]$AppPid, [long]$Hwnd, [string]$Name) {
-    $match = (winapp ui search $Name -w $Hwnd --json 2>$null | ConvertFrom-Json).matches | Select-Object -First 1
+function Open-FileContextMenu([int]$AppPid, [long]$Hwnd, [string]$Name) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    do {
+        $match = (winapp ui search $Name -w $Hwnd --json 2>$null | ConvertFrom-Json).matches | Select-Object -First 1
+        if ($null -eq $match) { Start-Sleep -Milliseconds 50 }
+    } while ($null -eq $match -and [DateTime]::UtcNow -lt $deadline)
     if ($null -eq $match) { throw "Could not find '$Name' for the context-menu check." }
     winapp ui focus CollapseButton -w $Hwnd | Out-Null
     [TuckPaneDropInput]::SetForegroundWindow([IntPtr]$Hwnd) | Out-Null
-    [TuckPaneDropInput]::MoveAbsolute([int]($match.x + $match.width / 2), [int]($match.y + $match.height / 2))
-    Start-Sleep -Milliseconds 150
-    [TuckPaneDropInput]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
-    Start-Sleep -Milliseconds 80
-    [TuckPaneDropInput]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
+    $clicked = $false
+    foreach ($attempt in 1..3) {
+        winapp ui click $match.selector -w $Hwnd --right -q 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $clicked = $true
+            break
+        }
+        $match = (winapp ui search $Name -w $Hwnd --json 2>$null | ConvertFrom-Json).matches |
+            Select-Object -First 1
+        if ($null -eq $match) { break }
+    }
+    if (-not $clicked) { throw "Could not right-click '$Name'." }
     $deadline = [DateTime]::UtcNow.AddSeconds(3)
     do {
         Start-Sleep -Milliseconds 50
-        $processCondition = [System.Windows.Automation.PropertyCondition]::new(
-            [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $AppPid)
-        $menuItems = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
-            [System.Windows.Automation.TreeScope]::Descendants, $processCondition) |
-            Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::MenuItem }
-        $automationIds = @($menuItems | ForEach-Object { $_.Current.AutomationId } | Where-Object { $_ })
-    } while (($automationIds -notcontains 'CutFileMenuItem' -or $automationIds -notcontains 'DeleteFileMenuItem') -and
-        [DateTime]::UtcNow -lt $deadline)
-    $fileMenuIds = @($automationIds | Where-Object { $_ -match 'FileMenuItem$' } | Sort-Object -Unique)
-    if (($fileMenuIds -join ',') -ne 'CutFileMenuItem,DeleteFileMenuItem') {
-        throw "File menu for '$Name' was not exactly Cut/Delete: $($fileMenuIds -join ',')"
+        try {
+            $menuCondition = [System.Windows.Automation.AndCondition]::new(
+                [System.Windows.Automation.PropertyCondition]::new(
+                    [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $AppPid),
+                [System.Windows.Automation.PropertyCondition]::new(
+                    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                    [System.Windows.Automation.ControlType]::MenuItem))
+            $menuItems = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants, $menuCondition)
+            $fileMenuItems = @($menuItems |
+                Where-Object { -not $_.Current.IsOffscreen -and
+                    $_.Current.AutomationId -match '^(Rename|Copy|Cut|Delete)FileMenuItem$' } |
+                Sort-Object @{ Expression = { $_.Current.BoundingRectangle.Top } },
+                    @{ Expression = { $_.Current.BoundingRectangle.Left } })
+            $fileMenuIds = @($fileMenuItems | ForEach-Object { $_.Current.AutomationId })
+        }
+        catch {
+            $fileMenuItems = @()
+            $fileMenuIds = @()
+        }
+    } while ($fileMenuIds.Count -ne 4 -and [DateTime]::UtcNow -lt $deadline)
+    if (($fileMenuIds -join ',') -ne 'RenameFileMenuItem,CopyFileMenuItem,CutFileMenuItem,DeleteFileMenuItem') {
+        throw "File menu for '$Name' was not Rename/Copy/Cut/Delete in order: $($fileMenuIds -join ',')"
     }
+    return $fileMenuItems
+}
+
+function Invoke-AutomationElement([System.Windows.Automation.AutomationElement]$Element) {
+    $pattern = $null
+    if (-not $Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+        throw "Element does not support InvokePattern: $($Element.Current.AutomationId)"
+    }
+    ([System.Windows.Automation.InvokePattern]$pattern).Invoke()
+}
+
+function Close-ContextMenu {
     [TuckPaneDropInput]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)
     [TuckPaneDropInput]::keybd_event(0x1B, 0, 0x0002, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 200
 }
 
+function Test-ContextMenu([int]$AppPid, [long]$Hwnd, [string]$Name) {
+    $null = @(Open-FileContextMenu $AppPid $Hwnd $Name)
+    Close-ContextMenu
+}
+
+function Test-CopyClipboard([int]$AppPid, [long]$Hwnd, [string]$Name, [string]$ExpectedPath) {
+    $items = @(Open-FileContextMenu $AppPid $Hwnd $Name)
+    Invoke-AutomationElement ($items | Where-Object { $_.Current.AutomationId -eq 'CopyFileMenuItem' })
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    do {
+        Start-Sleep -Milliseconds 50
+        try {
+            $clipboard = [TuckPaneClipboardProbe]::Read()
+            $settled = $clipboard.HasFileDrop -and $clipboard.Paths.Count -eq 1 -and
+                [IO.Path]::GetFullPath($clipboard.Paths[0]) -eq [IO.Path]::GetFullPath($ExpectedPath) -and
+                $clipboard.PreferredEffect -eq 1
+        }
+        catch { $settled = $false }
+    } while (-not $settled -and [DateTime]::UtcNow -lt $deadline)
+    if (-not $settled) {
+        throw "Copy for '$Name' did not publish CF_HDROP with Preferred DropEffect=Copy."
+    }
+}
+
+function Invoke-FileRename(
+    [int]$AppPid,
+    [long]$Hwnd,
+    [string]$Name,
+    [string]$NewBaseName,
+    [string]$OldPath,
+    [string]$ExpectedPath) {
+    $items = @(Open-FileContextMenu $AppPid $Hwnd $Name)
+    Invoke-AutomationElement ($items | Where-Object { $_.Current.AutomationId -eq 'RenameFileMenuItem' })
+    $dialog = Wait-AppWindowTitle $AppPid '重命名项目'
+    $input = @((winapp ui inspect -w $dialog.hwnd --interactive --json 2>$null | ConvertFrom-Json).windows.elements |
+        Where-Object type -eq 'Edit')[0]
+    if ($null -eq $input) { throw "Rename input did not appear for '$Name'." }
+    winapp ui set-value $input.selector $NewBaseName -w $dialog.hwnd | Out-Null
+    winapp ui invoke '重命名' -w $dialog.hwnd | Out-Null
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while (((Test-Path -LiteralPath $OldPath) -or -not (Test-Path -LiteralPath $ExpectedPath)) -and
+        [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 50
+    }
+    if ((Test-Path -LiteralPath $OldPath) -or -not (Test-Path -LiteralPath $ExpectedPath)) {
+        throw "Rename for '$Name' did not produce '$ExpectedPath'."
+    }
+}
+
 $originalRoot = $env:TUCKPANE_TEST_ROOT
 $originalExpanded = $env:GLASSFOLDER_TEST_EXPANDED
+$originalClipboardText = if ($FileActionsOnly) { [string](Get-Clipboard -Raw -ErrorAction SilentlyContinue) } else { $null }
 $root = Join-Path ([IO.Path]::GetTempPath()) ("TuckPane-main-window-drop-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
 try {
@@ -372,14 +516,13 @@ try {
         @{ Version = 1; Html = $noteHtml } | ConvertTo-Json -Compress |
             Set-Content -LiteralPath $notePath -Encoding utf8
         $state = @{
-            SchemaVersion = 5
-            GlobalSettings = @{ Theme = 0; StartWithWindows = $false; Language = 0; CollapseOnOutsideClick = $false; ExpandOnHover = $false }
+            SchemaVersion = 7
+            GlobalSettings = @{ ThemeColorArgb = 4293060073; Material = 0; ThemeTransparency = 0.35; StartWithWindows = $false; Language = 0; CollapseOnOutsideClick = $false; ExpandOnHover = $false }
             ConsolePlacement = $null
             Organizers = @(@{
                 Id = "00000000-0000-0000-0000-00000000000$mode"
                 Name = "Mode $mode probe"
                 CreatedAtUtc = [DateTimeOffset]::UtcNow
-                ThemeOverride = $null
                 PlacementMode = $mode
                 DockEdge = 1
                 Layout = @{ Mode = 0; Rows = 2; Columns = 3 }
@@ -404,6 +547,28 @@ try {
             $window = if ($mode -eq 2) { Expand-Station $app.Id } else { Wait-VisibleWindow $app.Id }
             if ($mode -ne 2) { winapp ui wait-for CollapseButton -w $window.hwnd --timeout 10000 | Out-Null }
             Start-Sleep -Milliseconds 700
+            if ($FileActionsOnly) {
+                foreach ($name in @('mode-file.txt', 'mode-folder', 'mode-link', 'mode-site', 'mode-portable')) {
+                    Test-ContextMenu $app.Id $window.hwnd $name
+                }
+                Test-CopyClipboard $app.Id $window.hwnd 'mode-file.txt' $file
+                $renamedFile = Join-Path $storage 'renamed-file.txt'
+                $renamedPortableNote = Join-Path $storage 'renamed-portable.tucknote'
+                Invoke-FileRename $app.Id $window.hwnd 'mode-file.txt' 'renamed-file' $file $renamedFile
+                Invoke-FileRename $app.Id $window.hwnd 'mode-portable' 'renamed-portable' $portableNote $renamedPortableNote
+                $deadline = [DateTime]::UtcNow.AddSeconds(5)
+                do {
+                    $savedOrder = @((Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json).Organizers[0].ItemOrder)
+                    $orderSettled = 'renamed-file.txt' -in $savedOrder -and 'renamed-portable.tucknote' -in $savedOrder -and
+                        'mode-file.txt' -notin $savedOrder -and 'mode-portable.tucknote' -notin $savedOrder
+                    if (-not $orderSettled) { Start-Sleep -Milliseconds 50 }
+                } while (-not $orderSettled -and [DateTime]::UtcNow -lt $deadline)
+                if (-not $orderSettled) {
+                    throw "Renamed file entries were not persisted in ItemOrder: $($savedOrder -join ',')"
+                }
+                Write-Host 'Mode 0 Rename/Copy/Cut/Delete menus, Copy clipboard, and file/.tucknote rename: PASS'
+                return
+            }
             if ($Aug26Only) {
                 if ($mode -eq 0) {
                     Test-ContextMenu $app.Id $window.hwnd 'mode-file.txt'
@@ -466,6 +631,7 @@ try {
 finally {
     $env:TUCKPANE_TEST_ROOT = $originalRoot
     $env:GLASSFOLDER_TEST_EXPANDED = $originalExpanded
+    if ($FileActionsOnly) { Set-Clipboard -Value ($originalClipboardText ?? '') }
     if ($KeepRoot) { Write-Host "Kept test root: $root" }
     elseif (Test-Path -LiteralPath $root) { [IO.Directory]::Delete($root, $true) }
 }
