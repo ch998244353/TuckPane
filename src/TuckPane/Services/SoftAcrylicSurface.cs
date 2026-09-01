@@ -26,6 +26,9 @@ internal sealed class SoftAcrylicSurface : IDisposable
     private CompositionSurfaceBrush? _noiseBrush;
     private bool _disposed;
     private double _cornerRadius;
+    private float _extraOpacity;
+    private GlassTheme _lastTheme = GlassTheme.Light;
+    private bool _lastUseAcrylic;
 
     internal SoftAcrylicSurface(FrameworkElement host)
     {
@@ -44,17 +47,34 @@ internal sealed class SoftAcrylicSurface : IDisposable
     internal void SetTheme(GlassTheme theme, bool useAcrylic)
     {
         if (_disposed) return;
+        _lastTheme = theme;
+        _lastUseAcrylic = useAcrylic;
+        ApplyBrush();
+    }
+
+    internal void SetExtraSurfaceOpacity(float opacity)
+    {
+        if (_disposed) return;
+        opacity = Math.Clamp(opacity, 0f, 1f);
+        if (!_lastUseAcrylic && _extraOpacity <= 0f && opacity <= 0f) return;
+        bool changed = Math.Abs(_extraOpacity - opacity) > 0.0001f;
+        _extraOpacity = opacity;
+        if (changed || _visual.Brush is null) ApplyBrush();
+    }
+
+    private void ApplyBrush()
+    {
         CompositionBrush next;
         try
         {
-            next = useAcrylic
-                ? CreateAcrylicBrush(theme)
-                : _visual.Compositor.CreateColorBrush(GlassThemePalette.OrganizerSurfaceColor(theme));
+            next = _lastUseAcrylic
+                ? CreateAcrylicBrush(_lastTheme)
+                : _visual.Compositor.CreateColorBrush(GlassThemePalette.OrganizerSurfaceColor(_lastTheme));
         }
         catch (Exception ex)
         {
             AppLogger.Error("GPU 毛玻璃材质不可用，已切换为主题纯色。", ex);
-            next = _visual.Compositor.CreateColorBrush(GlassThemePalette.OrganizerSurfaceColor(theme));
+            next = _visual.Compositor.CreateColorBrush(GlassThemePalette.OrganizerSurfaceColor(_lastTheme));
         }
         _visual.Brush = next;
         _brush?.Dispose();
@@ -109,6 +129,14 @@ internal sealed class SoftAcrylicSurface : IDisposable
         acrylic.Sources.Add(blur);
         acrylic.Sources.Add(luminosityLayer);
         acrylic.Sources.Add(tintLayer);
+        if (_extraOpacity > 0f)
+        {
+            acrylic.Sources.Add(new OpacityEffect
+            {
+                Opacity = _extraOpacity,
+                Source = new ColorSourceEffect { Color = GlassThemePalette.SurfaceColor(theme) }
+            });
+        }
         CompositionSurfaceBrush? noiseBrush = TryCreateNoiseBrush(compositor);
         if (noiseBrush is not null)
         {

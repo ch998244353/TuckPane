@@ -18,7 +18,7 @@ internal sealed record DesktopGridPlacement(
 
 internal sealed class DesktopGridService
 {
-    private readonly record struct GridSlot(int Column, int Row, NativeMethods.POINT Center, NativeMethods.RECT Cell, NativeMethods.RECT Bounds);
+    private readonly record struct GridSlot(int Column, int Row, NativeMethods.POINT Center, NativeMethods.RECT Cell, NativeMethods.RECT Bounds, double CompactScale);
     private readonly Dictionary<string, (long Timestamp, DesktopGridSnapshot Snapshot)> _snapshotCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal DesktopGridSnapshot ReadSnapshot(DisplayInfo display)
@@ -130,7 +130,7 @@ internal sealed class DesktopGridService
             OrganizerLimits.MaximumPositionedCompactScale);
         double scale = Math.Min(requestedScale, CalculatePositionedCompactScale(snapshot));
         (int width, int height, int tileSize) = CalculatePositionedWindowSize(snapshot, scale);
-        List<GridSlot> slots = CreateSlots(snapshot, width, height, tileSize, desiredCenter);
+        List<GridSlot> slots = CreateSlots(snapshot, width, height, tileSize, scale, desiredCenter);
 
         IEnumerable<GridSlot> available = slots.Where(slot =>
             !snapshot.DesktopIconCenters.Any(center => IsSameCell(snapshot, slot.Center, center)) &&
@@ -145,7 +145,7 @@ internal sealed class DesktopGridService
 
         GridSlot? selected = available.Cast<GridSlot?>().FirstOrDefault();
         return selected is GridSlot slot
-            ? new DesktopGridPlacement(slot.Bounds, scale, snapshot.ExplorerPositionsAvailable)
+            ? new DesktopGridPlacement(slot.Bounds, slot.CompactScale, snapshot.ExplorerPositionsAvailable)
             : null;
     }
 
@@ -157,7 +157,7 @@ internal sealed class DesktopGridService
     {
         double scale = Math.Min(compactScale, CalculatePositionedCompactScale(snapshot));
         (int width, int height, int tileSize) = CalculatePositionedWindowSize(snapshot, scale);
-        return CreateSlots(snapshot, width, height, tileSize, desiredCenter: null).Any(slot =>
+        return CreateSlots(snapshot, width, height, tileSize, scale, desiredCenter: null).Any(slot =>
             Math.Abs(slot.Bounds.Left - bounds.Left) <= tolerancePx &&
             Math.Abs(slot.Bounds.Top - bounds.Top) <= tolerancePx &&
             Math.Abs(slot.Bounds.Width - bounds.Width) <= tolerancePx &&
@@ -169,6 +169,7 @@ internal sealed class DesktopGridService
         int width,
         int height,
         int tileSize,
+        double compactScale,
         NativeMethods.POINT? desiredCenter)
     {
         NativeMethods.RECT work = snapshot.Display.Work;
@@ -188,6 +189,15 @@ internal sealed class DesktopGridService
         while (lattice.Y - snapshot.CellHeightPx >= work.Top) lattice.Y -= snapshot.CellHeightPx;
         while (lattice.Y < work.Top) lattice.Y += snapshot.CellHeightPx;
 
+        // 第一排的窗口不能伸出屏幕，也不能下探挡第二排：把第一排 tile 缩小，
+        // 使窗口顶贴住工作区、底正好相切于第二排窗口顶。
+        int sidePadding = Math.Max(0, (int)Math.Round(8 * snapshot.Display.Scale));
+        int nameAndGap = Math.Max(1, (int)Math.Round(23 * snapshot.Display.Scale));
+        int minimumTile = Math.Max(1, (int)Math.Round(39 * .25 * snapshot.Display.Scale));
+        int topRowTileBudget = (lattice.Y - work.Top) + snapshot.CellHeightPx - tileSize / 2 - nameAndGap;
+        int topRowTileSize = Math.Clamp(topRowTileBudget, minimumTile, tileSize);
+        double topRowScale = topRowTileSize / (39d * Math.Max(1, snapshot.Display.Scale));
+
         var result = new List<GridSlot>();
         int column = 0;
         for (int centerX = lattice.X; centerX < work.Right; centerX += snapshot.CellWidthPx, column++)
@@ -195,16 +205,28 @@ internal sealed class DesktopGridService
             int row = 0;
             for (int centerY = lattice.Y; centerY < work.Bottom; centerY += snapshot.CellHeightPx, row++)
             {
-                int left = centerX - width / 2;
-                int top = centerY - tileSize / 2;
+                bool topRow = row == 0 && topRowTileSize >= minimumTile;
+                int rowTileSize = topRow ? topRowTileSize : tileSize;
+                int rowWidth = topRow
+                    ? Math.Min(snapshot.CellWidthPx, topRowTileSize + sidePadding)
+                    : width;
+                int rowHeight = topRow
+                    ? Math.Min(snapshot.CellHeightPx, topRowTileSize + nameAndGap)
+                    : height;
+                int left = centerX - rowWidth / 2;
+                int top = topRow
+                    ? Math.Max(centerY - rowTileSize / 2, work.Top)
+                    : centerY - rowTileSize / 2;
                 var bounds = new NativeMethods.RECT
                 {
                     Left = left,
                     Top = top,
-                    Right = left + width,
-                    Bottom = top + height
+                    Right = left + rowWidth,
+                    Bottom = top + rowHeight
                 };
-                if (bounds.Left < work.Left || bounds.Top < work.Top || bounds.Right > work.Right || bounds.Bottom > work.Bottom) continue;
+                // 顶/左越界时保留该格（窗口可延伸出工作区，与图标单元格一致），
+                // 底/右越界则整格跳过。
+                if (bounds.Right > work.Right || bounds.Bottom > work.Bottom) continue;
                 var cell = new NativeMethods.RECT
                 {
                     Left = centerX - snapshot.CellWidthPx / 2,
@@ -212,7 +234,7 @@ internal sealed class DesktopGridService
                     Right = centerX - snapshot.CellWidthPx / 2 + snapshot.CellWidthPx,
                     Bottom = centerY - snapshot.CellHeightPx / 2 + snapshot.CellHeightPx
                 };
-                result.Add(new GridSlot(column, row, new NativeMethods.POINT { X = centerX, Y = centerY }, cell, bounds));
+                result.Add(new GridSlot(column, row, new NativeMethods.POINT { X = centerX, Y = centerY }, cell, bounds, topRow ? topRowScale : compactScale));
             }
         }
         return result;
@@ -270,7 +292,7 @@ internal sealed class DesktopGridService
                 UIntPtr.Zero,
                 IntPtr.Zero,
                 0,
-                1000,
+                250,
                 out UIntPtr packedSpacing) != IntPtr.Zero &&
             TryDecodeItemSpacing(packedSpacing, out width, out height);
     }
@@ -285,7 +307,7 @@ internal sealed class DesktopGridService
         centers = [];
         if (listView == IntPtr.Zero) return false;
 
-        if (NativeMethods.SendMessageTimeout(listView, NativeMethods.LVM_GETITEMCOUNT, UIntPtr.Zero, IntPtr.Zero, 0, 1000, out UIntPtr countResult) == IntPtr.Zero)
+        if (NativeMethods.SendMessageTimeout(listView, NativeMethods.LVM_GETITEMCOUNT, UIntPtr.Zero, IntPtr.Zero, 0, 250, out UIntPtr countResult) == IntPtr.Zero)
         {
             return false;
         }
@@ -334,7 +356,7 @@ internal sealed class DesktopGridService
                     (UIntPtr)(uint)index,
                     remoteBuffer,
                     0,
-                    1000,
+                    250,
                     out UIntPtr success);
                 if (wroteRequest && sent != IntPtr.Zero && success != UIntPtr.Zero &&
                     NativeMethods.ReadProcessMemory(process, remoteBuffer, out NativeMethods.RECT iconRect, rectSize, out UIntPtr rectBytesRead) &&
@@ -354,7 +376,7 @@ internal sealed class DesktopGridService
                     (UIntPtr)(uint)index,
                     remoteBuffer,
                     0,
-                    1000,
+                    250,
                     out success);
                 if (sent == IntPtr.Zero || success == UIntPtr.Zero) return false;
                 if (!NativeMethods.ReadProcessMemory(process, remoteBuffer, out NativeMethods.POINT point, pointSize, out UIntPtr pointBytesRead) ||

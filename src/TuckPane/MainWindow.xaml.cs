@@ -46,6 +46,7 @@ public sealed partial class MainWindow : Window
     private const int StationPointerPollMs = 50;
     private const int StationHoverExpandMs = 120;
     private const int StationLeaveCollapseMs = 400;
+
     private const double CanvasResizeBorderDip = 18;
     private const double ItemGapDip = DisplayPlacementService.ItemGapDip;
     private static readonly long OleMouseMoveMinimumTicks = Math.Max(1, Stopwatch.Frequency / 120);
@@ -80,6 +81,7 @@ public sealed partial class MainWindow : Window
     private IntPtr _hwnd;
     private AppWindow? _appWindow;
     private bool _hostWindowInitialized;
+
     private readonly List<IntPtr> _canvasResizeEdgeWindows = [];
     private readonly Dictionary<IntPtr, IntPtr> _canvasResizeOriginalWindowProcs = [];
     private DesktopLayerService? _desktopLayer;
@@ -95,6 +97,7 @@ public sealed partial class MainWindow : Window
     private long _stationOutsideSince;
     private long _ordinaryOutsideSince;
     private int _overlayOpenCount;
+    private bool _deferShow;
     private CancellationTokenSource? _transitionCancellation;
     private RectangleClip? _compactClip;
     private RectangleClip? _expandedClip;
@@ -141,6 +144,7 @@ public sealed partial class MainWindow : Window
     private bool _shellContextMenuOpen;
     private NativeMethods.POINT _contextMenuScreenPoint;
     private bool _hoverExpandScrollToEnd;
+
 
     private string? _draggedRelativeName;
     private bool _shellDragActive;
@@ -242,6 +246,7 @@ public sealed partial class MainWindow : Window
         ExpandedView.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(ExpandedView_PointerWheelChanged), handledEventsToo: true);
         WindowRoot.PointerEntered += WindowRoot_PointerEntered;
         WindowRoot.PointerExited += WindowRoot_PointerExited;
+
         Title = "TuckPane";
         SystemBackdrop = new TransparentTintBackdrop(Colors.Transparent);
         ApplyTheme();
@@ -253,7 +258,9 @@ public sealed partial class MainWindow : Window
         _longPressTimer.Tick += LongPressTimer_Tick;
 
         _externalHoverTimer = DispatcherQueue.CreateTimer();
-        _externalHoverTimer.Interval = TimeSpan.FromMilliseconds(ExternalHoverExpandMs);
+        _collapseOnPointerLeaveMs = Math.Clamp(_host.State.GlobalSettings.CollapseOnPointerLeaveMs, 200, 2000);
+        _externalHoverTimer.Interval = TimeSpan.FromMilliseconds(
+            Math.Clamp(_host.State.GlobalSettings.ExpandOnHoverMs, 100, 1500));
         _externalHoverTimer.IsRepeating = false;
         _externalHoverTimer.Tick += ExternalHoverTimer_Tick;
 
@@ -288,7 +295,50 @@ public sealed partial class MainWindow : Window
         _itemTouchHoldTimer.Tick += ItemTouchHoldTimer_Tick;
 
         Activated += MainWindow_Activated;
+        Activated += MainWindow_ActivationChanged;
         Closed += MainWindow_Closed;
+
+        // 在任何 Activate 之前把窗口移到屏幕外：WinUI 的 Activated 处理可能晚于
+        // 首帧合成，若留在默认位置会闪出半透明窗口；屏幕外则不可见。
+        _hwnd = WindowNative.GetWindowHandle(this);
+        _deferShow = true;
+        _ = NativeMethods.SetWindowPos(
+            _hwnd,
+            IntPtr.Zero,
+            -32000,
+            -32000,
+            0,
+            0,
+            NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
+    }
+
+    private void MainWindow_ActivationChanged(object sender, WindowActivatedEventArgs args)
+    {
+        if (args.WindowActivationState == WindowActivationState.Deactivated && _expanded && !_animating &&
+            _host.State.GlobalSettings.CollapseOnOutsideClick)
+        {
+            _ = CollapseAsync();
+        }
+    }
+
+    private void OnOutsideClick()
+    {
+        if (_expanded && !_animating)
+        {
+            _ = CollapseAsync();
+        }
+    }
+
+    internal void ApplyOutsideClickSetting()
+    {
+        if (_expanded && !_animating && _host.State.GlobalSettings.CollapseOnOutsideClick)
+        {
+            _outsideClickHook?.Start();
+        }
+        else
+        {
+            _outsideClickHook?.Stop();
+        }
     }
 
     public void ApplyLanguage()
@@ -306,6 +356,7 @@ public sealed partial class MainWindow : Window
         foreach (MenuFlyoutItem item in flyout.Items.OfType<MenuFlyoutItem>())
         {
             if (item.Tag is not string key) continue;
+
             item.Text = AppStrings.Get(key);
             item.FontFamily = family;
             item.CharacterSpacing = AppStrings.CharacterSpacing;
@@ -317,6 +368,331 @@ public sealed partial class MainWindow : Window
             };
         }
         StationActionSeparator.Visibility = expandedMenu ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+
+    private void ContextMenu_Opened(object sender, object e)
+    {
+        if (ReferenceEquals(sender, ExpandedViewContextMenu))
+        {
+            _ = NativeMethods.GetCursorPos(out _contextMenuScreenPoint);
+            try
+            {
+                DataPackageView data = Clipboard.GetContent();
+                PasteMenuItem.IsEnabled = data.Contains(StandardDataFormats.StorageItems) ||
+                    ShellDragService.TryGetClipboardPaths(out _, out _) ||
+                    data.Contains(StandardDataFormats.Bitmap) ||
+                    data.Contains(StandardDataFormats.Text);
+            }
+            catch
+            {
+                PasteMenuItem.IsEnabled = false;
+            }
+        }
+        _overlayOpenCount++;
+    }
+
+    private void ContextMenu_Closed(object sender, object e)
+    {
+        _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
+        ResetStationPointerDelay();
+    }
+
+    private void Item_ContextRequested(UIElement sender, ContextRequestedEventArgs e)
+    {
+        e.Handled = true;
+        if (!_expanded || _animating || _shellDragActive || _shellDropFinalizing ||
+            _shellContextMenuOpen ||
+            sender is not Border { Tag: string relativeName } host)
+        {
+            return;
+        }
+
+        WidgetItem? item = _items.FirstOrDefault(candidate =>
+            candidate.RelativeName.Equals(relativeName, StringComparison.OrdinalIgnoreCase));
+        if (item is null) return;
+        if (item is { Kind: WidgetItemKind.Note, NoteId: Guid noteId })
+        {
+            ShowNoteContextMenu(host, noteId);
+            return;
+        }
+        ShowFileContextMenu(host, item);
+    }
+
+    private void ShowFileContextMenu(FrameworkElement host, WidgetItem item)
+    {
+        bool station = _definition.PlacementMode == OrganizerPlacementMode.Station;
+        var cut = new MenuFlyoutItem { Text = AppStrings.Get("Cut") };
+        var delete = new MenuFlyoutItem { Text = AppStrings.Get("Delete") };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(cut, "CutFileMenuItem");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(delete, "DeleteFileMenuItem");
+        cut.Click += (_, _) => CutFileItem(item);
+        delete.Click += async (_, _) => await DeleteFileItemAsync(item);
+        var flyout = new MenuFlyout();
+        flyout.Items.Add(cut);
+        flyout.Items.Add(delete);
+        _shellContextMenuOpen = true;
+        _overlayOpenCount++;
+        if (station)
+        {
+            _desktopLayer?.SetInputActivation(true);
+            ResetStationPointerDelay();
+        }
+        flyout.Closed += (_, _) =>
+        {
+            _shellContextMenuOpen = false;
+            _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
+            if (station) _desktopLayer?.SetInputActivation(false);
+            ResetStationPointerDelay();
+        };
+        try
+        {
+            flyout.ShowAt(host);
+        }
+        catch (Exception ex)
+        {
+            _shellContextMenuOpen = false;
+            _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
+            if (station) _desktopLayer?.SetInputActivation(false);
+            AppLogger.Error($"无法打开文件项目菜单：{item.FullPath}", ex);
+            ShowMessage(AppStrings.Format("FileMenuErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
+        }
+    }
+
+    private void CutFileItem(WidgetItem item)
+    {
+        try
+        {
+            ShellDragService.SetCutClipboard(item.FullPath);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"无法剪切文件项目：{item.FullPath}", ex);
+            ShowMessage(AppStrings.Format("CutItemErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
+        }
+    }
+
+    private async Task DeleteFileItemAsync(WidgetItem item)
+    {
+        try
+        {
+            await Task.Run(() =>
+            {
+                if (Directory.Exists(item.FullPath))
+                {
+                    FileSystem.DeleteDirectory(
+                        item.FullPath,
+                        UIOption.OnlyErrorDialogs,
+                        RecycleOption.SendToRecycleBin,
+                        UICancelOption.ThrowException);
+                }
+                else if (File.Exists(item.FullPath))
+                {
+                    FileSystem.DeleteFile(
+                        item.FullPath,
+                        UIOption.OnlyErrorDialogs,
+                        RecycleOption.SendToRecycleBin,
+                        UICancelOption.ThrowException);
+                }
+            });
+            StartWatcher();
+            await RefreshCatalogAsync(notifyUnsupported: false);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"无法将文件项目移入回收站：{item.FullPath}", ex);
+            ShowMessage(AppStrings.Format("DeleteItemErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
+        }
+    }
+
+    private async void PasteMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        _overlayOpenCount++;
+        ResetStationPointerDelay();
+        bool catalogRefreshed = false;
+        try
+        {
+            DataPackageView data = Clipboard.GetContent();
+            bool hasNativeFiles = ShellDragService.TryGetClipboardPaths(out string[] nativePaths, out bool nativeMove);
+            if (data.Contains(StandardDataFormats.StorageItems) || hasNativeFiles)
+            {
+                string[] paths;
+                bool move;
+                try
+                {
+                    IReadOnlyList<IStorageItem> items = await data.GetStorageItemsAsync();
+                    paths = items.Select(item => item.Path).Where(path => !string.IsNullOrWhiteSpace(path)).ToArray();
+                    move = data.RequestedOperation.HasFlag(DataPackageOperation.Move);
+                }
+                catch when (hasNativeFiles)
+                {
+                    paths = nativePaths;
+                    move = nativeMove;
+                }
+                if (paths.Length == 0 && hasNativeFiles)
+                {
+                    paths = nativePaths;
+                    move = nativeMove;
+                }
+                if (paths.Length == 0) return;
+
+                var progress = new Progress<TransferProgress>(_ => { });
+                IReadOnlyList<TransferOutcome> outcomes = await _host.TransferQueue.RunAsync(token => move
+                    ? _storage.ImportBatchAsync(paths, progress, token)
+                    : _storage.CopyBatchAsync(paths, progress, token));
+                StartWatcher();
+                await RefreshCatalogAsync(notifyUnsupported: false);
+                await WaitForNextRenderAsync(CancellationToken.None);
+                ScrollToEnd(animated: true);
+                catalogRefreshed = true;
+                TransferOutcome[] warnings = outcomes.Where(outcome => outcome.Status is not (
+                    TransferStatus.Moved or TransferStatus.Copied or TransferStatus.ShortcutCreated)).ToArray();
+                if (warnings.Length > 0)
+                {
+                    ShowMessage(string.Join(" ", warnings.Select(outcome => $"{Path.GetFileName(outcome.SourcePath)}：{outcome.Message}")), InfoBarSeverity.Warning);
+                    return;
+                }
+
+                DataPackageOperation completed = move && outcomes.All(outcome => outcome.Status == TransferStatus.Moved)
+                    ? DataPackageOperation.Move
+                    : DataPackageOperation.Copy;
+                data.ReportOperationCompleted(completed);
+                ShowMessage(AppStrings.Format(move ? "MovedItemsFormat" : "CopiedItemsFormat", AppStrings.FormatItemCount(outcomes.Count)), InfoBarSeverity.Success);
+            }
+            else if (data.Contains(StandardDataFormats.Bitmap))
+            {
+                string path = await SaveClipboardBitmapAsync(data);
+                data.ReportOperationCompleted(DataPackageOperation.Copy);
+                ShowMessage(AppStrings.Format("PastedImageFormat", Path.GetFileName(path)), InfoBarSeverity.Success);
+            }
+            else if (data.Contains(StandardDataFormats.Text))
+            {
+                string text = await data.GetTextAsync();
+                if (string.IsNullOrWhiteSpace(text)) return;
+                NoteDefinition note = await _host.CreateNoteAsync(_definition.Id, text, _contextMenuScreenPoint);
+                _host.OpenNote(_definition.Id, note.Id);
+                data.ReportOperationCompleted(DataPackageOperation.Copy);
+                await WaitForNextRenderAsync(CancellationToken.None);
+                ScrollToEnd(animated: true);
+                return;
+            }
+            else
+            {
+                return;
+            }
+
+            if (!catalogRefreshed)
+            {
+                StartWatcher();
+                await RefreshCatalogAsync(notifyUnsupported: false);
+                await WaitForNextRenderAsync(CancellationToken.None);
+                ScrollToEnd(animated: true);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            ShowMessage(AppStrings.Get("PasteCancelled"), InfoBarSeverity.Informational);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("从剪贴板粘贴失败。", ex);
+            ShowMessage(AppStrings.Format("PasteFailedFormat", ex.Message), InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
+            ResetStationPointerDelay();
+        }
+    }
+
+    private async Task<string> SaveClipboardBitmapAsync(DataPackageView data)
+    {
+        RandomAccessStreamReference reference = await data.GetBitmapAsync();
+        _storage.EnsureCreated();
+        string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        string destination = StorageService.GetUniquePath(Path.Combine(
+            _storage.ItemsRoot,
+            AppStrings.Format("PastedImageNameFormat", stamp)));
+        string staging = Path.Combine(_storage.ItemsRoot, $".glassfolder-staging-{Guid.NewGuid():N}");
+        try
+        {
+            using (File.Create(staging)) { }
+            using IRandomAccessStreamWithContentType input = await reference.OpenReadAsync();
+            BitmapDecoder decoder = await BitmapDecoder.CreateAsync(input);
+            using SoftwareBitmap bitmap = await decoder.GetSoftwareBitmapAsync(
+                BitmapPixelFormat.Bgra8,
+                BitmapAlphaMode.Premultiplied);
+            StorageFile stagingFile = await StorageFile.GetFileFromPathAsync(staging);
+            using (IRandomAccessStream output = await stagingFile.OpenAsync(FileAccessMode.ReadWrite))
+            {
+                BitmapEncoder encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
+                encoder.SetSoftwareBitmap(bitmap);
+                await encoder.FlushAsync();
+            }
+            File.Move(staging, destination);
+            return destination;
+        }
+        finally
+        {
+            if (File.Exists(staging)) File.Delete(staging);
+        }
+    }
+
+    private async void NewFolderMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        bool station = _definition.PlacementMode == OrganizerPlacementMode.Station;
+        _overlayOpenCount++;
+        if (station)
+        {
+            _desktopLayer?.SetInputActivation(true);
+            ResetStationPointerDelay();
+        }
+        string defaultName = AppStrings.Get("NewFolderDefaultName");
+        string? createdPath = null;
+        try
+        {
+            DisplayInfo display = DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
+            bool accepted = await OwnedDialogWindow.ShowTextInputAsync(
+                _hwnd,
+                display,
+                _host.GetTheme(_definition),
+                AppStrings.Get("NewFolderTitle"),
+                defaultName,
+                AppStrings.Get("Create"),
+                AppStrings.Get("Cancel"),
+                name =>
+                {
+                    try
+                    {
+                        createdPath = _storage.CreateUniqueFolder(name);
+                        return null;
+                    }
+                    catch (Exception ex)
+                    {
+                        return ex.Message;
+                    }
+                });
+            if (!accepted || createdPath is null) return;
+            StartWatcher();
+            await RefreshCatalogAsync(notifyUnsupported: false);
+            await WaitForNextRenderAsync(CancellationToken.None);
+            ScrollToEnd(animated: true);
+            ShowMessage(AppStrings.Format("FolderCreatedFormat", Path.GetFileName(createdPath)), InfoBarSeverity.Success);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("新建文件夹失败。", ex);
+            ShowMessage(ex.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            if (station)
+            {
+                _desktopLayer?.SetInputActivation(false);
+            }
+            _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
+            ResetStationPointerDelay();
+        }
     }
 
     private async void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
@@ -339,6 +715,7 @@ public sealed partial class MainWindow : Window
         _hostWindowInitialized = true;
         _hwnd = WindowNative.GetWindowHandle(this);
         _outsideClickHook = new OutsideClickHook(_hwnd, DispatcherQueue, () => _ = CollapseAsync());
+
         WindowId windowId = Win32Interop.GetWindowIdFromWindow(_hwnd);
         _appWindow = AppWindow.GetFromWindowId(windowId);
         if (_appWindow.Presenter is OverlappedPresenter presenter)
@@ -356,6 +733,7 @@ public sealed partial class MainWindow : Window
 
     private async Task InitializeAsync()
     {
+        long initStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
         AppPaths.EnsureCreated();
         InitializeHostWindow();
         int useHostBackdrop = 1;
@@ -364,7 +742,10 @@ public sealed partial class MainWindow : Window
             NativeMethods.DWMWA_USE_HOSTBACKDROPBRUSH,
             ref useHostBackdrop,
             sizeof(int));
+        _appWindow.Hide();
+        _deferShow = true;
         _ = NativeMethods.SetWindowSubclass(_hwnd, _gestureWindowProc, GestureSubclassId, IntPtr.Zero);
+
 
         await WaitForLoadedAsync();
 
@@ -407,19 +788,35 @@ public sealed partial class MainWindow : Window
             _definition.Position,
             DipToPx(GetCompactWidthDip(), display.Scale),
             DipToPx(GetCompactHeightDip(), display.Scale));
-        if (_definition.PlacementMode == OrganizerPlacementMode.Positioned &&
-            _host.FindCurrentPositionedPlacement(_definition.Id, _compactBounds) is { } positionedPlacement)
+        if (_definition.PlacementMode == OrganizerPlacementMode.Positioned)
         {
-            MoveToPositionedPlacement(positionedPlacement.Bounds, positionedPlacement.CompactScale);
-            _definition.Position = DisplayPlacementService.Capture(_compactBounds);
-            normalizedVisualScales = true;
+            if (_definition.PositionLocked)
+            {
+                DesktopGridPlacement? locked = _host.RestoreLockedPositionedBounds(_definition.Id);
+                if (locked is not null)
+                {
+                    MoveToPositionedPlacement(locked.Bounds, locked.CompactScale);
+                    normalizedVisualScales = true;
+                }
+            }
+            else if (_host.FindCurrentPositionedPlacement(_definition.Id, _compactBounds) is { } positionedPlacement)
+            {
+                MoveToPositionedPlacement(positionedPlacement.Bounds, positionedPlacement.CompactScale);
+                _definition.Position = DisplayPlacementService.Capture(_compactBounds);
+                normalizedVisualScales = true;
+            }
         }
         AppLogger.Info($"初始化 DPI={display.Scale:0.##}，收起窗口={_compactBounds.Width}x{_compactBounds.Height}px。");
         ApplyBounds(_compactBounds, show: true);
         if (normalizedVisualScales) await SaveStateAsync();
 
         _desktopLayer = new DesktopLayerService(_hwnd, IntPtr.Zero);
+        _desktopRepairTimer.Start();
+        if (_storage.Exists) StartWatcher();
+        _deferShow = false;
         ApplyBounds(_compactBounds, show: true);
+        _desktopLayer.Reattach();
+        AppLogger.Info($"初始化完成，耗时 {System.Diagnostics.Stopwatch.GetElapsedTime(initStartedAt).TotalMilliseconds:0}ms，收起窗口={_compactBounds.Width}x{_compactBounds.Height}px。");
         if (!_uiSettings.AdvancedEffectsEnabled)
         {
             _host.NotifyTransparencyFallback();
@@ -428,6 +825,7 @@ public sealed partial class MainWindow : Window
         _stationPointerTimer.Start();
         if (_storage.Exists) StartWatcher();
         await RefreshCatalogAsync(notifyUnsupported: true, refreshIcons: true);
+
         WindowRoot.Focus(FocusState.Programmatic);
         if (Environment.GetEnvironmentVariable("GLASSFOLDER_TEST_EXPANDED") == "1")
         {
@@ -827,6 +1225,7 @@ public sealed partial class MainWindow : Window
             station ? DisplayPlacementService.StationTopInsetDip : DisplayPlacementService.ExpandedTopInsetDip,
             side,
             station ? DisplayPlacementService.StationBottomInsetDip : DisplayPlacementService.ExpandedBottomInsetDip);
+
     }
 
     private Size GetItemsViewportSize()
@@ -1119,6 +1518,7 @@ public sealed partial class MainWindow : Window
         CancellationTokenSource transition = StartTransition();
         if (_definition.PlacementMode != OrganizerPlacementMode.Station) _desktopLayer?.SetExpanded(true);
 
+
         NativeMethods.RECT currentBounds = _compactBounds;
         if (_definition.PlacementMode != OrganizerPlacementMode.Station &&
             !NativeMethods.GetWindowRect(_hwnd, out currentBounds))
@@ -1164,6 +1564,7 @@ public sealed partial class MainWindow : Window
                 if (scrollToEnd) ScrollToEnd(animated: false);
                 if (_definition.PlacementMode != OrganizerPlacementMode.Station)
                     WindowRoot.Focus(FocusState.Programmatic);
+
                 UpdateCanvasResizeEdgeWindows(show: true);
                 _canvasResizeLeftButtonDown = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_LBUTTON) & 0x8000) != 0;
                 _canvasResizeInputTimer.Start();
@@ -1180,6 +1581,8 @@ public sealed partial class MainWindow : Window
 
         _expanded = false;
         _animating = true;
+        _desktopLayer?.SetExpanded(false);
+
         _canvasResizeInputTimer.Stop();
         _canvasResizeLeftButtonDown = false;
         UpdateCanvasResizeEdgeWindows(show: false);
@@ -1228,6 +1631,7 @@ public sealed partial class MainWindow : Window
                 }
                 _collapseTransitionGeometry = null;
                 _animating = false;
+                _outsideClickHook?.Stop();
                 _desktopLayer?.SetExpanded(false);
                 if (_definition.PlacementMode == OrganizerPlacementMode.Station) _appWindow?.Hide();
                 _host.NotifyCollapsed(this);
@@ -1564,6 +1968,7 @@ public sealed partial class MainWindow : Window
                 _definition.ManualCanvasBaseWidthDip,
                 _definition.ManualCanvasBaseHeightDip);
         }
+
         return DisplayPlacementService.CalculateExpandedBounds(
             compact,
             display,
@@ -1609,6 +2014,7 @@ public sealed partial class MainWindow : Window
     {
         if (_definition.PlacementMode == OrganizerPlacementMode.Station || !_expanded || _animating ||
             _canvasResize is not null || _shellDragActive || _itemReorderSession is not null ||
+
             !NativeMethods.GetCursorPos(out NativeMethods.POINT cursor) ||
             !NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds)) return false;
         CanvasResizeEdge edge = requestedEdge == CanvasResizeEdge.None
@@ -1642,6 +2048,7 @@ public sealed partial class MainWindow : Window
         double maximumHeight = (_definition.PlacementMode == OrganizerPlacementMode.Station
             ? work.Height
             : Math.Max(1, 2d * Math.Min(centerY - work.Top, work.Bottom - centerY))) / display.Scale;
+
         double maximumScale = Math.Max(startScale, Math.Min(1.2,
             Math.Min(maximumWidth / baseWidth, maximumHeight / baseHeight)));
 
@@ -1893,6 +2300,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_expanded || _animating || _canvasResize is not null || _itemReorderSession is not null || _shellDragActive ||
             (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) == 0)
+
         {
             _wheelDeltaRemainder = 0;
             return;
@@ -1919,6 +2327,7 @@ public sealed partial class MainWindow : Window
         if (Math.Abs(next - _definition.ItemScale) < .0001) return;
         _definition.ItemScale = next;
         ApplyDefinition(OrganizerVisualChange.ItemScale);
+
         _interactionSaveTimer.Stop();
         _interactionSaveTimer.Start();
     }
@@ -1927,6 +2336,7 @@ public sealed partial class MainWindow : Window
     {
         if (_canvasResize is not { } session) return;
         ClearStationTransitionVisuals();
+
         double factor = OrganizerInteractionMath.CalculateResizeFactor(
             session.Edge,
             cursor.X - session.StartCursor.X,
@@ -1965,6 +2375,7 @@ public sealed partial class MainWindow : Window
             width = bounds.Width;
             height = bounds.Height;
         }
+
         if ((RectsEqual(bounds, _dragCurrentBounds) || RectsEqual(bounds, session.StartBounds)) &&
             Math.Abs(canvasScale - _definition.CanvasScale) < .0001) return;
 
@@ -1980,6 +2391,7 @@ public sealed partial class MainWindow : Window
                 ? DisplayPlacementService.StationSideInsetDip
                 : DisplayPlacementService.ExpandedSideInsetDip);
         _definition.ItemScale = Math.Clamp(Math.Min(previousItemScale, maximumItemScale), .5, DisplayPlacementService.MaximumItemScale);
+
         _dragCurrentBounds = bounds;
         _ = NativeMethods.SetWindowPos(
             _hwnd,
@@ -2034,6 +2446,7 @@ public sealed partial class MainWindow : Window
         bool cursorMatches = SetCanvasResizeCursor(edge) && GetCanvasResizeHitTest(edge) == NativeMethods.HTRIGHT;
 
         var samples = new List<NativeMethods.RECT>();
+
         NativeMethods.POINT finalCursor = startCursor;
         for (int step = 1; step <= 12; step++)
         {
@@ -2041,6 +2454,7 @@ public sealed partial class MainWindow : Window
             QueueCanvasResize(finalCursor);
             await Task.Delay(25);
             if (NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT sample)) samples.Add(sample);
+
         }
 
         var releaseClock = Stopwatch.StartNew();
@@ -2072,6 +2486,7 @@ public sealed partial class MainWindow : Window
             GetCanvasResizeHitTest(edge) == NativeMethods.HTRIGHT &&
             cursorMatches && distinctWidths >= 9 && maximumAspectErrorPx <= 1 &&
             surfaceMatchesClient && transitionVisualReset && releaseSettledMs <= 120 && !followedAfterRelease;
+
         string resultPath = Path.Combine(AppPaths.LocalRoot, "resize-probe.json");
         string result = JsonSerializer.Serialize(new
         {
@@ -2083,6 +2498,7 @@ public sealed partial class MainWindow : Window
             MaximumAspectErrorPx = Math.Round(maximumAspectErrorPx, 3),
             SurfaceMatchesClient = surfaceMatchesClient,
             TransitionVisualReset = transitionVisualReset,
+
             ReleaseSettledMs = releaseSettledMs,
             FollowedAfterRelease = followedAfterRelease
         }, new JsonSerializerOptions { WriteIndented = true });
@@ -2132,6 +2548,7 @@ public sealed partial class MainWindow : Window
     {
         if (_definition.PlacementMode == OrganizerPlacementMode.Station || !_expanded || _animating ||
             _itemReorderSession is not null || _shellDragActive ||
+
             !NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds)) return CanvasResizeEdge.None;
         return GetCanvasResizeEdge(cursor, bounds);
     }
@@ -2140,6 +2557,7 @@ public sealed partial class MainWindow : Window
     {
         if (_definition.PlacementMode == OrganizerPlacementMode.Station || !_expanded || _animating ||
             _itemReorderSession is not null || _shellDragActive) return CanvasResizeEdge.None;
+
         double scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
         return GetCanvasResizeEdge(
             new Point((cursor.X - bounds.Left) / scale, (cursor.Y - bounds.Top) / scale),
@@ -2602,25 +3020,20 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void Item_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private void TryOpenItem(string relativeName)
     {
-        if (_shellDropFinalizing || sender is not FrameworkElement { Tag: string relativeName } || _draggedRelativeName is not null)
-        {
-            return;
-        }
+        if (_shellDropFinalizing || _draggedRelativeName is not null) return;
         WidgetItem? item = _items.FirstOrDefault(candidate => candidate.RelativeName.Equals(relativeName, StringComparison.OrdinalIgnoreCase));
         if (item is null) return;
 
         if (item is { Kind: WidgetItemKind.Note, NoteId: Guid noteId })
         {
             _host.OpenNote(_definition.Id, noteId);
-            e.Handled = true;
             return;
         }
 
         if (item.Kind == WidgetItemKind.PortableNote)
         {
-            e.Handled = true;
             return;
         }
 
@@ -2635,113 +3048,66 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void Item_ContextRequested(UIElement sender, ContextRequestedEventArgs e)
+    private long _lastItemOpenAt;
+
+    private void Item_Tapped(object sender, TappedRoutedEventArgs e)
     {
-        e.Handled = true;
-        if (!_expanded || _animating || _shellDragActive || _shellDropFinalizing ||
-            _shellContextMenuOpen ||
-            sender is not Border { Tag: string relativeName } host)
+        // 拖拽（换序/拖出/原生拖放）过程中 WinUI 不会产生 Tapped；此处再兜底守卫
+        if (_shellDropFinalizing || _shellDragActive || _itemReorderSession is not null ||
+            _draggedRelativeName is not null || _animating ||
+            sender is not FrameworkElement { Tag: string relativeName })
         {
             return;
         }
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (System.Diagnostics.Stopwatch.GetElapsedTime(_lastItemOpenAt).TotalMilliseconds < 800) return;
+        _lastItemOpenAt = now;
+        TryOpenItem(relativeName);
+    }
 
+    private void Item_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        _lastItemOpenAt = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (_shellDropFinalizing ||
+            sender is not FrameworkElement { Tag: string relativeName } ||
+            _draggedRelativeName is not null)
+        {
+            return;
+        }
         WidgetItem? item = _items.FirstOrDefault(candidate =>
             candidate.RelativeName.Equals(relativeName, StringComparison.OrdinalIgnoreCase));
         if (item is null) return;
+
         if (item is { Kind: WidgetItemKind.Note, NoteId: Guid noteId })
         {
-            ShowNoteContextMenu(host, noteId);
+            _host.OpenNote(_definition.Id, noteId);
+            e.Handled = true;
             return;
         }
-        ShowFileContextMenu(host, item);
-    }
 
-    private void ShowFileContextMenu(FrameworkElement host, WidgetItem item)
-    {
-        bool station = _definition.PlacementMode == OrganizerPlacementMode.Station;
-        var cut = new MenuFlyoutItem { Text = AppStrings.Get("Cut") };
-        var delete = new MenuFlyoutItem { Text = AppStrings.Get("Delete") };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(cut, "CutFileMenuItem");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(delete, "DeleteFileMenuItem");
-        cut.Click += (_, _) => CutFileItem(item);
-        delete.Click += async (_, _) => await DeleteFileItemAsync(item);
-        var flyout = new MenuFlyout();
-        flyout.Items.Add(cut);
-        flyout.Items.Add(delete);
-        _shellContextMenuOpen = true;
-        _overlayOpenCount++;
-        if (station)
+        if (item.Kind == WidgetItemKind.PortableNote)
         {
-            _desktopLayer?.SetInputActivation(true);
-            ResetStationPointerDelay();
+            _ = _host.OpenExternalNoteAsync(item.FullPath);
+            e.Handled = true;
+            return;
         }
-        flyout.Closed += (_, _) =>
-        {
-            _shellContextMenuOpen = false;
-            _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
-            if (station) _desktopLayer?.SetInputActivation(false);
-            ResetStationPointerDelay();
-        };
+
         try
         {
-            flyout.ShowAt(host);
+            Process.Start(new ProcessStartInfo(item.FullPath) { UseShellExecute = true });
+            e.Handled = true;
         }
         catch (Exception ex)
         {
-            _shellContextMenuOpen = false;
-            _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
-            if (station) _desktopLayer?.SetInputActivation(false);
-            AppLogger.Error($"无法打开文件项目菜单：{item.FullPath}", ex);
-            ShowMessage(AppStrings.Format("FileMenuErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
+            AppLogger.Error($"无法打开：{item.FullPath}", ex);
+            ShowMessage(AppStrings.Format("OpenItemErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
         }
     }
 
-    private void CutFileItem(WidgetItem item)
-    {
-        try
-        {
-            ShellDragService.SetCutClipboard(item.FullPath);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error($"无法剪切文件项目：{item.FullPath}", ex);
-            ShowMessage(AppStrings.Format("CutItemErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
-        }
-    }
-
-    private async Task DeleteFileItemAsync(WidgetItem item)
-    {
-        try
-        {
-            await Task.Run(() =>
-            {
-                if (Directory.Exists(item.FullPath))
-                {
-                    FileSystem.DeleteDirectory(
-                        item.FullPath,
-                        UIOption.OnlyErrorDialogs,
-                        RecycleOption.SendToRecycleBin,
-                        UICancelOption.ThrowException);
-                }
-                else if (File.Exists(item.FullPath))
-                {
-                    FileSystem.DeleteFile(
-                        item.FullPath,
-                        UIOption.OnlyErrorDialogs,
-                        RecycleOption.SendToRecycleBin,
-                        UICancelOption.ThrowException);
-                }
-            });
-            StartWatcher();
-            await RefreshCatalogAsync(notifyUnsupported: false);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error($"无法将文件项目移入回收站：{item.FullPath}", ex);
-            ShowMessage(AppStrings.Format("DeleteItemErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
-        }
-    }
-
+    
+    
+    
+    
     private void ShowNoteContextMenu(FrameworkElement host, Guid noteId)
     {
         bool station = _definition.PlacementMode == OrganizerPlacementMode.Station;
@@ -2749,8 +3115,13 @@ public sealed partial class MainWindow : Window
         var delete = new MenuFlyoutItem { Text = AppStrings.Get("ContextDeleteNote") };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(rename, "RenameNoteMenuItem");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(delete, "DeleteNoteMenuItem");
+        AppLogger.Info($"便签菜单：打开 note={noteId}。");
         rename.Click += async (_, _) => await ShowRenameNoteDialogAsync(noteId);
-        delete.Click += async (_, _) => await ShowDeleteNoteDialogAsync(noteId);
+        delete.Click += async (_, _) =>
+        {
+            AppLogger.Info($"便签菜单：点击删除 note={noteId}。");
+            await ShowDeleteNoteDialogAsync(noteId);
+        };
         var flyout = new MenuFlyout();
         flyout.Items.Add(rename);
         flyout.Items.Add(delete);
@@ -2821,8 +3192,14 @@ public sealed partial class MainWindow : Window
 
     private async Task ShowDeleteNoteDialogAsync(Guid noteId)
     {
+        AppLogger.Info($"便签删除：确认对话框打开 note={noteId}。");
         NoteDefinition? note = _definition.Notes.FirstOrDefault(item => item.Id == noteId);
-        if (note is null) return;
+        if (note is null)
+        {
+            AppLogger.Error($"便签删除：状态中找不到便签 note={noteId}，取消。");
+            ShowMessage(AppStrings.Get("NoteMissingError"), InfoBarSeverity.Error);
+            return;
+        }
         bool station = _definition.PlacementMode == OrganizerPlacementMode.Station;
         _overlayOpenCount++;
         if (station) _desktopLayer?.SetInputActivation(true);
@@ -2837,6 +3214,7 @@ public sealed partial class MainWindow : Window
                 AppStrings.Format("NoteDeleteMessageFormat", note.Name),
                 AppStrings.Get("Delete"),
                 AppStrings.Get("Cancel"));
+            AppLogger.Info($"便签删除：确认结果 accepted={accepted} note={noteId}。");
             if (accepted) await _host.DeleteNoteAsync(_definition.Id, noteId);
         }
         catch (Exception ex)
@@ -2963,6 +3341,7 @@ public sealed partial class MainWindow : Window
                 await _host.OpenExternalNoteAsync(item.FullPath);
                 e.Handled = true;
             }
+
         }
         else e.Handled = true;
     }
@@ -4168,10 +4547,68 @@ public sealed partial class MainWindow : Window
         else if (e.DataView.Contains(StandardDataFormats.StorageItems))
         {
             AutoScrollForDrag(e);
+            UpdateFolderDropFeedback(HitTestFolderItem(e), e);
             e.AcceptedOperation = OrganizerInteractionMath.SelectDropOperation(e.AllowedOperations);
+            _acceptedDropOperation = e.AcceptedOperation;
             if (e.AcceptedOperation != DataPackageOperation.None)
-                e.DragUIOverride.Caption = AppStrings.Get("DragIntoApp");
+            {
+                WidgetItem? hoverFolder = _folderDropTarget;
+                e.DragUIOverride.Caption = hoverFolder is null
+                    ? AppStrings.Get("DragIntoApp")
+                    : AppStrings.Format("DropIntoFolderFormat", hoverFolder.Name);
+            }
         }
+    }
+
+    private WidgetItem? HitTestFolderItem(DragEventArgs e)
+    {
+        if (!_expanded || _animating || _items.Count == 0) return null;
+        GeneralTransform toRoot = ItemsRepeater.TransformToVisual(WindowRoot);
+        Point rootPoint = toRoot.TransformPoint(e.GetPosition(ItemsRepeater));
+        foreach (DependencyObject hit in VisualTreeHelper.FindElementsInHostCoordinates(rootPoint, WindowRoot))
+        {
+            if (hit is FrameworkElement { DataContext: WidgetItem { Kind: WidgetItemKind.Folder } item }) return item;
+        }
+        return null;
+    }
+
+    private WidgetItem? _folderDropTarget;
+
+    private DataPackageOperation _acceptedDropOperation;
+
+    private int _collapseOnPointerLeaveMs = 400;
+
+    private void UpdateFolderDropFeedback(WidgetItem? folder, DragEventArgs e)
+    {
+        if (ReferenceEquals(folder, _folderDropTarget))
+        {
+            if (folder is not null) e.DragUIOverride.Caption = AppStrings.Format("DropIntoFolderFormat", folder.Name);
+            return;
+        }
+        ClearFolderDropFeedback();
+        _folderDropTarget = folder;
+        if (folder is null)
+        {
+            e.DragUIOverride.Caption = AppStrings.Get("DragIntoApp");
+            return;
+        }
+        e.DragUIOverride.Caption = AppStrings.Format("DropIntoFolderFormat", folder.Name);
+        int index = _items.IndexOf(folder);
+        if (index >= 0 && ItemsRepeater.TryGetElement(index) is FrameworkElement element)
+        {
+            element.Opacity = 0.55;
+        }
+    }
+
+    private void ClearFolderDropFeedback()
+    {
+        if (_folderDropTarget is null) return;
+        int index = _items.IndexOf(_folderDropTarget);
+        if (index >= 0 && ItemsRepeater.TryGetElement(index) is FrameworkElement element)
+        {
+            element.Opacity = 1;
+        }
+        _folderDropTarget = null;
     }
 
     private void ItemsGrid_DragEnter(object sender, DragEventArgs e)
@@ -4184,6 +4621,7 @@ public sealed partial class MainWindow : Window
 
     private void ItemsGrid_DragLeave(object sender, DragEventArgs e)
     {
+        ClearFolderDropFeedback();
         if (_draggedRelativeName is null || _itemReorderSession is not { NativeDragStarted: true } session) return;
         session.LeaveInternalPreview();
         ResetGapTransitionState();
@@ -4238,8 +4676,10 @@ public sealed partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-        await ImportFromDragAsync(e);
+        WidgetItem? folderTarget = HitTestFolderItem(e);
+        ClearFolderDropFeedback();
         e.Handled = true;
+        await ImportFromDragAsync(e, folderTarget?.RelativeName);
     }
 
     private void WindowRoot_DragEnter(object sender, DragEventArgs e)
@@ -4276,6 +4716,7 @@ public sealed partial class MainWindow : Window
         if (e.DataView.Contains(StandardDataFormats.StorageItems))
         {
             e.AcceptedOperation = OrganizerInteractionMath.SelectDropOperation(e.AllowedOperations);
+            _acceptedDropOperation = e.AcceptedOperation;
             if (e.AcceptedOperation != DataPackageOperation.None)
                 e.DragUIOverride.Caption = AppStrings.Get("DragIntoApp");
         }
@@ -4372,7 +4813,7 @@ public sealed partial class MainWindow : Window
 
             long ordinaryNow = Stopwatch.GetTimestamp();
             _ordinaryOutsideSince = _ordinaryOutsideSince == 0 ? ordinaryNow : _ordinaryOutsideSince;
-            if (Stopwatch.GetElapsedTime(_ordinaryOutsideSince, ordinaryNow).TotalMilliseconds < StationLeaveCollapseMs) return;
+            if (Stopwatch.GetElapsedTime(_ordinaryOutsideSince, ordinaryNow).TotalMilliseconds < _collapseOnPointerLeaveMs) return;
             _ordinaryOutsideSince = 0;
             await CollapseAsync();
             return;
@@ -4419,7 +4860,7 @@ public sealed partial class MainWindow : Window
         }
 
         _stationOutsideSince = _stationOutsideSince == 0 ? now : _stationOutsideSince;
-        if (Stopwatch.GetElapsedTime(_stationOutsideSince, now).TotalMilliseconds < StationLeaveCollapseMs) return;
+        if (Stopwatch.GetElapsedTime(_stationOutsideSince, now).TotalMilliseconds < _collapseOnPointerLeaveMs) return;
         _stationTransitionPending = true;
         ResetStationPointerDelay();
         try { await CollapseAsync(); }
@@ -4439,34 +4880,25 @@ public sealed partial class MainWindow : Window
         return _canvasResizeEdgeWindows.Any(edge => hit == edge || NativeMethods.IsChild(edge, hit));
     }
 
-    private void ContextMenu_Opened(object sender, object e)
+    
+    
+    private async Task<IReadOnlyList<TransferOutcome>> RunImportWithFallbackAsync(
+        Func<CancellationToken, Task<IReadOnlyList<TransferOutcome>>> primary,
+        string? targetFolder,
+        Func<CancellationToken, Task<IReadOnlyList<TransferOutcome>>> fallback)
     {
-        if (ReferenceEquals(sender, ExpandedViewContextMenu))
+        try
         {
-            _ = NativeMethods.GetCursorPos(out _contextMenuScreenPoint);
-            try
-            {
-                DataPackageView data = Clipboard.GetContent();
-                PasteMenuItem.IsEnabled = data.Contains(StandardDataFormats.StorageItems) ||
-                    ShellDragService.TryGetClipboardPaths(out _, out _) ||
-                    data.Contains(StandardDataFormats.Bitmap) ||
-                    data.Contains(StandardDataFormats.Text);
-            }
-            catch
-            {
-                PasteMenuItem.IsEnabled = false;
-            }
+            return await _host.TransferQueue.RunAsync(primary);
         }
-        _overlayOpenCount++;
+        catch (InvalidOperationException) when (targetFolder is not null)
+        {
+            // 目标文件夹在拖放期间被重命名/删除，回退导入收纳盒根目录
+            return await _host.TransferQueue.RunAsync(fallback);
+        }
     }
 
-    private void ContextMenu_Closed(object sender, object e)
-    {
-        _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
-        ResetStationPointerDelay();
-    }
-
-    private async Task ImportFromDragAsync(DragEventArgs e)
+    private async Task ImportFromDragAsync(DragEventArgs e, string? targetFolder = null)
     {
         if (!e.DataView.Contains(StandardDataFormats.StorageItems))
         {
@@ -4504,22 +4936,34 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            IReadOnlyList<TransferOutcome> outcomes = await _host.TransferQueue.RunAsync(token => move
-                ? _storage.ImportBatchAsync(paths, progress, token)
-                : _storage.CopyBatchAsync(paths, progress, token));
+            IReadOnlyList<TransferOutcome> outcomes;
+            // 以 Drop 协商结果为准：来源允许移动（Move）才移动源文件，否则复制
+            if (!move)
+            {
+                outcomes = await RunImportWithFallbackAsync(
+                    token => _storage.CopyBatchAsync(paths, progress, token, targetFolder),
+                    targetFolder,
+                    token => _storage.CopyBatchAsync(paths, progress, token));
+            }
+            else
+            {
+                outcomes = await RunImportWithFallbackAsync(
+                    token => _storage.ImportBatchAsync(paths, progress, token, targetFolder),
+                    targetFolder,
+                    token => _storage.ImportBatchAsync(paths, progress, token));
+            }
+
             StartWatcher();
             await RefreshCatalogAsync(notifyUnsupported: false);
             await WaitForNextRenderAsync(CancellationToken.None);
             ScrollToEnd(animated: true);
 
-            TransferOutcome[] warnings = outcomes.Where(outcome => move
-                ? outcome.Status is not (TransferStatus.Moved or TransferStatus.ShortcutCreated)
-                : outcome.Status is not (TransferStatus.Copied or TransferStatus.ShortcutCreated)).ToArray();
+            TransferOutcome[] warnings = outcomes.Where(outcome => outcome.Status is not (TransferStatus.Moved or TransferStatus.Copied or TransferStatus.ShortcutCreated)).ToArray();
             if (warnings.Length == 0)
             {
-                ShowMessage(AppStrings.Format(
-                    move ? "MovedItemsFormat" : "CopiedItemsFormat",
-                    AppStrings.FormatItemCount(outcomes.Count)), InfoBarSeverity.Success);
+                bool allCopied = outcomes.Count > 0 && outcomes.All(outcome => outcome.Status is TransferStatus.Copied or TransferStatus.ShortcutCreated);
+                ShowMessage(AppStrings.Format(allCopied ? "CopiedItemsFormat" : "MovedItemsFormat", AppStrings.FormatItemCount(outcomes.Count)), InfoBarSeverity.Success);
+
             }
             else
             {
@@ -4578,106 +5022,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void PasteMenuItem_Click(object sender, RoutedEventArgs e)
-    {
-        _overlayOpenCount++;
-        ResetStationPointerDelay();
-        bool catalogRefreshed = false;
-        try
-        {
-            DataPackageView data = Clipboard.GetContent();
-            bool hasNativeFiles = ShellDragService.TryGetClipboardPaths(out string[] nativePaths, out bool nativeMove);
-            if (data.Contains(StandardDataFormats.StorageItems) || hasNativeFiles)
-            {
-                string[] paths;
-                bool move;
-                try
-                {
-                    IReadOnlyList<IStorageItem> items = await data.GetStorageItemsAsync();
-                    paths = items.Select(item => item.Path).Where(path => !string.IsNullOrWhiteSpace(path)).ToArray();
-                    move = data.RequestedOperation.HasFlag(DataPackageOperation.Move);
-                }
-                catch when (hasNativeFiles)
-                {
-                    paths = nativePaths;
-                    move = nativeMove;
-                }
-                if (paths.Length == 0 && hasNativeFiles)
-                {
-                    paths = nativePaths;
-                    move = nativeMove;
-                }
-                if (paths.Length == 0) return;
-
-                var progress = new Progress<TransferProgress>(_ => { });
-                IReadOnlyList<TransferOutcome> outcomes = await _host.TransferQueue.RunAsync(token => move
-                    ? _storage.ImportBatchAsync(paths, progress, token)
-                    : _storage.CopyBatchAsync(paths, progress, token));
-                StartWatcher();
-                await RefreshCatalogAsync(notifyUnsupported: false);
-                await WaitForNextRenderAsync(CancellationToken.None);
-                ScrollToEnd(animated: true);
-                catalogRefreshed = true;
-                TransferOutcome[] warnings = outcomes.Where(outcome => outcome.Status is not (
-                    TransferStatus.Moved or TransferStatus.Copied or TransferStatus.ShortcutCreated)).ToArray();
-                if (warnings.Length > 0)
-                {
-                    ShowMessage(string.Join(" ", warnings.Select(outcome => $"{Path.GetFileName(outcome.SourcePath)}：{outcome.Message}")), InfoBarSeverity.Warning);
-                    return;
-                }
-
-                DataPackageOperation completed = move && outcomes.All(outcome => outcome.Status == TransferStatus.Moved)
-                    ? DataPackageOperation.Move
-                    : DataPackageOperation.Copy;
-                data.ReportOperationCompleted(completed);
-                ShowMessage(AppStrings.Format(move ? "MovedItemsFormat" : "CopiedItemsFormat", AppStrings.FormatItemCount(outcomes.Count)), InfoBarSeverity.Success);
-            }
-            else if (data.Contains(StandardDataFormats.Bitmap))
-            {
-                string path = await SaveClipboardBitmapAsync(data);
-                data.ReportOperationCompleted(DataPackageOperation.Copy);
-                ShowMessage(AppStrings.Format("PastedImageFormat", Path.GetFileName(path)), InfoBarSeverity.Success);
-            }
-            else if (data.Contains(StandardDataFormats.Text))
-            {
-                string text = await data.GetTextAsync();
-                if (string.IsNullOrWhiteSpace(text)) return;
-                NoteDefinition note = await _host.CreateNoteAsync(_definition.Id, text, _contextMenuScreenPoint);
-                _host.OpenNote(_definition.Id, note.Id);
-                data.ReportOperationCompleted(DataPackageOperation.Copy);
-                await WaitForNextRenderAsync(CancellationToken.None);
-                ScrollToEnd(animated: true);
-                return;
-            }
-            else
-            {
-                return;
-            }
-
-            if (!catalogRefreshed)
-            {
-                StartWatcher();
-                await RefreshCatalogAsync(notifyUnsupported: false);
-                await WaitForNextRenderAsync(CancellationToken.None);
-                ScrollToEnd(animated: true);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            ShowMessage(AppStrings.Get("PasteCancelled"), InfoBarSeverity.Informational);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("从剪贴板粘贴失败。", ex);
-            ShowMessage(AppStrings.Format("PasteFailedFormat", ex.Message), InfoBarSeverity.Error);
-        }
-        finally
-        {
-            _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
-            ResetStationPointerDelay();
-        }
-    }
-
+    
     private async void NewNoteMenuItem_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -4702,95 +5047,8 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task<string> SaveClipboardBitmapAsync(DataPackageView data)
-    {
-        RandomAccessStreamReference reference = await data.GetBitmapAsync();
-        _storage.EnsureCreated();
-        string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-        string destination = StorageService.GetUniquePath(Path.Combine(
-            _storage.ItemsRoot,
-            AppStrings.Format("PastedImageNameFormat", stamp)));
-        string staging = Path.Combine(_storage.ItemsRoot, $".glassfolder-staging-{Guid.NewGuid():N}");
-        try
-        {
-            using (File.Create(staging)) { }
-            using IRandomAccessStreamWithContentType input = await reference.OpenReadAsync();
-            BitmapDecoder decoder = await BitmapDecoder.CreateAsync(input);
-            using SoftwareBitmap bitmap = await decoder.GetSoftwareBitmapAsync(
-                BitmapPixelFormat.Bgra8,
-                BitmapAlphaMode.Premultiplied);
-            StorageFile stagingFile = await StorageFile.GetFileFromPathAsync(staging);
-            using (IRandomAccessStream output = await stagingFile.OpenAsync(FileAccessMode.ReadWrite))
-            {
-                BitmapEncoder encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
-                encoder.SetSoftwareBitmap(bitmap);
-                await encoder.FlushAsync();
-            }
-            File.Move(staging, destination);
-            return destination;
-        }
-        finally
-        {
-            if (File.Exists(staging)) File.Delete(staging);
-        }
-    }
-
-    private async void NewFolderMenuItem_Click(object sender, RoutedEventArgs e)
-    {
-        bool station = _definition.PlacementMode == OrganizerPlacementMode.Station;
-        _overlayOpenCount++;
-        if (station)
-        {
-            _desktopLayer?.SetInputActivation(true);
-            ResetStationPointerDelay();
-        }
-        string defaultName = AppStrings.Get("NewFolderDefaultName");
-        string? createdPath = null;
-        try
-        {
-            DisplayInfo display = DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
-            bool accepted = await OwnedDialogWindow.ShowTextInputAsync(
-                _hwnd,
-                display,
-                _host.GetTheme(_definition),
-                AppStrings.Get("NewFolderTitle"),
-                defaultName,
-                AppStrings.Get("Create"),
-                AppStrings.Get("Cancel"),
-                name =>
-                {
-                    try
-                    {
-                        createdPath = _storage.CreateUniqueFolder(name);
-                        return null;
-                    }
-                    catch (Exception ex)
-                    {
-                        return ex.Message;
-                    }
-                });
-            if (!accepted || createdPath is null) return;
-            StartWatcher();
-            await RefreshCatalogAsync(notifyUnsupported: false);
-            await WaitForNextRenderAsync(CancellationToken.None);
-            ScrollToEnd(animated: true);
-            ShowMessage(AppStrings.Format("FolderCreatedFormat", Path.GetFileName(createdPath)), InfoBarSeverity.Success);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("新建文件夹失败。", ex);
-            ShowMessage(ex.Message, InfoBarSeverity.Error);
-        }
-        finally
-        {
-            if (station)
-            {
-                _desktopLayer?.SetInputActivation(false);
-            }
-            _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
-            ResetStationPointerDelay();
-        }
-    }
+    
+    
 
     private async void ToggleModeMenuItem_Click(object sender, RoutedEventArgs e)
     {
@@ -4859,6 +5117,7 @@ public sealed partial class MainWindow : Window
                 confirmed = await dialog.ShowAsync() == ContentDialogResult.Primary;
             }
             if (!confirmed) return;
+
             TransferOutcome outcome = await _host.DeleteOrganizerAsync(_definition.Id);
             if (outcome.Status != TransferStatus.Moved)
             {
@@ -4875,6 +5134,7 @@ public sealed partial class MainWindow : Window
             if (!_closing) _desktopLayer?.SetInputActivation(false);
             _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
             ResetStationPointerDelay();
+
         }
     }
 
@@ -4958,12 +5218,26 @@ public sealed partial class MainWindow : Window
             }
             if (_definition.PlacementMode == OrganizerPlacementMode.Positioned)
             {
-                DesktopGridPlacement? placement = _host.FindCurrentPositionedPlacement(_definition.Id, _compactBounds);
-                if (placement is not null && !RectsEqual(placement.Bounds, _compactBounds))
+                if (_definition.PositionLocked)
                 {
-                    MoveToPositionedPlacement(placement.Bounds, placement.CompactScale);
-                    _definition.Position = DisplayPlacementService.Capture(_compactBounds, _hwnd);
-                    _ = SaveStateAsync();
+                    NativeMethods.RECT locked = DisplayPlacementService.Clamp(_compactBounds, DisplayPlacementService.ForBounds(_compactBounds).Work);
+                    if (!RectsEqual(locked, _compactBounds))
+                    {
+                        _compactBounds = locked;
+                        ApplyBounds(_compactBounds, show: true);
+                        _definition.Position = DisplayPlacementService.Capture(_compactBounds, _hwnd);
+                        _ = SaveStateAsync();
+                    }
+                }
+                else if (!_host.ShouldSuspendOrganizerRelocation)
+                {
+                    DesktopGridPlacement? placement = _host.FindCurrentPositionedPlacement(_definition.Id, _compactBounds);
+                    if (placement is not null && !RectsEqual(placement.Bounds, _compactBounds))
+                    {
+                        MoveToPositionedPlacement(placement.Bounds, placement.CompactScale);
+                        _definition.Position = DisplayPlacementService.Capture(_compactBounds, _hwnd);
+                        _ = SaveStateAsync();
+                    }
                 }
             }
             else
@@ -4992,6 +5266,7 @@ public sealed partial class MainWindow : Window
         _interactionSaveTimer.Stop();
         _canvasResizeInputTimer.Stop();
         _stationPointerTimer.Stop();
+
         _externalHoverTimer.Stop();
         _longPressTimer.Stop();
         StopCanvasResizeRendering();
@@ -5004,6 +5279,8 @@ public sealed partial class MainWindow : Window
         _expandedSurface.Dispose();
         _outsideClickHook?.Dispose();
         _watcher?.Dispose();
+        _outsideClickHook?.Dispose();
+
         foreach (IntPtr edgeWindow in _canvasResizeEdgeWindows)
         {
             RestoreCanvasResizeWindowProc(edgeWindow);
@@ -5040,19 +5317,28 @@ public sealed partial class MainWindow : Window
     internal Guid OrganizerId => _definition.Id;
     internal bool IsExpanded => _expanded || _animating;
     internal bool IsShellDragActive => Volatile.Read(ref _shellDragActive);
-    internal void ApplyOutsideClickSetting()
-    {
-        if (_definition.PlacementMode != OrganizerPlacementMode.Station &&
-            _expanded && !_animating && _host.State.GlobalSettings.CollapseOnOutsideClick)
-            _outsideClickHook?.Start();
-        else
-            _outsideClickHook?.Stop();
-    }
+    
     internal int FileCount => _items.Count(item => item.Kind != WidgetItemKind.Note);
     internal Task RefreshNotesAsync() => RefreshCatalogAsync(notifyUnsupported: false);
     internal IReadOnlyList<WidgetItem> ItemSnapshot => _items;
     internal bool StorageExists => _storage.Exists;
     internal NativeMethods.RECT CompactBounds => _compactBounds;
+
+    internal void ApplyHoverExpandDelay(int milliseconds)
+    {
+        _externalHoverTimer.Interval = TimeSpan.FromMilliseconds(Math.Clamp(milliseconds, 100, 1500));
+    }
+
+    internal void ApplyPointerLeaveDelay(int milliseconds)
+    {
+        _collapseOnPointerLeaveMs = Math.Clamp(milliseconds, 200, 2000);
+    }
+
+    internal bool TryGetWindowBounds(out NativeMethods.RECT bounds)
+    {
+        if (_hwnd == IntPtr.Zero || !NativeMethods.IsWindow(_hwnd)) { bounds = default; return false; }
+        return NativeMethods.GetWindowRect(_hwnd, out bounds);
+    }
 
     internal bool ContainsScreenPoint(NativeMethods.POINT point) =>
         !_closing && _expanded && NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds) &&
@@ -5072,6 +5358,7 @@ public sealed partial class MainWindow : Window
             await RefreshCatalogAsync(notifyUnsupported: false);
         }
         return moved;
+
     }
 
     internal Task CollapseForPeerAsync() => CollapseAsync();
@@ -5167,6 +5454,9 @@ public sealed partial class MainWindow : Window
     {
         GlassTheme theme = _host.GetTheme(_definition);
         bool useAcrylic = !GlassThemePalette.IsSolid(theme) && _uiSettings.AdvancedEffectsEnabled;
+        float extraOpacity = (float)Math.Clamp(_host.State.GlobalSettings.OrganizerSurfaceOpacity, 0d, 1d);
+        _compactSurface.SetExtraSurfaceOpacity(extraOpacity);
+        _expandedSurface.SetExtraSurfaceOpacity(extraOpacity);
         _compactSurface.SetTheme(theme, useAcrylic);
         _expandedSurface.SetTheme(theme, useAcrylic);
         var foreground = new SolidColorBrush(GlassThemePalette.ForegroundColor(theme));
@@ -5371,6 +5661,7 @@ public sealed partial class MainWindow : Window
                 maximumItem = DisplayPlacementService.CalculateMaximumItemScale(display, _definition.Layout, canvas);
             }
         }
+
         double item = Math.Clamp(_definition.ItemScale, .5, maximumItem);
         bool changed = Math.Abs(canvas - _definition.CanvasScale) > .0001 || Math.Abs(item - _definition.ItemScale) > .0001;
         _definition.CanvasScale = canvas;
@@ -5380,6 +5671,7 @@ public sealed partial class MainWindow : Window
 
     private void ApplyBounds(NativeMethods.RECT bounds, bool show)
     {
+        if (_deferShow) show = false;
         uint flags = NativeMethods.SWP_NOACTIVATE | (show ? NativeMethods.SWP_SHOWWINDOW : 0);
         _ = NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOP, bounds.Left, bounds.Top, bounds.Width, bounds.Height, flags);
         if (_expanded && !_animating && _canvasResizeEdgeWindows.Count > 0)

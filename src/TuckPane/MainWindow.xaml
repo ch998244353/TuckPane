@@ -184,10 +184,11 @@
                                 PointerMoved="Item_PointerMoved"
                                 PointerPressed="Item_PointerPressed"
                                 PointerReleased="Item_PointerReleased"
+                                Tapped="Item_Tapped"
+                                DoubleTapped="Item_DoubleTapped"
                                 Tag="{Binding RelativeName}">
                                 <StackPanel
                                     x:Name="ItemContent"
-                                    DoubleTapped="Item_DoubleTapped"
                                     HorizontalAlignment="Center"
                                     Tag="{Binding RelativeName}"
                                     VerticalAlignment="Center"

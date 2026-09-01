@@ -62,6 +62,7 @@ public sealed partial class ConsoleWindow : Window
         ApplyLanguage();
         ConsoleRoot.RequestedTheme = ElementTheme.Light;
         ApplyTheme();
+        SetStartupLoading(true);
         _placementTimer = DispatcherQueue.CreateTimer();
         _placementTimer.Interval = TimeSpan.FromMilliseconds(450);
         _placementTimer.IsRepeating = false;
@@ -75,6 +76,12 @@ public sealed partial class ConsoleWindow : Window
     }
 
     public IntPtr Hwnd { get; private set; }
+
+    internal int ChromeApplyCount => _chrome?.ApplyCount ?? 0;
+
+    internal RectInt32? CurrentBounds => _appWindow is null
+        ? null
+        : new RectInt32(_appWindow.Position.X, _appWindow.Position.Y, _appWindow.Size.Width, _appWindow.Size.Height);
 
     public void InitializeHostWindow()
     {
@@ -90,7 +97,6 @@ public sealed partial class ConsoleWindow : Window
             presenter.IsMinimizable = true;
         }
         _chrome = new NativeWindowChromeController(Hwnd, DispatcherQueue);
-        Activated += ConsoleWindow_Activated;
         Closed += ConsoleWindow_Closed;
         ApplyNativeWindowChrome();
         RestorePlacement();
@@ -115,6 +121,7 @@ public sealed partial class ConsoleWindow : Window
         }
         ApplyNativeWindowChrome(refreshFrame: true);
         UpdateThemeCards(theme);
+        StartupLoadingOverlay.Background = new SolidColorBrush(GlassThemePalette.SurfaceColor(theme));
     }
 
     public void RefreshAll(Guid? selectId = null)
@@ -122,9 +129,16 @@ public sealed partial class ConsoleWindow : Window
         UpdateThemeCards(_host.State.GlobalSettings.Theme);
         UpdateStartupToggle();
         UpdateOutsideClickToggle();
+        UpdateShowConsoleToggle();
+        UpdateOrganizerOpacitySlider();
+        UpdateOutsideClickToggle();
         UpdateExpandOnHoverToggle();
         UpdateCollapseOnPointerLeaveToggle();
         UpdateExclusiveExpansionToggle();
+        UpdateExpandOnHoverDelaySlider();
+        UpdateCollapseOnPointerLeaveDelaySlider();
+        CreateOrganizerButton.IsEnabled = _host.State.Organizers.Count < OrganizerLimits.MaximumOrganizers;
+        CreateLimitText.Visibility = _host.State.Organizers.Count >= OrganizerLimits.MaximumOrganizers ? Visibility.Visible : Visibility.Collapsed;
         PopulateManageList(selectId ?? _selectedId);
         UpdateTransferState();
         UpdateAddControls();
@@ -189,6 +203,37 @@ public sealed partial class ConsoleWindow : Window
         _appWindow?.Hide();
     }
 
+    public async Task WaitFirstRenderAsync()
+    {
+        if (!ConsoleRoot.IsLoaded)
+        {
+            TaskCompletionSource loaded = new();
+            RoutedEventHandler handler = null!;
+            handler = (_, _) =>
+            {
+                ConsoleRoot.Loaded -= handler;
+                loaded.TrySetResult();
+            };
+            ConsoleRoot.Loaded += handler;
+            await loaded.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        for (int i = 0; i < 8; i++) await Task.Yield();
+    }
+
+    public void SetStartupLoading(bool visible)
+    {
+        StartupLoadingOverlay.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (visible)
+        {
+            SystemBackdrop = null;
+            ConsoleRoot.Background = new SolidColorBrush(GlassThemePalette.SurfaceColor(_host.State.GlobalSettings.Theme));
+        }
+        else
+        {
+            ApplyTheme();
+        }
+    }
+
     private void ConsoleMinimizeButton_Click(object sender, RoutedEventArgs e)
     {
         if (_appWindow?.Presenter is OverlappedPresenter presenter) presenter.Minimize();
@@ -210,6 +255,7 @@ public sealed partial class ConsoleWindow : Window
 
     public void ShowAndActivate(Guid? organizerId = null)
     {
+        SetStartupLoading(false);
         _appWindow?.Show();
         Activate();
         _ = NativeMethods.SetForegroundWindow(Hwnd);
@@ -261,6 +307,7 @@ public sealed partial class ConsoleWindow : Window
             if (sender.Size.Width < minimumWidth || sender.Size.Height < minimumHeight)
             {
                 sender.Resize(new SizeInt32(Math.Max(minimumWidth, sender.Size.Width), Math.Max(minimumHeight, sender.Size.Height)));
+                ApplyNativeWindowChrome();
             }
         }
         if (args.DidPositionChange || args.DidSizeChange)
@@ -268,14 +315,10 @@ public sealed partial class ConsoleWindow : Window
             _placementTimer.Stop();
             _placementTimer.Start();
         }
-        ApplyNativeWindowChrome();
     }
-
-    private void ConsoleWindow_Activated(object sender, WindowActivatedEventArgs args) => ApplyNativeWindowChrome();
 
     private void ConsoleWindow_Closed(object sender, WindowEventArgs args)
     {
-        Activated -= ConsoleWindow_Activated;
         Closed -= ConsoleWindow_Closed;
         _chrome?.Dispose();
         _chrome = null;
@@ -468,6 +511,7 @@ public sealed partial class ConsoleWindow : Window
         int y = saved is null ? display.Work.Top + (display.Work.Height - height) / 2 : display.Work.Top + (int)Math.Round(saved.YDip * display.Scale);
         NativeMethods.RECT bounds = DisplayPlacementService.Clamp(new NativeMethods.RECT { Left = x, Top = y, Right = x + width, Bottom = y + height }, display.Work);
         _appWindow.MoveAndResize(new RectInt32(bounds.Left, bounds.Top, bounds.Width, bounds.Height));
+        AppLogger.Info($"控制台位置恢复：{bounds.Left},{bounds.Top} {bounds.Width}x{bounds.Height}px。");
     }
 
     private async Task SavePlacementAsync()
@@ -535,6 +579,7 @@ public sealed partial class ConsoleWindow : Window
         }
     }
 
+
     private void UpdateOutsideClickToggle()
     {
         if (CollapseOutsideToggle is null) return;
@@ -558,6 +603,52 @@ public sealed partial class ConsoleWindow : Window
         }
     }
 
+    private bool _loadingShowConsole;
+
+    private void UpdateShowConsoleToggle()
+    {
+        if (ShowConsoleToggle is null) return;
+        _loadingShowConsole = true;
+        ShowConsoleToggle.IsOn = _host.State.GlobalSettings.ShowConsoleOnLaunch;
+        _loadingShowConsole = false;
+    }
+
+    private async void ShowConsoleToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (!_componentReady || _loadingShowConsole) return;
+        try
+        {
+            await _host.SetShowConsoleOnLaunchAsync(ShowConsoleToggle.IsOn);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("无法更新启动显示控制台设置。", ex);
+            UpdateShowConsoleToggle();
+            ShowError(AppStrings.Get("ShowConsoleErrorTitle"), ex.Message);
+        }
+    }
+
+    private bool _loadingOrganizerOpacity;
+
+    private void UpdateOrganizerOpacitySlider()
+    {
+        if (OrganizerOpacitySlider is null) return;
+        _loadingOrganizerOpacity = true;
+        OrganizerOpacitySlider.Value = Math.Clamp(_host.State.GlobalSettings.OrganizerSurfaceOpacity, 0d, 1d);
+        OrganizerOpacityPercent.Text = $"{Math.Round(OrganizerOpacitySlider.Value * 100)}%";
+        _loadingOrganizerOpacity = false;
+    }
+
+    private void OrganizerOpacitySlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (!_componentReady || _loadingOrganizerOpacity) return;
+        double value = Math.Clamp(OrganizerOpacitySlider.Value, 0d, 1d);
+        OrganizerOpacityPercent.Text = $"{Math.Round(value * 100)}%";
+        _host.ApplyOrganizerSurfaceOpacity(value);
+        _stateSaveTimer.Stop();
+        _stateSaveTimer.Start();
+    }
+
     private void UpdateExpandOnHoverToggle()
     {
         if (ExpandOnHoverToggle is null) return;
@@ -572,11 +663,13 @@ public sealed partial class ConsoleWindow : Window
         try
         {
             await _host.SetExpandOnHoverAsync(ExpandOnHoverToggle.IsOn);
+            UpdateExpandOnHoverDelaySlider();
         }
         catch (Exception ex)
         {
             AppLogger.Error("无法更新悬浮展开设置。", ex);
             UpdateExpandOnHoverToggle();
+            UpdateExpandOnHoverDelaySlider();
             ShowError(AppStrings.Get("ExpandOnHoverErrorTitle"), ex.Message);
         }
     }
@@ -589,17 +682,65 @@ public sealed partial class ConsoleWindow : Window
         _loadingCollapseOnPointerLeave = false;
     }
 
+    private bool _loadingExpandOnHoverDelay;
+
+    private void UpdateExpandOnHoverDelaySlider()
+    {
+        if (ExpandOnHoverDelaySlider is null) return;
+        _loadingExpandOnHoverDelay = true;
+        bool enabled = _host.State.GlobalSettings.ExpandOnHover;
+        ExpandOnHoverDelayCard.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        ExpandOnHoverDelaySlider.Value = Math.Clamp(_host.State.GlobalSettings.ExpandOnHoverMs, 100, 1500);
+        ExpandOnHoverDelayText.Text = $"{Math.Round(ExpandOnHoverDelaySlider.Value)}ms";
+        _loadingExpandOnHoverDelay = false;
+    }
+
+    private void ExpandOnHoverDelaySlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (!_componentReady || _loadingExpandOnHoverDelay) return;
+        int value = (int)Math.Round(Math.Clamp(ExpandOnHoverDelaySlider.Value, 100, 1500));
+        ExpandOnHoverDelayText.Text = $"{value}ms";
+        _host.ApplyExpandOnHoverDelay(value);
+        _stateSaveTimer.Stop();
+        _stateSaveTimer.Start();
+    }
+
+    private bool _loadingPointerLeaveDelay;
+
+    private void UpdateCollapseOnPointerLeaveDelaySlider()
+    {
+        if (CollapseOnPointerLeaveDelaySlider is null) return;
+        _loadingPointerLeaveDelay = true;
+        bool enabled = _host.State.GlobalSettings.CollapseOnPointerLeave;
+        CollapseOnPointerLeaveDelayCard.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        CollapseOnPointerLeaveDelaySlider.Value = Math.Clamp(_host.State.GlobalSettings.CollapseOnPointerLeaveMs, 200, 2000);
+        CollapseOnPointerLeaveDelayText.Text = $"{Math.Round(CollapseOnPointerLeaveDelaySlider.Value)}ms";
+        _loadingPointerLeaveDelay = false;
+    }
+
+    private void CollapseOnPointerLeaveDelaySlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (!_componentReady || _loadingPointerLeaveDelay) return;
+        int value = (int)Math.Round(Math.Clamp(CollapseOnPointerLeaveDelaySlider.Value, 200, 2000));
+        CollapseOnPointerLeaveDelayText.Text = $"{value}ms";
+        _host.ApplyPointerLeaveDelay(value);
+        _stateSaveTimer.Stop();
+        _stateSaveTimer.Start();
+    }
+
     private async void CollapseOnPointerLeaveToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (!_componentReady || _loadingCollapseOnPointerLeave) return;
         try
         {
             await _host.SetCollapseOnPointerLeaveAsync(CollapseOnPointerLeaveToggle.IsOn);
+            UpdateCollapseOnPointerLeaveDelaySlider();
         }
         catch (Exception ex)
         {
             AppLogger.Error("无法更新鼠标离开收缩设置。", ex);
             UpdateCollapseOnPointerLeaveToggle();
+            UpdateCollapseOnPointerLeaveDelaySlider();
             ShowError(AppStrings.Get("CollapseOnPointerLeaveErrorTitle"), ex.Message);
         }
     }
@@ -625,6 +766,7 @@ public sealed partial class ConsoleWindow : Window
             UpdateExclusiveExpansionToggle();
             ShowError(AppStrings.Get("ExclusiveExpansionErrorTitle"), ex.Message);
         }
+
     }
 
     private async void LanguageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -764,6 +906,7 @@ public sealed partial class ConsoleWindow : Window
             PickFolderResult? result = await picker.PickSingleFolderAsync();
             if (result is null || string.IsNullOrWhiteSpace(result.Path)) return;
             _addStoragePath = _host.ValidateStoragePath(result.Path);
+
             UpdateAddStoragePath();
         }
         catch (Exception ex)
@@ -797,6 +940,7 @@ public sealed partial class ConsoleWindow : Window
         AddCompactScaleCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
         AddCanvasScaleCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
         AddNameScaleCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
+
         AddCompactScaleSlider.Maximum = positioned
             ? OrganizerLimits.MaximumPositionedCompactScale
             : OrganizerLimits.MaximumCompactScale;
@@ -806,6 +950,7 @@ public sealed partial class ConsoleWindow : Window
             AddCompactScaleSlider.Maximum);
         ConfigureGridSliders(AddRowsSlider, AddColumnsSlider, station);
         (int rows, int columns) = ReadGridDimensions(AddRowsSlider, AddColumnsSlider, station);
+
         var layout = new OrganizerLayout
         {
             Mode = OrganizerLayoutMode.Grid,
@@ -943,6 +1088,7 @@ public sealed partial class ConsoleWindow : Window
         _loadingEditor = true;
         ManageNameBox.Text = source.Name;
         ManagePlacementModeCombo.SelectedIndex = (int)source.PlacementMode;
+        ManagePositionLockToggle.IsOn = source.PositionLocked;
         SelectDisplay(ManageDisplayCombo, source.Position?.MonitorDevice);
         ManageDockEdgeCombo.SelectedIndex = (int)source.DockEdge;
         ManageRowsSlider.Value = source.Layout.Rows;
@@ -978,6 +1124,7 @@ public sealed partial class ConsoleWindow : Window
         if (ManageRowsCard is null || _adjustingManageControls) return;
         _adjustingManageControls = true;
         bool positioned = ManagePlacementModeCombo.SelectedIndex == (int)OrganizerPlacementMode.Positioned;
+        ManagePositionLockCard.Visibility = positioned ? Visibility.Visible : Visibility.Collapsed;
         bool station = ManagePlacementModeCombo.SelectedIndex == (int)OrganizerPlacementMode.Station;
         ManageNameCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
         ManageNameError.Visibility = Visibility.Collapsed;
@@ -986,6 +1133,7 @@ public sealed partial class ConsoleWindow : Window
         ManageCompactScaleCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
         ManageCanvasScaleCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
         ManageNameScaleCard.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
+
         ManageCompactScaleSlider.Maximum = positioned
             ? OrganizerLimits.MaximumPositionedCompactScale
             : OrganizerLimits.MaximumCompactScale;
@@ -995,6 +1143,7 @@ public sealed partial class ConsoleWindow : Window
             ManageCompactScaleSlider.Maximum);
         ConfigureGridSliders(ManageRowsSlider, ManageColumnsSlider, station);
         (int rows, int columns) = ReadGridDimensions(ManageRowsSlider, ManageColumnsSlider, station);
+
         var layout = new OrganizerLayout { Mode = OrganizerLayoutMode.Grid, Rows = rows, Columns = columns };
         MainWindow? window = _selectedId is Guid id ? _host.Windows.FirstOrDefault(item => item.OrganizerId == id) : null;
         DisplayInfo display = station
@@ -1066,6 +1215,7 @@ public sealed partial class ConsoleWindow : Window
             _editing.ManualCanvasBaseWidthDip = null;
             _editing.ManualCanvasBaseHeightDip = null;
         }
+        _editing.PositionLocked = ManagePositionLockToggle.IsOn;
         _editing.Layout.Mode = OrganizerLayoutMode.Grid;
         (_editing.Layout.Rows, _editing.Layout.Columns) = (rows, columns);
         _editing.ThemeOverride = ThemeFromCombo(ManageThemeCombo.SelectedIndex);
@@ -1122,6 +1272,7 @@ public sealed partial class ConsoleWindow : Window
         MainWindow? window = _host.Windows.FirstOrDefault(item => item.OrganizerId == id);
         string storagePath = AppPaths.ResolveStoragePath(definition);
         bool directStorage = !string.IsNullOrWhiteSpace(definition.StorageAbsolutePath);
+
         var dialog = new ContentDialog
         {
             XamlRoot = ConsoleRoot.XamlRoot,
@@ -1132,6 +1283,7 @@ public sealed partial class ConsoleWindow : Window
                     : AppStrings.Format("DeleteDirectEmptyFormat", storagePath)
                 : window?.FileCount > 0
                     ? AppStrings.Format("DeleteNonEmptyFormat", AppStrings.FormatItemCount(window.FileCount), definition.Name)
+
                     : AppStrings.Get("DeleteEmpty"),
             PrimaryButtonText = AppStrings.Get("ExportDelete"),
             CloseButtonText = AppStrings.Get("Cancel"),
@@ -1179,6 +1331,7 @@ public sealed partial class ConsoleWindow : Window
         if (ReferenceEquals(sender, ManageNameBox)) return OrganizerVisualChange.Name;
         if (ReferenceEquals(sender, ManagePlacementModeCombo)) return OrganizerVisualChange.PlacementMode | OrganizerVisualChange.CompactScale | OrganizerVisualChange.Docking;
         if (ReferenceEquals(sender, ManageDisplayCombo) || ReferenceEquals(sender, ManageDockEdgeCombo)) return OrganizerVisualChange.Docking;
+        if (ReferenceEquals(sender, ManagePositionLockToggle)) return OrganizerVisualChange.PositionLock;
         if (ReferenceEquals(sender, ManageThemeCombo)) return OrganizerVisualChange.Theme;
         if (ReferenceEquals(sender, ManageCompactScaleSlider)) return OrganizerVisualChange.CompactScale;
         if (ReferenceEquals(sender, ManageCanvasScaleSlider)) return OrganizerVisualChange.CanvasScale | OrganizerVisualChange.ItemScale;
@@ -1282,6 +1435,7 @@ public sealed partial class ConsoleWindow : Window
         CreatedAtUtc = source.CreatedAtUtc,
         ThemeOverride = source.ThemeOverride,
         PlacementMode = source.PlacementMode,
+        PositionLocked = source.PositionLocked,
         DockEdge = source.DockEdge,
         Layout = new OrganizerLayout { Mode = source.Layout.Mode, Rows = source.Layout.Rows, Columns = source.Layout.Columns },
         CompactScale = source.CompactScale,

@@ -575,4 +575,39 @@ internal static class ShellDragService
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern uint DragQueryFile(IntPtr drop, uint fileIndex, StringBuilder? file, uint characterCount);
+
+    internal static void DeleteToRecycleBin(string path)
+    {
+        var op = new SHFILEOPSTRUCTW
+        {
+            wFunc = FO_DELETE,
+            pFrom = path + "\0\0",
+            fFlags = (ushort)(FOF_ALLOWUNDO | FOF_NOCONFIRMATION)
+        };
+        int result = SHFileOperationW(ref op);
+        if (result != 0 || op.fAnyOperationsAborted)
+        {
+            throw new IOException(Marshal.GetExceptionForHR(result << 16)?.Message ?? $"0x{result:X8}");
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct SHFILEOPSTRUCTW
+    {
+        public IntPtr hwnd;
+        public uint wFunc;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pFrom;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? pTo;
+        public ushort fFlags;
+        public bool fAnyOperationsAborted;
+        public IntPtr hNameMappings;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? lpszProgressTitle;
+    }
+
+    private const uint FO_DELETE = 3;
+    private const ushort FOF_ALLOWUNDO = 0x0040;
+    private const ushort FOF_NOCONFIRMATION = 0x0010;
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int SHFileOperationW(ref SHFILEOPSTRUCTW op);
 }

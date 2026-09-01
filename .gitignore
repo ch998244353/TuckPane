@@ -11,3 +11,4 @@ state.json.bak
 *.user
 *.suo
 TestResults/
+.mimosa/

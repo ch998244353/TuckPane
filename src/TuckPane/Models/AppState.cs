@@ -55,8 +55,9 @@ internal enum OrganizerVisualChange
     ItemScale = 1 << 5,
     NameScale = 1 << 6,
     PlacementMode = 1 << 7,
-    Docking = 1 << 8,
-    All = Name | Theme | Layout | CompactScale | CanvasScale | ItemScale | NameScale | PlacementMode | Docking
+    PositionLock = 1 << 8,
+    Docking = 1 << 9,
+    All = Name | Theme | Layout | CompactScale | CanvasScale | ItemScale | NameScale | PlacementMode | PositionLock | Docking
 }
 
 public enum NoteTheme
@@ -82,11 +83,15 @@ public sealed class GlobalSettings
 {
     public GlassTheme Theme { get; set; } = GlassTheme.Light;
     public bool StartWithWindows { get; set; }
+    public bool CollapseOnOutsideClick { get; set; } = true;
+    public bool ShowConsoleOnLaunch { get; set; }
+    public double OrganizerSurfaceOpacity { get; set; }
     public AppLanguage Language { get; set; } = AppLanguage.ChineseSimplified;
     public bool ExclusiveExpansion { get; set; } = true;
-    public bool CollapseOnOutsideClick { get; set; }
     public bool ExpandOnHover { get; set; }
     public bool CollapseOnPointerLeave { get; set; }
+    public int ExpandOnHoverMs { get; set; } = 350;
+    public int CollapseOnPointerLeaveMs { get; set; } = 400;
 }
 
 public sealed class ConsolePlacement
@@ -105,6 +110,7 @@ public sealed class OrganizerDefinition
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public GlassTheme? ThemeOverride { get; set; }
     public OrganizerPlacementMode PlacementMode { get; set; } = OrganizerPlacementMode.Floating;
+    public bool PositionLocked { get; set; }
     public OrganizerDockEdge DockEdge { get; set; } = OrganizerDockEdge.Right;
     public OrganizerLayout Layout { get; set; } = new();
     public double CompactScale { get; set; } = OrganizerLimits.DefaultCompactScale;

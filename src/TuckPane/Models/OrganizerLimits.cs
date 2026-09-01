@@ -2,7 +2,7 @@ namespace TuckPane.Models;
 
 internal static class OrganizerLimits
 {
-    internal const int MaximumOrganizers = 12;
+    internal const int MaximumOrganizers = 50;
     internal const int MaximumStations = 4;
     internal const double MinimumCompactScale = 1.2;
     internal const double DefaultCompactScale = 1.56;

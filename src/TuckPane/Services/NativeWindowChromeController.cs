@@ -11,6 +11,9 @@ internal sealed class NativeWindowChromeController : IDisposable
     private readonly NativeMethods.SubclassProc _subclass;
     private int _visibleFrameThickness = 1;
     private bool _disposed;
+    private bool _applyQueued;
+
+    internal int ApplyCount { get; private set; }
 
     internal NativeWindowChromeController(IntPtr window, DispatcherQueue dispatcher)
     {
@@ -24,6 +27,7 @@ internal sealed class NativeWindowChromeController : IDisposable
     internal void Apply(bool refreshFrame = false)
     {
         if (_disposed || _window == IntPtr.Zero || !NativeMethods.IsWindow(_window)) return;
+        ApplyCount++;
 
         int noBorder = NativeMethods.DWMWA_COLOR_NONE;
         LogResult(NativeMethods.DwmSetWindowAttribute(
@@ -90,15 +94,24 @@ internal sealed class NativeWindowChromeController : IDisposable
             Marshal.StructureToPtr(parameters, lParam, fDeleteOld: false);
             return result;
         }
-        if (message is NativeMethods.WM_NCACTIVATE or
-            NativeMethods.WM_THEMECHANGED or
+        if (message is NativeMethods.WM_THEMECHANGED or
             NativeMethods.WM_DWMCOMPOSITIONCHANGED or
             NativeMethods.WM_SETTINGCHANGE)
         {
-            bool refreshFrame = message != NativeMethods.WM_NCACTIVATE;
-            _ = _dispatcher.TryEnqueue(() => Apply(refreshFrame));
+            QueueApply();
         }
         return result;
+    }
+
+    private void QueueApply()
+    {
+        if (_applyQueued || _disposed) return;
+        _applyQueued = true;
+        _ = _dispatcher.TryEnqueue(() =>
+        {
+            _applyQueued = false;
+            Apply(refreshFrame: true);
+        });
     }
 
     private static void LogResult(int hresult, string operation)

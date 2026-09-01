@@ -1,90 +1,53 @@
 # TuckPane
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+Windows 11 x64 桌面文件收纳工具。
 
-TuckPane is a desktop file organizer for Windows 11 x64. It keeps real files and folders inside compact desktop panes that expand when needed and stay out of the way the rest of the time.
+> **关于本项目**：这是 [ch998244353/TuckPane](https://github.com/ch998244353/TuckPane) 的 Fork（已合并上游 2.0.2：边缘中转站、便签、图片缩略图、交互设置），仅供个人学习使用，欢迎互相学习借鉴。感谢原作者的优秀作品。
 
-## Demo
+## 与上游的主要差异
 
-<p align="center">
-  <img src="docs/images/demo-expand-collapse.gif" alt="A TuckPane organizer expanding and collapsing" width="420">
-  <img src="docs/images/demo-file-reorder.gif" alt="Files being reordered inside a TuckPane organizer" width="420">
-  <br><sub>Left: expand and collapse a pane. Right: drag files to rearrange them inside a pane.</sub>
-</p>
+在原项目基础上，本 Fork 做了以下改动：
 
-## Screenshots
+- **文件操作增强（移植自上游 2.0）**：展开态右键菜单新增「粘贴」「新建文件夹」，磁贴右键支持「剪切」（Windows 剪贴板语义）与「删除」（移入回收站）；粘贴图片自动存为 PNG；从不支持移动的来源拖入时自动改为复制
+- **拖入指定文件夹**：展开收纳盒后，把文件直接拖到某个文件夹磁贴上即可移入该文件夹（悬停高亮提示）；拖到空白处仍导入根目录
+- **交互延时自定义**：悬浮展开、离开收缩的触发延时均可在通用页调节
+- **收纳盒不透明度**：通用页新增滑块（0-100%），可整体调高毛玻璃的不透明度
+- **锁定位置**：定位模式收纳窗支持位置锁定，恢复时不再受网格吸附影响
+- **启动体验优化**：
+  - 收纳窗初始化前移出屏幕外，彻底消除启动闪现
+  - 控制台加载页（默认静默到托盘，无感启动）
+  - 启动阶段计时与归一化后台化，冷启动更快
+  - 窗口激活状态变化不再重设 DWM 边框，消除混合显卡设备上的横线伪影
+- **移植上游 v1.0.11**：`.url` 快捷方式图标修复、点击窗口外自动收缩开关（默认开 + 点击穿透）、存储安全检查、删除前整目录导出
+- **稳定性**：图标缓存容错、拖入失败重试提示、桌面图标避让异常处理等修复
 
-<p align="center">
-  <img src="docs/images/organizer-expanded.png" alt="An expanded TuckPane organizer showing files and folders" width="720">
-  <br><sub>Expand an organizer only when you need its contents.</sub>
-</p>
+## 下载
 
-<p align="center">
-  <img src="docs/images/context-menu.png" alt="TuckPane right-click menu with quick organizer actions" width="344">
-  <br><sub>Right-click for settings, duplication, mode switching, renaming, storage access, and safe deletion.</sub>
-</p>
+从 [Releases](https://github.com/Relawliet/TuckPane/releases) 下载：
 
-<p align="center">
-  <img src="docs/images/manage-settings.png" alt="TuckPane organizer management settings" width="900">
-  <br><sub>Adjust each organizer's grid, mode, theme, entry size, canvas size, and content scale.</sub>
-</p>
+- `TuckPane-2.0.6-win-x64-setup.exe`：离线安装器，无需管理员权限，自动创建桌面快捷方式。
+- `TuckPane-2.0.6-win-x64-portable.zip`：解压后双击 `00-启动 TuckPane.exe`。
 
-<p align="center">
-  <img src="docs/images/themes.png" alt="TuckPane light acrylic, dark acrylic, solid light, and solid dark themes" width="800">
-  <br><sub>Choose between light acrylic, dark acrylic, solid light, and solid dark themes.</sub>
-</p>
+两种版本均自带 .NET 与 Windows App SDK，不需要另外安装运行环境。当前安装器未进行代码签名，Windows SmartScreen 可能显示“未知发布者”；可使用同一 Release 中的 `SHA256SUMS.txt` 校验文件。
 
-### Quick actions
+系统要求：Windows 11 x64，版本 22000 或更高。
 
-Drag files and folders directly into a pane, reveal a Station from a monitor edge, create notes beside real files, hold `Ctrl` and scroll to resize contents, and keep TuckPane running quietly from the system tray.
+## 数据
 
-## Features
+新安装默认使用 `%USERPROFILE%\TuckPane` 和 `%LOCALAPPDATA%\TuckPane`。如果电脑上只有旧版 GlassFolder 数据，TuckPane 会原地继续使用，不复制或移动收纳文件。
 
-- Create up to 12 ordinary organizer panes in floating or desktop-positioned mode, plus edge-docked Station panes that reveal from a monitor's physical edge without taking keyboard focus.
-- Create rich notes with pasted images, seven color themes, optional ruled lines, inline renaming, and saved window placement. Export or open portable `.tucknote` files without converting them into ordinary organizer state.
-- Drag files, folders, application shortcuts, Steam `.url` shortcuts, and portable notes between panes or standard Windows targets with negotiated Copy, Move, or Link behavior.
-- Resize the expanded canvas proportionally from every edge or corner. Canvas size and item layout are saved automatically.
-- Hold `Ctrl` and use the mouse wheel over an expanded pane to adjust icon, label, and spacing scale.
-- Optionally expand ordinary panes after hovering, collapse them after the pointer leaves, and choose whether only one pane may stay expanded.
-- Paste files, create folders, cut items through the Windows clipboard, and move deleted real files to the Recycle Bin.
-- Open settings, duplicate an empty pane, switch mode, rename, open its storage directory, or safely delete it from the context menu.
-- Choose Light, Gray, Solid Light, Solid Dark, Frosted Light, or Frosted Dark themes, with English, Simplified Chinese, and Japanese interfaces.
-- Run silently from the system tray. Closing the settings window hides it; only **Exit** in the tray menu terminates TuckPane.
+卸载不会删除收纳文件或设置。便携包无需安装，但用户数据仍保存在上述用户目录。
 
-## Download
+## 构建
 
-Current version: **2.0.2**. See the [Latest Release](https://github.com/ch998244353/TuckPane/releases/latest) for the complete release notes.
-
-- [TuckPane-2.0.2-win-x64-setup.exe](https://github.com/ch998244353/TuckPane/releases/download/v2.0.2/TuckPane-2.0.2-win-x64-setup.exe): per-user offline installer with Start menu and desktop shortcuts.
-- [TuckPane-2.0.2-win-x64-portable.zip](https://github.com/ch998244353/TuckPane/releases/download/v2.0.2/TuckPane-2.0.2-win-x64-portable.zip): extract it and run `00-启动 TuckPane.exe`.
-- [SHA256SUMS.txt](https://github.com/ch998244353/TuckPane/releases/download/v2.0.2/SHA256SUMS.txt): SHA-256 checksums for both downloads.
-
-Both packages include .NET and the Windows App SDK. No separate runtime is required. The installer is currently unsigned, so Windows SmartScreen may show an “Unknown publisher” warning; verify the download with `SHA256SUMS.txt` when needed.
-
-System requirement: Windows 11 x64, build 22000 or later.
-
-## Storage and data
-
-New installations store organizer data under `%USERPROFILE%\TuckPane` and settings/cache under `%LOCALAPPDATA%\TuckPane`. If only legacy GlassFolder data exists, TuckPane continues to use it in place without copying or moving organizer files.
-
-Each new pane uses one directory such as `%USERPROFILE%\TuckPane\Windows\Name-ID`; files are stored directly in that directory. You may instead select an existing dedicated directory as the pane's final storage location, and its current top-level contents appear immediately. TuckPane rejects broad or overlapping locations that could risk unrelated data.
-
-Deleting a non-empty pane exports its entire storage directory to a uniquely named folder on the desktop before removing the pane. If export fails or is cancelled, the source directory and pane remain unchanged. Uninstalling TuckPane does not delete organizer files or settings.
-
-## Build
-
-Install .NET SDK 10.0.400 and Inno Setup 6, then run:
+需要 .NET SDK 10.0.400 和 Inno Setup 6：
 
 ```powershell
 .\scripts\build-release.ps1
 ```
 
-Run the focused logic regression checks with:
+## 许可
 
-```powershell
-dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64
-```
+TuckPane 使用 [MIT](LICENSE) 许可证。第三方运行库条款见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
-## License
-
-TuckPane is licensed under the [MIT License](LICENSE). Third-party runtime notices are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+本 Fork 的所有改动同样以 MIT 许可发布，仅用于学习交流。

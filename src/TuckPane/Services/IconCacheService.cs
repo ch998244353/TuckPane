@@ -102,6 +102,8 @@ public sealed class IconCacheService
     private static async Task<IconSnapshot?> TryExtractImageThumbnailAsync(string path)
     {
         if (!File.Exists(path)) return null;
+        string extension = Path.GetExtension(path);
+        if (!ImageThumbnailExtensions.Contains(extension)) return null;
         try
         {
             StorageFile file = await StorageFile.GetFileFromPathAsync(path);
@@ -128,6 +130,11 @@ public sealed class IconCacheService
             return null;
         }
     }
+
+    private static readonly HashSet<string> ImageThumbnailExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff", ".jxl"
+    };
 
     internal static IconSnapshot ExtractShellIconPixels(string path)
     {

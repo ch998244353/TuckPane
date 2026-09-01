@@ -20,31 +20,75 @@ public sealed class AppHost : IDisposable
     private readonly NoteStore _noteStore = new();
     private readonly DispatcherQueue _dispatcher = DispatcherQueue.GetForCurrentThread();
     private TrayIconService? _tray;
+    private DesktopIconGuardService? _desktopIconGuard;
     private MainWindow? _expandedWindow;
     private bool _transparencyNoticeShown;
     private bool _gridFallbackNoticeShown;
     private bool _exiting;
+    private int _suspendOrganizerRelocation;
 
     public AppStateV2 State { get; private set; } = new();
     public TransferQueue TransferQueue { get; } = new();
     public ConsoleWindow Console { get; private set; } = null!;
     public IReadOnlyCollection<MainWindow> Windows => _windows.Values;
 
-    public async Task InitializeAsync()
+    // 在"桌面图标避让"把文件挪出收纳盒的短暂窗口内，抑制收纳盒自动贴网格重定位，
+    // 避免收纳盒先在 4 秒修复 tick 里被搬走、之后不会自己归位。
+    public bool ShouldSuspendOrganizerRelocation => Volatile.Read(ref _suspendOrganizerRelocation) > 0;
+
+    public IDisposable SuspendOrganizerRelocation()
     {
+        _ = Interlocked.Increment(ref _suspendOrganizerRelocation);
+        return new RelocationSuspendScope(() => _ = Interlocked.Decrement(ref _suspendOrganizerRelocation));
+    }
+
+    private sealed class RelocationSuspendScope(Action release) : IDisposable
+    {
+        private Action? _release = release;
+
+        public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke();
+    }
+
+    public async Task InitializeAsync(bool startup)
+    {
+        long startupStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
         AppPaths.EnsureCreated();
         State = await _stateStore.LoadAsync();
         AppStrings.SetLanguage(State.GlobalSettings.Language);
         StartupService.Apply(State.GlobalSettings.StartWithWindows);
+        AppLogger.Info($"启动：状态加载完成 {System.Diagnostics.Stopwatch.GetElapsedTime(startupStartedAt).TotalMilliseconds:0}ms。");
 
         Console = new ConsoleWindow(this);
         Console.InitializeHostWindow();
+        Console.Activate();
+        if (Console.CurrentBounds is { } consoleBounds)
+        {
+            AppLogger.Info($"启动：控制台 bounds={consoleBounds.X},{consoleBounds.Y} {consoleBounds.Width}x{consoleBounds.Height}px。");
+        }
         _tray = new TrayIconService(Console.Hwnd, () => State.GlobalSettings.StartWithWindows, () => TransferQueue.IsActive, HandleTrayCommand);
         TransferQueue.StateChanged += (_, _) => Console.UpdateTransferState();
+        bool showConsole = !startup && (State.Organizers.Count == 0 || State.GlobalSettings.ShowConsoleOnLaunch);
+        if (!showConsole) Console.HideToTray();
+        _desktopIconGuard = new DesktopIconGuardService(CollectOrganizerBounds, _dispatcher, SuspendOrganizerRelocation);
+        _desktopIconGuard.Start();
 
-        if (NormalizePositionedPlacementsOnStartup() | NormalizeStationPlacementsOnStartup()) await SaveStateAsync();
-        foreach (OrganizerDefinition organizer in State.Organizers) CreateWindow(organizer);
+        if (showConsole) await Console.WaitFirstRenderAsync();
+
+        bool normalized = await Task.Run(() => NormalizePositionedPlacementsOnStartup() | NormalizeStationPlacementsOnStartup());
+        AppLogger.Info($"启动：网格归一化完成 {System.Diagnostics.Stopwatch.GetElapsedTime(startupStartedAt).TotalMilliseconds:0}ms（变更={normalized}）。");
+        if (normalized) await SaveStateAsync();
+        foreach (OrganizerDefinition organizer in State.Organizers)
+        {
+            CreateWindow(organizer);
+            await Task.Yield();
+        }
         Console.RefreshAll();
+        Console.SetStartupLoading(false);
+        AppLogger.Info($"启动：全部收纳窗已创建 {System.Diagnostics.Stopwatch.GetElapsedTime(startupStartedAt).TotalMilliseconds:0}ms。");
+        AppLogger.Info($"启动：控制台 chrome 重设 {Console.ChromeApplyCount} 次。");
+
+        bool normalizedStations = NormalizeStationPlacementsOnStartup();
+        if (normalizedStations) await SaveStateAsync();
     }
 
     public GlassTheme GetTheme(OrganizerDefinition organizer) => organizer.ThemeOverride ?? State.GlobalSettings.Theme;
@@ -71,6 +115,7 @@ public sealed class AppHost : IDisposable
         }
         else
         {
+            string validatedParent = storagePath;
             draft.StorageRelativePath = string.Empty;
             draft.StorageAbsolutePath = ValidateStoragePath(storagePath);
         }
@@ -409,12 +454,30 @@ public sealed class AppHost : IDisposable
 
     internal async Task DeleteNoteAsync(Guid organizerId, Guid noteId)
     {
+        AppLogger.Info($"便签删除：开始 organizer={organizerId} note={noteId}。");
         OrganizerDefinition organizer = State.Organizers.First(item => item.Id == organizerId);
-        NoteDefinition note = organizer.Notes.First(item => item.Id == noteId);
+        NoteDefinition? note = organizer.Notes.FirstOrDefault(item => item.Id == noteId);
+        if (note is null)
+        {
+            AppLogger.Info($"便签删除：便签已不存在，跳过 note={noteId}。");
+            return;
+        }
         int index = organizer.Notes.IndexOf(note);
         int orderIndex = organizer.ItemOrder.FindIndex(key =>
             key.Equals(OrganizerNoteRules.ItemKey(noteId), StringComparison.OrdinalIgnoreCase));
-        if (_noteWindows.Remove(noteId, out NoteWindow? noteWindow)) await noteWindow.ClosePermanentlyAsync();
+        if (_noteWindows.Remove(noteId, out NoteWindow? noteWindow))
+        {
+            try
+            {
+                await noteWindow.ClosePermanentlyAsync();
+                AppLogger.Info($"便签删除：窗口已关闭 note={noteId}。");
+            }
+            catch (Exception closeException)
+            {
+                // 窗口关闭/保存失败不阻断删除流程：内容文件稍后一并清理
+                AppLogger.Error($"便签删除：窗口关闭失败，继续删除 note={noteId}", closeException);
+            }
+        }
         _trayHiddenNotes.Remove(noteId);
         organizer.Notes.RemoveAt(index);
         organizer.ItemOrder.RemoveAll(key => key.Equals(OrganizerNoteRules.ItemKey(noteId), StringComparison.OrdinalIgnoreCase));
@@ -532,6 +595,7 @@ public sealed class AppHost : IDisposable
         edited.PlacementMode = current.PlacementMode == OrganizerPlacementMode.Floating
             ? OrganizerPlacementMode.Positioned
             : OrganizerPlacementMode.Floating;
+
         string? error = ApplyOrganizerRuntime(
             edited,
             OrganizerVisualChange.PlacementMode | OrganizerVisualChange.CompactScale);
@@ -565,6 +629,7 @@ public sealed class AppHost : IDisposable
         current.Name = string.IsNullOrWhiteSpace(edited.Name) ? current.Name : edited.Name.Trim();
         current.ThemeOverride = edited.ThemeOverride;
         current.PlacementMode = edited.PlacementMode;
+        current.PositionLocked = edited.PositionLocked;
         current.DockEdge = edited.DockEdge;
         if (edited.PlacementMode == OrganizerPlacementMode.Station && edited.Position is not null)
             current.Position = edited.Position;
@@ -650,6 +715,23 @@ public sealed class AppHost : IDisposable
             {
                 current.Position = window.AdoptExpandedCenterForFloating() ?? current.Position;
             }
+            else if (current.PlacementMode == OrganizerPlacementMode.Positioned &&
+                (changes & OrganizerVisualChange.PositionLock) != 0 && !current.PositionLocked)
+            {
+                NativeMethods.RECT currentBounds = window.CompactBounds;
+                var center = new NativeMethods.POINT
+                {
+                    X = currentBounds.Left + currentBounds.Width / 2,
+                    Y = currentBounds.Top + currentBounds.Height / 2
+                };
+                DisplayInfo display = DisplayPlacementService.ForBounds(currentBounds);
+                DesktopGridPlacement? placement = FindPositionedPlacement(display, center, current.Id, current.CompactScale);
+                if (placement is not null)
+                {
+                    current.Position = DisplayPlacementService.Capture(placement.Bounds);
+                    window.MoveToPositionedPlacement(placement.Bounds, placement.CompactScale);
+                }
+            }
         }
         return null;
     }
@@ -676,6 +758,22 @@ public sealed class AppHost : IDisposable
         };
         double compactScale = State.Organizers.First(item => item.Id == organizerId).CompactScale;
         return FindPositionedPlacement(display, center, organizerId, compactScale);
+    }
+
+    internal DesktopGridPlacement? RestoreLockedPositionedBounds(Guid organizerId)
+    {
+        OrganizerDefinition organizer = State.Organizers.First(item => item.Id == organizerId);
+        DisplayInfo display = DisplayPlacementService.GetDisplays()
+            .FirstOrDefault(item => string.Equals(item.Device, organizer.Position?.MonitorDevice, StringComparison.OrdinalIgnoreCase))
+            ?? DisplayPlacementService.GetDisplays().FirstOrDefault(item => item.Monitor.Left == 0 && item.Monitor.Top == 0)
+            ?? DisplayPlacementService.GetDisplays().First();
+        DesktopGridSnapshot snapshot = ReadGridSnapshot(display);
+        double scale = Math.Min(
+            organizer.CompactScale,
+            DesktopGridService.CalculatePositionedCompactScale(snapshot));
+        (int width, int height, _) = DesktopGridService.CalculatePositionedWindowSize(snapshot, scale);
+        NativeMethods.RECT bounds = DisplayPlacementService.RestoreToDisplay(organizer.Position, display, width, height);
+        return new DesktopGridPlacement(bounds, scale, snapshot.ExplorerPositionsAvailable);
     }
 
     public async Task<TransferOutcome> DeleteOrganizerAsync(Guid id)
@@ -750,6 +848,59 @@ public sealed class AppHost : IDisposable
             StartupService.Apply(previous);
             throw;
         }
+    }
+
+    public async Task SetCollapseOnOutsideClickAsync(bool enabled)
+    {
+        if (State.GlobalSettings.CollapseOnOutsideClick == enabled) return;
+        bool previous = State.GlobalSettings.CollapseOnOutsideClick;
+        State.GlobalSettings.CollapseOnOutsideClick = enabled;
+        try
+        {
+            await SaveStateAsync();
+        }
+        catch
+        {
+            State.GlobalSettings.CollapseOnOutsideClick = previous;
+            throw;
+        }
+        foreach (MainWindow window in _windows.Values) window.ApplyOutsideClickSetting();
+    }
+
+    public async Task SetShowConsoleOnLaunchAsync(bool enabled)
+    {
+        if (State.GlobalSettings.ShowConsoleOnLaunch == enabled) return;
+        bool previous = State.GlobalSettings.ShowConsoleOnLaunch;
+        State.GlobalSettings.ShowConsoleOnLaunch = enabled;
+        try
+        {
+            await SaveStateAsync();
+        }
+        catch
+        {
+            State.GlobalSettings.ShowConsoleOnLaunch = previous;
+            throw;
+        }
+    }
+
+    public void ApplyOrganizerSurfaceOpacity(double opacity)
+    {
+        double clamped = Math.Clamp(opacity, 0d, 1d);
+        if (Math.Abs(State.GlobalSettings.OrganizerSurfaceOpacity - clamped) < 0.0001) return;
+        State.GlobalSettings.OrganizerSurfaceOpacity = clamped;
+        foreach (MainWindow window in _windows.Values) window.ApplyInheritedTheme();
+    }
+
+    public void ApplyExpandOnHoverDelay(int milliseconds)
+    {
+        State.GlobalSettings.ExpandOnHoverMs = Math.Clamp(milliseconds, 100, 1500);
+        foreach (MainWindow window in _windows.Values) window.ApplyHoverExpandDelay(State.GlobalSettings.ExpandOnHoverMs);
+    }
+
+    public void ApplyPointerLeaveDelay(int milliseconds)
+    {
+        State.GlobalSettings.CollapseOnPointerLeaveMs = Math.Clamp(milliseconds, 200, 2000);
+        foreach (MainWindow window in _windows.Values) window.ApplyPointerLeaveDelay(State.GlobalSettings.CollapseOnPointerLeaveMs);
     }
 
     public async Task SetLanguageAsync(AppLanguage language)
@@ -862,6 +1013,17 @@ public sealed class AppHost : IDisposable
         foreach (OrganizerDefinition organizer in State.Organizers.Where(item => item.PlacementMode == OrganizerPlacementMode.Positioned))
         {
             DisplayInfo display = displays.FirstOrDefault(item => string.Equals(item.Device, organizer.Position?.MonitorDevice, StringComparison.OrdinalIgnoreCase)) ?? primary;
+            if (organizer.PositionLocked)
+            {
+                DesktopGridSnapshot lockedSnapshot = ReadGridSnapshot(display);
+                double lockedScale = Math.Min(
+                    organizer.CompactScale,
+                    DesktopGridService.CalculatePositionedCompactScale(lockedSnapshot));
+                (int lockedWidth, int lockedHeight, _) = DesktopGridService.CalculatePositionedWindowSize(lockedSnapshot, lockedScale);
+                NativeMethods.RECT locked = DisplayPlacementService.RestoreToDisplay(organizer.Position, display, lockedWidth, lockedHeight);
+                occupied.Add(locked);
+                continue;
+            }
             DesktopGridSnapshot snapshot = ReadGridSnapshot(display);
             double scale = Math.Min(
                 organizer.CompactScale,
@@ -914,7 +1076,7 @@ public sealed class AppHost : IDisposable
         if (!snapshot.ExplorerPositionsAvailable && !_gridFallbackNoticeShown)
         {
             _gridFallbackNoticeShown = true;
-            Notify("TuckPane", AppStrings.Get("GridFallbackMessage"));
+            _ = _dispatcher.TryEnqueue(() => Notify("TuckPane", AppStrings.Get("GridFallbackMessage")));
         }
         return snapshot;
     }
@@ -934,22 +1096,7 @@ public sealed class AppHost : IDisposable
         }
     }
 
-    public async Task SetCollapseOnOutsideClickAsync(bool enabled)
-    {
-        if (State.GlobalSettings.CollapseOnOutsideClick == enabled) return;
-        State.GlobalSettings.CollapseOnOutsideClick = enabled;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.CollapseOnOutsideClick = !enabled;
-            throw;
-        }
-        foreach (MainWindow window in _windows.Values) window.ApplyOutsideClickSetting();
-    }
-
+    
     public async Task SetExclusiveExpansionAsync(bool enabled)
     {
         if (State.GlobalSettings.ExclusiveExpansion == enabled)
@@ -1015,6 +1162,7 @@ public sealed class AppHost : IDisposable
         _externalNoteWindows.Clear();
         foreach (MainWindow window in _windows.Values.ToArray()) window.ClosePermanently();
         _windows.Clear();
+        _desktopIconGuard?.Dispose();
         _tray?.Dispose();
         Console.ClosePermanently();
         Application.Current.Exit();
@@ -1082,8 +1230,22 @@ public sealed class AppHost : IDisposable
         });
     }
 
+    private IReadOnlyList<NativeMethods.RECT> CollectOrganizerBounds()
+    {
+        var bounds = new List<NativeMethods.RECT>(_windows.Count);
+        foreach (MainWindow window in _windows.Values)
+        {
+            // 只在折叠态才把收纳盒当作桌面图标覆盖层；展开时窗口提到普通层，
+            // 覆盖桌面图标是正常行为，不参与避让。
+            if (window.IsExpanded) continue;
+            if (window.TryGetWindowBounds(out NativeMethods.RECT rect)) bounds.Add(rect);
+        }
+        return bounds;
+    }
+
     public void Dispose()
     {
+        _desktopIconGuard?.Dispose();
         _tray?.Dispose();
         foreach (NoteWindow window in _noteWindows.Values) _ = window.ClosePermanentlyAsync();
         foreach (NoteWindow window in _externalNoteWindows.Values) _ = window.ClosePermanentlyAsync();

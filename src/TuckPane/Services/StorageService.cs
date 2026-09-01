@@ -33,10 +33,12 @@ public sealed class StorageService
     public async Task<IReadOnlyList<TransferOutcome>> ImportBatchAsync(
         IReadOnlyList<string> sourcePaths,
         IProgress<TransferProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? targetFolder = null)
     {
         Directory.CreateDirectory(_itemsRoot);
-        DropValidationResult validation = DropValidator.ValidateBatch(sourcePaths, _itemsRoot);
+        string targetRoot = ResolveImportTarget(targetFolder);
+        DropValidationResult validation = DropValidator.ValidateBatch(sourcePaths, targetRoot);
         if (!validation.IsValid) throw new InvalidOperationException(string.Join(Environment.NewLine, validation.Errors));
 
         var outcomes = new List<TransferOutcome>();
@@ -44,21 +46,35 @@ public sealed class StorageService
         {
             cancellationToken.ThrowIfCancellationRequested();
             TransferOutcome outcome = DropValidator.IsExecutable(sourcePath)
-                ? CreateExecutableShortcut(sourcePath)
-                : await MoveOneAsync(sourcePath, progress, cancellationToken);
+                ? CreateExecutableShortcut(sourcePath, targetRoot)
+                : await MoveOneAsync(sourcePath, progress, cancellationToken, targetRoot);
             outcomes.Add(outcome);
             if (outcome.Status is TransferStatus.Failed or TransferStatus.Cancelled) break;
         }
         return outcomes;
     }
 
+    private string ResolveImportTarget(string? targetFolder)
+    {
+        if (string.IsNullOrWhiteSpace(targetFolder)) return _itemsRoot;
+        string fullRoot = Path.GetFullPath(_itemsRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        string candidate = Path.GetFullPath(Path.Combine(_itemsRoot, targetFolder));
+        if (!candidate.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase) || !Directory.Exists(candidate))
+        {
+            throw new InvalidOperationException(AppStrings.Format("DropTargetFolderMissingFormat", targetFolder));
+        }
+        return candidate;
+    }
+
     public async Task<IReadOnlyList<TransferOutcome>> CopyBatchAsync(
         IReadOnlyList<string> sourcePaths,
         IProgress<TransferProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? targetFolder = null)
     {
         Directory.CreateDirectory(_itemsRoot);
-        DropValidationResult validation = DropValidator.ValidateBatch(sourcePaths, _itemsRoot);
+        string targetRoot = ResolveImportTarget(targetFolder);
+        DropValidationResult validation = DropValidator.ValidateBatch(sourcePaths, targetRoot);
         if (!validation.IsValid) throw new InvalidOperationException(string.Join(Environment.NewLine, validation.Errors));
 
         var outcomes = new List<TransferOutcome>();
@@ -66,12 +82,59 @@ public sealed class StorageService
         {
             cancellationToken.ThrowIfCancellationRequested();
             TransferOutcome outcome = DropValidator.IsExecutable(sourcePath)
-                ? CreateExecutableShortcut(sourcePath)
-                : await CopyOneAsync(sourcePath, progress, cancellationToken);
+                ? CreateExecutableShortcut(sourcePath, targetRoot)
+                : await CopyOneIntoAsync(sourcePath, progress, cancellationToken, targetRoot);
             outcomes.Add(outcome);
             if (outcome.Status is TransferStatus.Failed or TransferStatus.Cancelled) break;
         }
         return outcomes;
+    }
+
+    private async Task<TransferOutcome> CopyOneIntoAsync(
+        string sourcePath,
+        IProgress<TransferProgress>? progress,
+        CancellationToken cancellationToken,
+        string targetRoot)
+    {
+        string source = Path.GetFullPath(sourcePath).TrimEnd(Path.DirectorySeparatorChar);
+        bool isDirectory = Directory.Exists(source);
+        string destination = GetUniquePath(Path.Combine(targetRoot, Path.GetFileName(source)), isDirectory);
+        string staging = Path.Combine(_itemsRoot, $".glassfolder-staging-{Guid.NewGuid():N}");
+        string itemName = Path.GetFileName(source);
+        try
+        {
+            long totalBytes = isDirectory ? BuildManifest(source).TotalBytes : new FileInfo(source).Length;
+            long copiedBytes = 0;
+            Action<int> report = bytes =>
+            {
+                copiedBytes += bytes;
+                progress?.Report(new TransferProgress(itemName, copiedBytes, totalBytes));
+            };
+            if (isDirectory)
+            {
+                await CopyDirectoryAsync(source, staging, report, cancellationToken);
+                VerifyEquivalent(source, staging);
+                Directory.Move(staging, destination);
+            }
+            else
+            {
+                await CopyFileAsync(source, staging, report, cancellationToken);
+                if (new FileInfo(source).Length != new FileInfo(staging).Length) throw new IOException(AppStrings.Get("CopySizeMismatch"));
+                File.Move(staging, destination);
+            }
+            return new(source, destination, TransferStatus.Copied, AppStrings.Get("Copied"));
+        }
+        catch (OperationCanceledException)
+        {
+            TryDelete(staging);
+            return new(source, null, TransferStatus.Cancelled, AppStrings.Get("CopyCancelled"));
+        }
+        catch (Exception ex)
+        {
+            TryDelete(staging);
+            AppLogger.Error($"复制导入失败：{source}", ex);
+            return new(source, null, TransferStatus.Failed, ex.Message);
+        }
     }
 
     internal string CreateUniqueFolder(string requestedName)
@@ -231,12 +294,12 @@ public sealed class StorageService
         return new(source, null, TransferStatus.Failed, "目标目录冲突过于频繁，源项目已保留。");
     }
 
-    private TransferOutcome CreateExecutableShortcut(string sourcePath)
+    private TransferOutcome CreateExecutableShortcut(string sourcePath, string targetRoot)
     {
         try
         {
             string source = Path.GetFullPath(sourcePath);
-            string destination = GetUniquePath(Path.Combine(_itemsRoot, Path.GetFileNameWithoutExtension(source) + ".lnk"), isDirectory: false);
+            string destination = GetUniquePath(Path.Combine(targetRoot, Path.GetFileNameWithoutExtension(source) + ".lnk"), isDirectory: false);
             Type shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException(AppStrings.Get("ShellUnavailable"));
             dynamic shell = Activator.CreateInstance(shellType)!;
             dynamic shortcut = shell.CreateShortcut(destination);
@@ -255,11 +318,12 @@ public sealed class StorageService
     private async Task<TransferOutcome> MoveOneAsync(
         string sourcePath,
         IProgress<TransferProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string targetRoot)
     {
         string source = Path.GetFullPath(sourcePath).TrimEnd(Path.DirectorySeparatorChar);
         bool isDirectory = Directory.Exists(source);
-        string destination = GetUniquePath(Path.Combine(_itemsRoot, Path.GetFileName(source)), isDirectory);
+        string destination = GetUniquePath(Path.Combine(targetRoot, Path.GetFileName(source)), isDirectory);
         return await MovePathAsync(source, destination, progress, cancellationToken, rollbackDestinationOnSourceDeleteFailure: false);
     }
 

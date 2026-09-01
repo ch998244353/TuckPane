@@ -94,7 +94,8 @@ public partial class App : Application
         try
         {
             _host = new AppHost();
-            await _host.InitializeAsync();
+            bool startup = Environment.GetCommandLineArgs().Any(argument => argument.Equals("--startup", StringComparison.OrdinalIgnoreCase));
+            await _host.InitializeAsync(startup);
             _singleInstance.Listen(() => _host.OpenConsole());
             await HandleArgumentsAsync(Program.InitialArguments, redirected: false);
             _hostReady = true;

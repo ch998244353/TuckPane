@@ -153,6 +153,8 @@ public static class AppPaths
         return SamePath(left, right) || IsAncestor(left, right) || IsAncestor(right, left);
     }
 
+    
+    
     public static string? GetOwnedStorageContainer(OrganizerDefinition definition)
     {
         string itemsPath;
