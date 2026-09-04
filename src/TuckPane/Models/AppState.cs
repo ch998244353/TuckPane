@@ -4,11 +4,11 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 
-public enum ThemeMaterial
+public enum OrganizerTextColor
 {
-    Acrylic = 0,
-    Glass = 1,
-    Matte = 3
+    White = 0,
+    Black = 1,
+    Auto = 2
 }
 
 internal enum ThemeTarget
@@ -17,7 +17,12 @@ internal enum ThemeTarget
     Organizer
 }
 
-internal readonly record struct ThemeValues(uint ColorArgb, ThemeMaterial Material, double Transparency);
+internal readonly record struct ThemeValues(
+    uint ColorArgb,
+    double Transparency,
+    double BlurStrength = GlobalSettings.DefaultThemeBlurStrength,
+    bool SolidColorMode = false,
+    double SolidOpacity = 1);
 
 public enum PerformanceProfile
 {
@@ -96,7 +101,7 @@ public enum NoteTheme
 
 public sealed class AppStateV2
 {
-    public int SchemaVersion { get; set; } = 9;
+    public int SchemaVersion { get; set; } = 15;
     public GlobalSettings GlobalSettings { get; set; } = new();
     public ConsolePlacement? ConsolePlacement { get; set; }
     public List<OrganizerDefinition> Organizers { get; set; } = [];
@@ -104,10 +109,17 @@ public sealed class AppStateV2
 
 public sealed class GlobalSettings
 {
-    private const int LegacyFrostedGlassMaterialValue = 2;
     public const uint DefaultThemeColorArgb = 0xFFE2E5E9;
     public const double DefaultThemeTransparency = .35;
-    public const double MaximumThemeTransparency = .9;
+    // Glass opacity is persisted as a normalized 0..1 value and capped just
+    // below fully opaque so the Glass pipeline remains distinguishable.
+    public const double MaximumThemeTransparency = .99;
+    // Glass blur intentionally has a non-zero floor so selecting Glass always
+    // produces a perceptible material treatment (5% is the minimum setting).
+    public const double MinimumThemeBlurStrength = .05;
+    public const double DefaultThemeBlurStrength = 1;
+    public const double MaximumThemeBlurStrength = 2;
+    public const OrganizerTextColor DefaultOrganizerTextColor = OrganizerTextColor.Auto;
     public const int MinimumHoverDelayMs = 100;
     public const int MaximumHoverDelayMs = 2000;
     public const int HoverDelayStepMs = 50;
@@ -123,11 +135,17 @@ public sealed class GlobalSettings
     public const double MaximumCompactNameScale = 1;
 
     public uint ThemeColorArgb { get; set; } = DefaultThemeColorArgb;
-    public ThemeMaterial Material { get; set; } = ThemeMaterial.Acrylic;
     public double ThemeTransparency { get; set; } = DefaultThemeTransparency;
+    public double SolidThemeOpacity { get; set; } = 1;
+    public double ThemeBlurStrength { get; set; } = DefaultThemeBlurStrength;
+    public bool SolidColorMode { get; set; }
+    public bool EdgeGlowEnabled { get; set; } = true;
     public uint SettingsThemeColorArgb { get; set; } = DefaultThemeColorArgb;
-    public ThemeMaterial SettingsThemeMaterial { get; set; } = ThemeMaterial.Acrylic;
     public double SettingsThemeTransparency { get; set; } = DefaultThemeTransparency;
+    public double SettingsSolidThemeOpacity { get; set; } = 1;
+    public double SettingsThemeBlurStrength { get; set; } = DefaultThemeBlurStrength;
+    public bool SettingsSolidColorMode { get; set; }
+    public OrganizerTextColor OrganizerTextColor { get; set; } = DefaultOrganizerTextColor;
     public NoteTheme NoteTheme { get; set; } = NoteTheme.RainBlue;
     public bool StartWithWindows { get; set; }
     public AppLanguage Language { get; set; } = AppLanguage.ChineseSimplified;
@@ -225,36 +243,52 @@ public sealed class GlobalSettings
     }
 
     public static double NormalizeThemeTransparency(double value) =>
-        double.IsFinite(value) ? Math.Clamp(value, 0, MaximumThemeTransparency) : DefaultThemeTransparency;
+        double.IsFinite(value) ? Math.Clamp(value, 0, .99) : DefaultThemeTransparency;
 
-    internal ThemeValues GetTheme(ThemeTarget target) => target == ThemeTarget.Settings
-        ? new(SettingsThemeColorArgb, SettingsThemeMaterial, SettingsThemeTransparency)
-        : new(ThemeColorArgb, Material, ThemeTransparency);
+    public static double NormalizeSolidThemeOpacity(double value) =>
+        double.IsFinite(value) ? Math.Clamp(value, 0, 1) : 1;
+
+    public static double NormalizeThemeBlurStrength(double value) =>
+        double.IsFinite(value)
+            ? Math.Clamp(value, MinimumThemeBlurStrength, MaximumThemeBlurStrength)
+            : DefaultThemeBlurStrength;
+
+    internal ThemeValues GetTheme(ThemeTarget target)
+    {
+        bool solid = target == ThemeTarget.Settings ? SettingsSolidColorMode : SolidColorMode;
+        return target == ThemeTarget.Settings
+            ? new(SettingsThemeColorArgb, SettingsThemeTransparency, SettingsThemeBlurStrength, solid, SettingsSolidThemeOpacity)
+            : new(ThemeColorArgb, ThemeTransparency, ThemeBlurStrength, solid, SolidThemeOpacity);
+    }
 
     internal void SetTheme(ThemeTarget target, ThemeValues theme)
     {
         if (target == ThemeTarget.Settings)
         {
             SettingsThemeColorArgb = theme.ColorArgb;
-            SettingsThemeMaterial = theme.Material;
             SettingsThemeTransparency = theme.Transparency;
+            SettingsSolidThemeOpacity = NormalizeSolidThemeOpacity(theme.SolidOpacity);
+            SettingsThemeBlurStrength = theme.BlurStrength;
+            SettingsSolidColorMode = theme.SolidColorMode;
             return;
         }
 
         ThemeColorArgb = theme.ColorArgb;
-        Material = theme.Material;
         ThemeTransparency = theme.Transparency;
+        SolidThemeOpacity = NormalizeSolidThemeOpacity(theme.SolidOpacity);
+        ThemeBlurStrength = theme.BlurStrength;
+        SolidColorMode = theme.SolidColorMode;
     }
 
     internal static ThemeValues NormalizeTheme(ThemeValues theme) => new(
         theme.ColorArgb | 0xFF000000,
-        NormalizeThemeMaterial(theme.Material),
-        NormalizeThemeTransparency(theme.Transparency));
+        NormalizeThemeTransparency(theme.Transparency),
+        NormalizeThemeBlurStrength(theme.BlurStrength),
+        theme.SolidColorMode,
+        NormalizeSolidThemeOpacity(theme.SolidOpacity));
 
-    internal static ThemeMaterial NormalizeThemeMaterial(ThemeMaterial material) =>
-        (int)material == LegacyFrostedGlassMaterialValue
-            ? ThemeMaterial.Matte
-            : Enum.IsDefined(material) ? material : ThemeMaterial.Acrylic;
+    internal static OrganizerTextColor NormalizeOrganizerTextColor(OrganizerTextColor color) =>
+        Enum.IsDefined(color) ? color : DefaultOrganizerTextColor;
 }
 
 public sealed class ConsolePlacement
@@ -286,7 +320,8 @@ public sealed class OrganizerDefinition
     public double? ManualCanvasBaseHeightDip { get; set; }
     public WidgetPosition? Position { get; set; }
     public WidgetPosition? ExpandedPosition { get; set; }
-    public Guid? ContainerStationId { get; set; }
+    [JsonPropertyName("ContainerStationId")]
+    public Guid? ContainerOrganizerId { get; set; }
     public string StorageRelativePath { get; set; } = string.Empty;
     public string? StorageAbsolutePath { get; set; }
     public bool StorageOwnedByApp { get; set; }

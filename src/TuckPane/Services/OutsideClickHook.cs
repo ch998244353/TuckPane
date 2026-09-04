@@ -2,15 +2,15 @@ using Microsoft.UI.Dispatching;
 
 namespace TuckPane.Services;
 
-public sealed class OutsideClickHook : IDisposable
+internal sealed class OutsideClickHook : IDisposable
 {
     private readonly IntPtr _window;
     private readonly DispatcherQueue _dispatcher;
-    private readonly Action _outsideClick;
+    private readonly Action<NativeMethods.POINT> _outsideClick;
     private readonly NativeMethods.HookProc _callback;
     private IntPtr _hook;
 
-    public OutsideClickHook(IntPtr window, DispatcherQueue dispatcher, Action outsideClick)
+    internal OutsideClickHook(IntPtr window, DispatcherQueue dispatcher, Action<NativeMethods.POINT> outsideClick)
     {
         _window = window;
         _dispatcher = dispatcher;
@@ -50,7 +50,8 @@ public sealed class OutsideClickHook : IDisposable
             bool outside = data.Point.X < windowRect.Left || data.Point.X >= windowRect.Right || data.Point.Y < windowRect.Top || data.Point.Y >= windowRect.Bottom;
             if (outside)
             {
-                _ = _dispatcher.TryEnqueue(() => _outsideClick());
+                NativeMethods.POINT clickPoint = data.Point;
+                _ = _dispatcher.TryEnqueue(() => _outsideClick(clickPoint));
             }
         }
 

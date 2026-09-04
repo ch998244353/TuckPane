@@ -19,6 +19,12 @@
   <data name="StartupTitle" xml:space="preserve"><value>开机时启动 TuckPane</value></data>
   <data name="CollapseOutsideTitle" xml:space="preserve"><value>点击窗口外自动收缩</value></data>
   <data name="NoteAlwaysOnTopTitle" xml:space="preserve"><value>便签与待办永远处于最高层</value></data>
+  <data name="EdgeGlowTitle" xml:space="preserve"><value>显示边缘弧光</value></data>
+  <data name="OrganizerTextColorTitle" xml:space="preserve"><value>收纳窗文字颜色</value></data>
+  <data name="OrganizerTextColorAuto" xml:space="preserve"><value>自动</value></data>
+  <data name="OrganizerTextColorWhite" xml:space="preserve"><value>白色</value></data>
+  <data name="OrganizerTextColorBlack" xml:space="preserve"><value>黑色</value></data>
+  <data name="OrganizerTextColorErrorTitle" xml:space="preserve"><value>无法保存收纳窗文字颜色</value></data>
   <data name="WindowAlignmentTitle" xml:space="preserve"><value>拖动窗口时自动对齐</value></data>
   <data name="RememberExpandedOrganizerPositionTitle" xml:space="preserve"><value>记住收纳窗展开位置</value></data>
   <data name="UniformFloatingCompactScaleTitle" xml:space="preserve"><value>统一悬浮模式入口大小</value></data>
@@ -44,13 +50,13 @@
   <data name="ThemeTargetSettings" xml:space="preserve"><value>设置界面</value></data>
   <data name="ThemeTargetOrganizer" xml:space="preserve"><value>收纳窗</value></data>
   <data name="ThemeColorLabel" xml:space="preserve"><value>颜色</value></data>
+  <data name="ThemeModeLabel" xml:space="preserve"><value>背景模式</value></data>
+  <data name="ThemeGlassMode" xml:space="preserve"><value>玻璃模式</value></data>
+  <data name="ThemeSolidMode" xml:space="preserve"><value>纯色模式</value></data>
   <data name="ThemeColorPresetFormat" xml:space="preserve"><value>主题颜色 {0}</value></data>
   <data name="ThemeCustomColor" xml:space="preserve"><value>自定义</value></data>
-  <data name="ThemeMaterialLabel" xml:space="preserve"><value>材质</value></data>
-  <data name="ThemeMaterialAcrylic" xml:space="preserve"><value>亚克力</value></data>
-  <data name="ThemeMaterialGlass" xml:space="preserve"><value>玻璃</value></data>
-  <data name="ThemeMaterialMatte" xml:space="preserve"><value>磨砂</value></data>
-  <data name="ThemeTransparencyLabel" xml:space="preserve"><value>背景透明度</value></data>
+  <data name="ThemeTransparencyLabel" xml:space="preserve"><value>背景不透明度</value></data>
+  <data name="ThemeBlurStrengthLabel" xml:space="preserve"><value>模糊强度</value></data>
   <data name="ThemeSaveErrorTitle" xml:space="preserve"><value>无法保存主题</value></data>
   <data name="AddTitle" xml:space="preserve"><value>添加收纳窗</value></data>
   <data name="NameLabel" xml:space="preserve"><value>名称</value></data>
@@ -123,9 +129,14 @@
   <data name="StationEdgeOccupiedError" xml:space="preserve"><value>这条屏幕边缘已经有一个中转站，请选择其他边。</value></data>
   <data name="StationDuplicateError" xml:space="preserve"><value>中转站不能复制。</value></data>
   <data name="StationManageModeError" xml:space="preserve"><value>中转站模式不能与悬浮窗或定位模式互相切换。</value></data>
-  <data name="StationContainsOrganizersError" xml:space="preserve"><value>中转站内仍有收纳窗，请先将它们拖出后再删除。</value></data>
-  <data name="ContainedOrganizerNoGridError" xml:space="preserve"><value>目标显示器没有可用网格，收纳窗已返回原中转站。</value></data>
-  <data name="OrganizerStationDropError" xml:space="preserve"><value>无法将收纳窗放入中转站：{0}</value></data>
+  <data name="OrganizerContainerDropError" xml:space="preserve"><value>无法将收纳窗放入目标收纳窗：{0}</value></data>
+  <data name="OrganizerContainmentSelfError" xml:space="preserve"><value>不能将收纳窗放入自身。</value></data>
+  <data name="OrganizerContainmentStationSourceError" xml:space="preserve"><value>中转站不能放入其他收纳窗。</value></data>
+  <data name="OrganizerContainmentSourceHasChildrenError" xml:space="preserve"><value>内部已有收纳窗的收纳窗不能再放入其他收纳窗。</value></data>
+  <data name="OrganizerContainmentTargetContainedError" xml:space="preserve"><value>已放入其他收纳窗的收纳窗不能继续容纳收纳窗，请先将它拖回桌面。</value></data>
+  <data name="OrganizerContainmentMissingError" xml:space="preserve"><value>来源收纳窗或目标收纳窗不存在。</value></data>
+  <data name="OrganizerReleaseNoGridError" xml:space="preserve"><value>没有足够的桌面网格位置来释放内部的定位收纳窗，未删除此收纳窗。</value></data>
+  <data name="ContainedOrganizerNoGridError" xml:space="preserve"><value>目标显示器没有可用网格，收纳窗已返回原容器收纳窗。</value></data>
   <data name="MoveOrganizerFilesOnDeleteTitle" xml:space="preserve"><value>删除收纳窗时将文件移到桌面</value></data>
   <data name="DeleteBehaviorErrorTitle" xml:space="preserve"><value>无法保存删除设置</value></data>
   <data name="CompactNameScaleTitle" xml:space="preserve"><value>收起名称大小</value></data>
@@ -215,6 +226,7 @@
   <data name="LanguageErrorTitle" xml:space="preserve"><value>无法切换语言</value></data>
   <data name="CollapseOutsideErrorTitle" xml:space="preserve"><value>无法更新自动收缩设置</value></data>
   <data name="NoteAlwaysOnTopErrorTitle" xml:space="preserve"><value>无法更新便签与待办置顶设置</value></data>
+  <data name="EdgeGlowErrorTitle" xml:space="preserve"><value>无法更新边缘弧光设置</value></data>
   <data name="WindowAlignmentErrorTitle" xml:space="preserve"><value>无法更新窗口拖动对齐设置</value></data>
   <data name="RememberExpandedOrganizerPositionErrorTitle" xml:space="preserve"><value>无法保存收纳窗展开位置设置</value></data>
   <data name="ExpandOnHoverErrorTitle" xml:space="preserve"><value>无法更新悬浮展开设置</value></data>

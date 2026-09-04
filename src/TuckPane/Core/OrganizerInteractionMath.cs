@@ -13,65 +13,24 @@ internal enum CanvasResizeEdge
     Bottom = 1 << 3
 }
 
+internal enum OrganizerWheelAction
+{
+    Ignore,
+    ScrollCompactList,
+    ScrollGrid,
+    ScaleCompactList,
+    ScaleGrid
+}
+
 internal static class OrganizerInteractionMath
 {
     internal const double WheelScaleStep = .05;
-    internal const string OrganizerItemPrefix = "organizer:";
 
-    internal static bool CanContainOrganizer(
-        OrganizerPlacementMode sourceMode,
-        OrganizerPlacementMode targetMode,
-        Guid sourceId,
-        Guid targetId) =>
-        sourceId != targetId &&
-        sourceMode is OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned &&
-        targetMode == OrganizerPlacementMode.Station;
-
-    internal static string OrganizerItemKey(Guid organizerId) =>
-        $"{OrganizerItemPrefix}{organizerId:N}";
-
-    internal static bool TryParseOrganizerItemKey(string value, out Guid organizerId)
-    {
-        organizerId = default;
-        return value.StartsWith(OrganizerItemPrefix, StringComparison.OrdinalIgnoreCase) &&
-            Guid.TryParseExact(value[OrganizerItemPrefix.Length..], "N", out organizerId);
-    }
-
-    internal static bool PlaceOrganizerInStation(
-        IReadOnlyList<OrganizerDefinition> organizers,
-        Guid organizerId,
-        Guid stationId,
-        int insertionIndex)
-    {
-        OrganizerDefinition? organizer = organizers.FirstOrDefault(item => item.Id == organizerId);
-        OrganizerDefinition? station = organizers.FirstOrDefault(item => item.Id == stationId);
-        if (organizer is null || station is null ||
-            !CanContainOrganizer(organizer.PlacementMode, station.PlacementMode, organizer.Id, station.Id)) return false;
-        string key = OrganizerItemKey(organizer.Id);
-        int previousIndex = organizer.ContainerStationId == station.Id
-            ? station.ItemOrder.FindIndex(item => item.Equals(key, StringComparison.OrdinalIgnoreCase))
-            : -1;
-        foreach (OrganizerDefinition candidate in organizers.Where(item => item.PlacementMode == OrganizerPlacementMode.Station))
-            candidate.ItemOrder.RemoveAll(item => item.Equals(key, StringComparison.OrdinalIgnoreCase));
-        if (previousIndex >= 0 && insertionIndex > previousIndex) insertionIndex--;
-        organizer.ContainerStationId = station.Id;
-        station.ItemOrder.Insert(Math.Clamp(insertionIndex, 0, station.ItemOrder.Count), key);
-        return true;
-    }
-
-    internal static Guid? DetachOrganizerFromStation(
-        IReadOnlyList<OrganizerDefinition> organizers,
-        Guid organizerId)
-    {
-        OrganizerDefinition? organizer = organizers.FirstOrDefault(item => item.Id == organizerId);
-        if (organizer is null) return null;
-        Guid? previousStationId = organizer.ContainerStationId;
-        string key = OrganizerItemKey(organizer.Id);
-        foreach (OrganizerDefinition candidate in organizers.Where(item => item.PlacementMode == OrganizerPlacementMode.Station))
-            candidate.ItemOrder.RemoveAll(item => item.Equals(key, StringComparison.OrdinalIgnoreCase));
-        organizer.ContainerStationId = null;
-        return previousStationId;
-    }
+    internal static bool ShouldShowItemFallback(
+        bool hasImageSource,
+        bool iconLoadPending,
+        bool organizerPreviewVisible) =>
+        !hasImageSource && !iconLoadPending && !organizerPreviewVisible;
 
     internal static bool ShouldStartHoverExpand(
         bool enabled,
@@ -80,6 +39,17 @@ internal static class OrganizerInteractionMath
         bool animating,
         bool interactionActive) =>
         enabled && !station && !expanded && !animating && !interactionActive;
+
+    internal static bool ShouldExpandForOrganizerDragHover(
+        bool dragActive,
+        bool sourceIsTarget,
+        OrganizerPlacementMode targetMode,
+        bool targetContained,
+        bool targetExpanded,
+        bool targetAnimating) =>
+        dragActive && !sourceIsTarget &&
+        targetMode is OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned &&
+        !targetContained && !targetExpanded && !targetAnimating;
 
     internal static bool ShouldPollPointer(
         OrganizerPlacementMode placementMode,
@@ -97,11 +67,11 @@ internal static class OrganizerInteractionMath
         bool enabled,
         bool draggingExpanded,
         OrganizerPlacementMode placementMode,
-        bool overStationDropTarget) =>
+        bool overOrganizerDropTarget) =>
         enabled &&
         !draggingExpanded &&
         placementMode == OrganizerPlacementMode.Floating &&
-        !overStationDropTarget;
+        !overOrganizerDropTarget;
 
     internal static bool ShouldRememberExpandedPosition(
         bool enabled,
@@ -233,6 +203,33 @@ internal static class OrganizerInteractionMath
         bool shellDragging,
         bool controlPressed) =>
         expanded && !animating && !resizing && !reordering && !shellDragging && controlPressed;
+
+    internal static OrganizerWheelAction ResolveWheelAction(
+        bool expanded,
+        bool animating,
+        bool resizing,
+        bool reordering,
+        bool shellDragging,
+        bool controlPressed,
+        bool compactList,
+        bool pointerInsideList)
+    {
+        if (!expanded || animating || resizing || reordering || shellDragging || !pointerInsideList)
+            return OrganizerWheelAction.Ignore;
+        if (controlPressed)
+            return compactList ? OrganizerWheelAction.ScaleCompactList : OrganizerWheelAction.ScaleGrid;
+        return compactList ? OrganizerWheelAction.ScrollCompactList : OrganizerWheelAction.ScrollGrid;
+    }
+
+    internal static (double ScrollDeltaDip, int Remainder) ConsumeCompactListWheelDelta(
+        int remainder,
+        int delta,
+        double rowHeightDip)
+    {
+        int total = remainder + delta;
+        int steps = total / 120;
+        return (-steps * Math.Max(0, rowHeightDip), total % 120);
+    }
 
     internal static (int Left, int Top, int Width, int Height) CreateCenteredBounds(
         int centerX,

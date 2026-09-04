@@ -21,6 +21,7 @@ namespace TuckPane;
 
 public sealed partial class ConsoleWindow : Window
 {
+    private const double ConsoleCornerRadiusDip = 18;
     private readonly AppHost _host;
     private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _placementTimer;
@@ -35,10 +36,9 @@ public sealed partial class ConsoleWindow : Window
     private long _manageChangeVersion;
     private long _savedManageChangeVersion;
     private NativeWindowChromeController? _chrome;
+    private readonly ThemeBackdrop _themeBackdrop = new();
     private readonly ThemeSurface _themeSurface;
-    private readonly ThemeSurface _acrylicMaterialPreviewSurface;
-    private readonly ThemeSurface _glassMaterialPreviewSurface;
-    private readonly ThemeSurface _matteMaterialPreviewSurface;
+    private readonly ThemeEdgeSurface _settingsEdgeSurface;
     private bool _closingPermanently;
     private bool _componentReady;
     private bool _initialized;
@@ -46,6 +46,8 @@ public sealed partial class ConsoleWindow : Window
     private bool _loadingStartup;
     private bool _loadingOutsideClick;
     private bool _loadingNoteAlwaysOnTop;
+    private bool _loadingEdgeGlow;
+    private bool _loadingOrganizerTextColor;
     private bool _loadingWindowAlignment;
     private bool _loadingRememberExpandedOrganizerPosition;
     private bool _loadingDeleteBehavior;
@@ -94,14 +96,11 @@ public sealed partial class ConsoleWindow : Window
     {
         _host = host;
         InitializeComponent();
-        SystemBackdrop = new TransparentTintBackdrop(Colors.Transparent);
+        SystemBackdrop = new TransparentWindowBackdrop();
+        ConsoleSurfaceHost.SystemBackdrop = _themeBackdrop;
         _themeSurface = new ThemeSurface(ConsoleSurfaceHost);
-        _acrylicMaterialPreviewSurface = new ThemeSurface(AcrylicMaterialPreview);
-        _glassMaterialPreviewSurface = new ThemeSurface(GlassMaterialPreview);
-        _matteMaterialPreviewSurface = new ThemeSurface(MatteMaterialPreview);
-        _acrylicMaterialPreviewSurface.SetCornerRadius(12);
-        _glassMaterialPreviewSurface.SetCornerRadius(12);
-        _matteMaterialPreviewSurface.SetCornerRadius(12);
+        _settingsEdgeSurface = new ThemeEdgeSurface(SettingsEdgeOverlay);
+        ConsoleSurfaceHost.CornerRadius = new CornerRadius(ConsoleCornerRadiusDip);
         _errorInfoBarTimer = DispatcherQueue.CreateTimer();
         _errorInfoBarTimer.Interval = TimeSpan.FromSeconds(3);
         _errorInfoBarTimer.IsRepeating = false;
@@ -179,7 +178,10 @@ public sealed partial class ConsoleWindow : Window
             presenter.IsMaximizable = false;
             presenter.IsMinimizable = true;
         }
-        _chrome = new NativeWindowChromeController(Hwnd, DispatcherQueue);
+        // The theme backdrop owns all desktop sampling and blur.  Keep the
+        // native chrome from extending any frame into the client area so DWM
+        // cannot add an independent sheet-of-glass blur.
+        _chrome = new NativeWindowChromeController(Hwnd, DispatcherQueue, extendClientFrame: false);
         Activated += ConsoleWindow_Activated;
         Closed += ConsoleWindow_Closed;
         ApplyNativeWindowChrome();
@@ -194,7 +196,13 @@ public sealed partial class ConsoleWindow : Window
         ConsoleRoot.RequestedTheme = ThemePalette.IsDark(theme) ? ElementTheme.Dark : ElementTheme.Light;
         ConsoleRoot.Background = new SolidColorBrush(Colors.Transparent);
         ApplyConsoleSurfacePalette(theme);
-        _themeSurface.SetTheme(theme, _uiSettings.AdvancedEffectsEnabled);
+        bool useEffects = _uiSettings.AdvancedEffectsEnabled;
+        _themeBackdrop.SetTheme(theme, useEffects);
+        _themeSurface.SetTheme(theme, useEffects);
+        _themeSurface.SetCornerRadius(ConsoleCornerRadiusDip);
+        _settingsEdgeSurface.SetTheme(theme, useEffects);
+        _settingsEdgeSurface.SetCornerRadius(ConsoleCornerRadiusDip);
+        _settingsEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled);
         ApplyNativeWindowChrome(refreshFrame: true);
         UpdateThemeControls();
     }
@@ -205,6 +213,7 @@ public sealed partial class ConsoleWindow : Window
         UpdateStartupToggle();
         UpdateOutsideClickToggle();
         UpdateNoteAlwaysOnTopToggle();
+        UpdateEdgeGlowToggle();
         UpdateWindowAlignmentToggle();
         UpdateRememberExpandedOrganizerPositionToggle();
         UpdateDeleteBehaviorToggle();
@@ -220,6 +229,7 @@ public sealed partial class ConsoleWindow : Window
         PopulateManageList(selectId ?? _selectedId);
         UpdateTransferState();
         UpdateAddControls();
+        UpdateOrganizerTextColorControl();
     }
 
     public void ApplyLanguage()
@@ -238,6 +248,7 @@ public sealed partial class ConsoleWindow : Window
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ConsoleMinimizeButton, AppStrings.Get("WindowMinimize"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ConsoleCloseButton, AppStrings.Get("WindowClose"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(NoteAlwaysOnTopToggle, AppStrings.Get("NoteAlwaysOnTopTitle"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(OrganizerTextColorCombo, AppStrings.Get("OrganizerTextColorTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(WindowAlignmentToggle, AppStrings.Get("WindowAlignmentTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(MoveOrganizerFilesOnDeleteToggle, AppStrings.Get("MoveOrganizerFilesOnDeleteTitle"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(UniformFloatingCompactScaleToggle, AppStrings.Get("UniformFloatingCompactScaleTitle"));
@@ -263,6 +274,9 @@ public sealed partial class ConsoleWindow : Window
         ManageNavItem.Content = AppStrings.Get("NavManage");
         MissingStorageInfo.Title = AppStrings.Get("MissingStorage");
         ApplyLocalizedTree(ConsoleRoot);
+        OrganizerTextColorAuto.Content = AppStrings.Get("OrganizerTextColorAuto");
+        OrganizerTextColorWhite.Content = AppStrings.Get("OrganizerTextColorWhite");
+        OrganizerTextColorBlack.Content = AppStrings.Get("OrganizerTextColorBlack");
         UpdatePerformanceProfileDescription();
         PopulateDisplayCombos();
         ApplyTypography(ConsoleRoot);
@@ -440,11 +454,14 @@ public sealed partial class ConsoleWindow : Window
     private void ConsoleWindow_Closed(object sender, WindowEventArgs args)
     {
         _host.ThemeChanged -= Host_ThemeChanged;
+        _placementTimer.Stop();
         _themeSaveTimer.Stop();
+        _stateSaveTimer.Stop();
+        _hoverDelaySaveTimer.Stop();
+        _uniformCompactScaleSaveTimer.Stop();
+        _nameScaleSaveTimer.Stop();
         _themeSurface.Dispose();
-        _acrylicMaterialPreviewSurface.Dispose();
-        _glassMaterialPreviewSurface.Dispose();
-        _matteMaterialPreviewSurface.Dispose();
+        _settingsEdgeSurface.Dispose();
         Activated -= ConsoleWindow_Activated;
         Closed -= ConsoleWindow_Closed;
         _chrome?.Dispose();
@@ -479,11 +496,10 @@ public sealed partial class ConsoleWindow : Window
         Color page = ThemePalette.LayerColor(settings, 10, 16);
         Color card = ThemePalette.LayerColor(settings, 52, 42);
         Color title = ThemePalette.LayerColor(settings, 18, 22);
-        Color manageRow = dark
-            ? ColorHelper.FromArgb(18, 255, 255, 255)
-            : ColorHelper.FromArgb(24, 0, 0, 0);
+        Color manageRow = ThemePalette.LayerColor(settings, 24, 18);
         Color listItem = ThemePalette.LayerColor(settings, 12, 18);
         Color selectedListItem = ThemePalette.LayerColor(settings, 52, 52);
+        Color selectionAccent = ThemePalette.LayerColor(settings, 220, 220);
         Color primaryText = ThemePalette.ForegroundColor(settings);
         Color generalRowBorder = ColorHelper.FromArgb(24, primaryText.R, primaryText.G, primaryText.B);
         Color manageBorder = generalRowBorder;
@@ -520,6 +536,7 @@ public sealed partial class ConsoleWindow : Window
         SetSurfaceBrush("ConsoleManageRowBorderBrush", manageBorder);
         SetSurfaceBrush("ConsoleListItemSurfaceBrush", listItem);
         SetSurfaceBrush("ConsoleListItemSelectedSurfaceBrush", selectedListItem);
+        SetSurfaceBrush("ConsoleSelectionAccentBrush", selectionAccent);
         SetSurfaceBrush("ConsolePrimaryTextBrush", primaryText);
         SetSurfaceBrush("ConsoleSecondaryTextBrush", secondaryText);
         SetSurfaceBrush("ConsoleInputSurfaceBrush", input);
@@ -737,6 +754,43 @@ public sealed partial class ConsoleWindow : Window
         _loadingNoteAlwaysOnTop = false;
     }
 
+    private void UpdateOrganizerTextColorControl()
+    {
+        if (OrganizerTextColorCombo is null) return;
+        _loadingOrganizerTextColor = true;
+        OrganizerTextColor mode = GlobalSettings.NormalizeOrganizerTextColor(
+            _host.State.GlobalSettings.OrganizerTextColor);
+        OrganizerTextColorCombo.SelectedItem = mode switch
+        {
+            OrganizerTextColor.Auto => OrganizerTextColorAuto,
+            OrganizerTextColor.Black => OrganizerTextColorBlack,
+            _ => OrganizerTextColorWhite
+        };
+        _loadingOrganizerTextColor = false;
+    }
+
+    private async void OrganizerTextColorCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_componentReady || _loadingOrganizerTextColor ||
+            OrganizerTextColorCombo.SelectedItem is not ComboBoxItem { Tag: string tag }) return;
+        try
+        {
+            OrganizerTextColor mode = tag switch
+            {
+                "Auto" => OrganizerTextColor.Auto,
+                "Black" => OrganizerTextColor.Black,
+                _ => OrganizerTextColor.White
+            };
+            await _host.SetOrganizerTextColorAsync(mode);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("无法更新收纳窗文字颜色。", ex);
+            UpdateOrganizerTextColorControl();
+            ShowError(AppStrings.Get("OrganizerTextColorErrorTitle"), ex.Message);
+        }
+    }
+
     private async void NoteAlwaysOnTopToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (!_componentReady || _loadingNoteAlwaysOnTop) return;
@@ -749,6 +803,29 @@ public sealed partial class ConsoleWindow : Window
             AppLogger.Error("无法更新便签置顶设置。", ex);
             UpdateNoteAlwaysOnTopToggle();
             ShowError(AppStrings.Get("NoteAlwaysOnTopErrorTitle"), ex.Message);
+        }
+    }
+
+    private void UpdateEdgeGlowToggle()
+    {
+        if (EdgeGlowToggle is null) return;
+        _loadingEdgeGlow = true;
+        EdgeGlowToggle.IsOn = _host.State.GlobalSettings.EdgeGlowEnabled;
+        _loadingEdgeGlow = false;
+    }
+
+    private async void EdgeGlowToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (!_componentReady || _loadingEdgeGlow) return;
+        try
+        {
+            await _host.SetEdgeGlowEnabledAsync(EdgeGlowToggle.IsOn);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("无法更新边缘弧光设置。", ex);
+            UpdateEdgeGlowToggle();
+            ShowError(AppStrings.Get("EdgeGlowErrorTitle"), ex.Message);
         }
     }
 
@@ -1342,28 +1419,45 @@ public sealed partial class ConsoleWindow : Window
         ApplyThemeChange(colorArgb: ToArgb(args.NewColor));
     }
 
-    private void ThemeMaterialCard_Click(object sender, RoutedEventArgs e)
-    {
-        if (!_componentReady || _loadingTheme || sender is not FrameworkElement { Tag: string name } ||
-            !Enum.TryParse(name, out ThemeMaterial material)) return;
-        ApplyThemeChange(material: material);
-    }
-
     private void ThemeTransparencySlider_ValueChanged(object sender, object e)
     {
         if (!_componentReady || _loadingTheme) return;
-        ApplyThemeChange(transparency: ThemeTransparencySlider.Value);
+        ThemeValues theme = _host.State.GlobalSettings.GetTheme(_themeTarget);
+        if (theme.SolidColorMode)
+            ApplyThemeChange(solidOpacity: ThemeTransparencySlider.Value);
+        else
+            ApplyThemeChange(transparency: ThemeTransparencySlider.Value);
     }
 
-    private void ApplyThemeChange(uint? colorArgb = null, ThemeMaterial? material = null, double? transparency = null)
+    private void ThemeBlurStrengthSlider_ValueChanged(object sender, object e)
+    {
+        if (!_componentReady || _loadingTheme) return;
+        ApplyThemeChange(blurStrength: ThemeBlurStrengthSlider.Value);
+    }
+
+    private void ThemeModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_componentReady || _loadingTheme || sender is not FrameworkElement { Tag: string mode }) return;
+        ApplyThemeChange(solidColorMode: mode.Equals("Solid", StringComparison.Ordinal));
+        UpdateThemeControls();
+    }
+
+    private void ApplyThemeChange(
+        uint? colorArgb = null,
+        double? transparency = null,
+        double? blurStrength = null,
+        bool? solidColorMode = null,
+        double? solidOpacity = null)
     {
         GlobalSettings settings = _host.State.GlobalSettings;
         ThemeValues theme = settings.GetTheme(_themeTarget);
         _host.UpdateGlobalTheme(
             _themeTarget,
             colorArgb ?? theme.ColorArgb,
-            material ?? theme.Material,
-            transparency ?? theme.Transparency);
+            transparency ?? theme.Transparency,
+            blurStrength ?? theme.BlurStrength,
+            solidColorMode ?? theme.SolidColorMode,
+            solidOpacity);
         _themeSaveTimer.Stop();
         _themeSaveTimer.Start();
     }
@@ -1392,26 +1486,22 @@ public sealed partial class ConsoleWindow : Window
                 AppStrings.Format("ThemeColorPresetFormat", hex));
         }
         ThemeColorPicker.Color = FromArgb(theme.ColorArgb);
-        AcrylicMaterialCard.IsChecked = theme.Material == ThemeMaterial.Acrylic;
-        GlassMaterialCard.IsChecked = theme.Material == ThemeMaterial.Glass;
-        MatteMaterialCard.IsChecked = theme.Material == ThemeMaterial.Matte;
-        UpdateMaterialPreviews(theme);
-        ThemeTransparencySlider.Value = theme.Transparency;
-        ThemeTransparencyValue.Text = $"{Math.Round(theme.Transparency * 100):0}%";
+        ThemeTransparencySlider.Maximum = theme.SolidColorMode ? 1 : GlobalSettings.MaximumThemeTransparency;
+        double displayedOpacity = theme.SolidColorMode ? theme.SolidOpacity : theme.Transparency;
+        ThemeTransparencySlider.Value = displayedOpacity;
+        ThemeTransparencyValue.Text = $"{Math.Round(displayedOpacity * 100):0}%";
+        ThemeBlurStrengthSlider.Value = theme.BlurStrength;
+        ThemeBlurStrengthValue.Text = $"{Math.Round(theme.BlurStrength * 100):0}%";
+        ThemeGlassModeButton.IsChecked = !theme.SolidColorMode;
+        ThemeSolidModeButton.IsChecked = theme.SolidColorMode;
+        // Opacity is independent of the material mode: solid colour can be
+        // translucent, while Glass keeps the same 0-100% surface control.
+        ThemeTransparencyRow.Visibility = Visibility.Visible;
+        ThemeBlurStrengthRow.Visibility = theme.SolidColorMode ? Visibility.Collapsed : Visibility.Visible;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeColorPicker, AppStrings.Get("ThemeCustomColor"));
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(AcrylicMaterialCard, AppStrings.Get("ThemeMaterialAcrylic"));
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(GlassMaterialCard, AppStrings.Get("ThemeMaterialGlass"));
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(MatteMaterialCard, AppStrings.Get("ThemeMaterialMatte"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeTransparencySlider, AppStrings.Get("ThemeTransparencyLabel"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeBlurStrengthSlider, AppStrings.Get("ThemeBlurStrengthLabel"));
         _loadingTheme = false;
-    }
-
-    private void UpdateMaterialPreviews(ThemeValues theme)
-    {
-        bool useEffects = _uiSettings.AdvancedEffectsEnabled;
-        _acrylicMaterialPreviewSurface.SetTheme(theme, ThemeMaterial.Acrylic, useEffects);
-        _glassMaterialPreviewSurface.SetTheme(theme, ThemeMaterial.Glass, useEffects);
-        _matteMaterialPreviewSurface.SetTheme(theme, ThemeMaterial.Matte, useEffects);
     }
 
     private async void ThemeSaveTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) =>
@@ -1434,13 +1524,17 @@ public sealed partial class ConsoleWindow : Window
             _host.UpdateGlobalTheme(
                 ThemeTarget.Settings,
                 _savedSettingsTheme.ColorArgb,
-                _savedSettingsTheme.Material,
-                _savedSettingsTheme.Transparency);
+                _savedSettingsTheme.Transparency,
+                _savedSettingsTheme.BlurStrength,
+                _savedSettingsTheme.SolidColorMode,
+                _savedSettingsTheme.SolidOpacity);
             _host.UpdateGlobalTheme(
                 ThemeTarget.Organizer,
                 _savedOrganizerTheme.ColorArgb,
-                _savedOrganizerTheme.Material,
-                _savedOrganizerTheme.Transparency);
+                _savedOrganizerTheme.Transparency,
+                _savedOrganizerTheme.BlurStrength,
+                _savedOrganizerTheme.SolidColorMode,
+                _savedOrganizerTheme.SolidOpacity);
             ShowError(AppStrings.Get("ThemeSaveErrorTitle"), ex.Message);
             return false;
         }

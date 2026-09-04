@@ -3,7 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:TuckPane.Controls">
-    <Grid x:Name="ConsoleRoot" Background="#01FFFFFF">
+    <Grid x:Name="ConsoleRoot" Background="Transparent">
         <Grid.Resources>
             <SolidColorBrush x:Key="ConsolePaneSurfaceBrush" Color="#18FFFFFF" />
             <SolidColorBrush x:Key="ConsolePageSurfaceBrush" Color="#0AFFFFFF" />
@@ -100,7 +100,7 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid
+        <SystemBackdropElement
             x:Name="ConsoleSurfaceHost"
             Grid.RowSpan="2"
             IsHitTestVisible="False" />
@@ -194,7 +194,7 @@
                 </NavigationViewItem>
             </NavigationView.MenuItems>
 
-            <Grid Padding="18,6,18,18" Background="{StaticResource ConsolePageSurfaceBrush}">
+            <Grid x:Name="SettingsContentRoot" Padding="18,6,18,18" Background="{StaticResource ConsolePageSurfaceBrush}">
                 <InfoBar x:Name="ConsoleInfoBar" Canvas.ZIndex="5" VerticalAlignment="Top" IsClosable="True" IsOpen="False" />
 
                 <ScrollViewer
@@ -273,6 +273,24 @@
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:NoteAlwaysOnTopTitle" Text="便签与待办永远处于最高层" />
                                 <ToggleSwitch x:Name="NoteAlwaysOnTopToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="NoteAlwaysOnTopToggle" Toggled="NoteAlwaysOnTopToggle_Toggled" />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GeneralRow}">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:EdgeGlowTitle" Text="显示边缘弧光" />
+                                <ToggleSwitch x:Name="EdgeGlowToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="EdgeGlowToggle" Toggled="EdgeGlowToggle_Toggled" />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GeneralRow}">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:OrganizerTextColorTitle" Text="收纳窗文字颜色" />
+                                <ComboBox x:Name="OrganizerTextColorCombo" Grid.Column="1" Width="140" Height="32" AutomationProperties.AutomationId="OrganizerTextColorCombo" SelectionChanged="OrganizerTextColorCombo_SelectionChanged">
+                                    <ComboBoxItem x:Name="OrganizerTextColorAuto" Tag="Auto" Content="自动" />
+                                    <ComboBoxItem x:Name="OrganizerTextColorWhite" Tag="White" Content="白色" />
+                                    <ComboBoxItem x:Name="OrganizerTextColorBlack" Tag="Black" Content="黑色" />
+                                </ComboBox>
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource GeneralRow}">
@@ -446,19 +464,31 @@
                                 <Button.Flyout><Flyout><ColorPicker x:Name="ThemeColorPicker" IsAlphaEnabled="False" IsAlphaSliderVisible="False" ColorChanged="ThemeColorPicker_ColorChanged" /></Flyout></Button.Flyout>
                             </Button>
                         </StackPanel>
-                        <TextBlock FontSize="15" FontWeight="SemiBold" Tag="loc:ThemeMaterialLabel" Text="材质" />
-                        <Grid Width="660" HorizontalAlignment="Left" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <ToggleButton x:Name="AcrylicMaterialCard" Height="108" Padding="10,8" Tag="Acrylic" Click="ThemeMaterialCard_Click" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"><StackPanel Spacing="8"><Border x:Name="AcrylicMaterialPreview" Height="56" Background="Transparent" CornerRadius="12" /><TextBlock Tag="loc:ThemeMaterialAcrylic" Text="亚克力" /></StackPanel></ToggleButton>
-                            <ToggleButton x:Name="GlassMaterialCard" Grid.Column="1" Height="108" Padding="10,8" Tag="Glass" Click="ThemeMaterialCard_Click" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"><StackPanel Spacing="8"><Border x:Name="GlassMaterialPreview" Height="56" Background="Transparent" CornerRadius="12" /><TextBlock Tag="loc:ThemeMaterialGlass" Text="玻璃" /></StackPanel></ToggleButton>
-                            <ToggleButton x:Name="MatteMaterialCard" Grid.Column="2" Height="108" Padding="10,8" Tag="Matte" Click="ThemeMaterialCard_Click" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"><StackPanel Spacing="8"><Border x:Name="MatteMaterialPreview" Height="56" Background="Transparent" CornerRadius="12" /><TextBlock Tag="loc:ThemeMaterialMatte" Text="磨砂" /></StackPanel></ToggleButton>
-                        </Grid>
-                        <TextBlock FontSize="15" FontWeight="SemiBold" Tag="loc:ThemeTransparencyLabel" Text="背景透明度" />
-                        <Grid Width="460" HorizontalAlignment="Left" ColumnSpacing="12">
+                        <TextBlock FontSize="15" FontWeight="SemiBold" Tag="loc:ThemeModeLabel" Text="背景模式" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ToggleButton x:Name="ThemeGlassModeButton" Width="110" Height="36" Tag="Glass" Click="ThemeModeButton_Click">
+                                <TextBlock Tag="loc:ThemeGlassMode" Text="玻璃模式" />
+                            </ToggleButton>
+                            <ToggleButton x:Name="ThemeSolidModeButton" Width="110" Height="36" Tag="Solid" Click="ThemeModeButton_Click">
+                                <TextBlock Tag="loc:ThemeSolidMode" Text="纯色模式" />
+                            </ToggleButton>
+                        </StackPanel>
+                        <StackPanel x:Name="ThemeTransparencyRow">
+                            <TextBlock FontSize="15" FontWeight="SemiBold" Tag="loc:ThemeTransparencyLabel" Text="背景不透明度" />
+                            <Grid Width="460" HorizontalAlignment="Left" ColumnSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="52" /></Grid.ColumnDefinitions>
-                            <controls:ConsoleSlider x:Name="ThemeTransparencySlider" Minimum="0" Maximum=".9" StepFrequency=".01" Value=".35" ValueChanged="ThemeTransparencySlider_ValueChanged" />
+                            <controls:ConsoleSlider x:Name="ThemeTransparencySlider" Minimum="0" Maximum="1" StepFrequency=".01" Value=".35" ValueChanged="ThemeTransparencySlider_ValueChanged" />
                             <TextBlock x:Name="ThemeTransparencyValue" Grid.Column="1" VerticalAlignment="Center" TextAlignment="Right" Text="35%" />
-                        </Grid>
+                            </Grid>
+                        </StackPanel>
+                        <StackPanel x:Name="ThemeBlurStrengthRow">
+                            <TextBlock FontSize="15" FontWeight="SemiBold" Tag="loc:ThemeBlurStrengthLabel" Text="模糊强度" />
+                            <Grid Width="460" HorizontalAlignment="Left" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="52" /></Grid.ColumnDefinitions>
+                            <controls:ConsoleSlider x:Name="ThemeBlurStrengthSlider" Minimum=".05" Maximum="2" StepFrequency=".05" Value="1" ValueChanged="ThemeBlurStrengthSlider_ValueChanged" />
+                            <TextBlock x:Name="ThemeBlurStrengthValue" Grid.Column="1" VerticalAlignment="Center" TextAlignment="Right" Text="100%" />
+                            </Grid>
+                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
 
@@ -524,6 +554,12 @@
                         </Border>
                     </Grid>
                 </Grid>
+                <Grid
+                    x:Name="SettingsEdgeOverlay"
+                    Background="Transparent"
+                    Canvas.ZIndex="100"
+                    IsHitTestVisible="False"
+                    Margin="-18,-6,-18,-18" />
             </Grid>
         </NavigationView>
     </Grid>

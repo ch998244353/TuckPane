@@ -19,6 +19,12 @@
   <data name="StartupTitle" xml:space="preserve"><value>Start TuckPane with Windows</value></data>
   <data name="CollapseOutsideTitle" xml:space="preserve"><value>Collapse when clicking outside</value></data>
   <data name="NoteAlwaysOnTopTitle" xml:space="preserve"><value>Keep notes and to-dos always on top</value></data>
+  <data name="EdgeGlowTitle" xml:space="preserve"><value>Show edge glow</value></data>
+  <data name="OrganizerTextColorTitle" xml:space="preserve"><value>Organizer text color</value></data>
+  <data name="OrganizerTextColorAuto" xml:space="preserve"><value>Automatic</value></data>
+  <data name="OrganizerTextColorWhite" xml:space="preserve"><value>White</value></data>
+  <data name="OrganizerTextColorBlack" xml:space="preserve"><value>Black</value></data>
+  <data name="OrganizerTextColorErrorTitle" xml:space="preserve"><value>Could not save organizer text color</value></data>
   <data name="WindowAlignmentTitle" xml:space="preserve"><value>Align windows while dragging</value></data>
   <data name="RememberExpandedOrganizerPositionTitle" xml:space="preserve"><value>Remember expanded organizer positions</value></data>
   <data name="UniformFloatingCompactScaleTitle" xml:space="preserve"><value>Use one floating entry size</value></data>
@@ -44,13 +50,13 @@
   <data name="ThemeTargetSettings" xml:space="preserve"><value>Settings</value></data>
   <data name="ThemeTargetOrganizer" xml:space="preserve"><value>Organizers</value></data>
   <data name="ThemeColorLabel" xml:space="preserve"><value>Color</value></data>
+  <data name="ThemeModeLabel" xml:space="preserve"><value>Background mode</value></data>
+  <data name="ThemeGlassMode" xml:space="preserve"><value>Glass mode</value></data>
+  <data name="ThemeSolidMode" xml:space="preserve"><value>Solid colour</value></data>
   <data name="ThemeColorPresetFormat" xml:space="preserve"><value>Theme color {0}</value></data>
   <data name="ThemeCustomColor" xml:space="preserve"><value>Custom</value></data>
-  <data name="ThemeMaterialLabel" xml:space="preserve"><value>Material</value></data>
-  <data name="ThemeMaterialAcrylic" xml:space="preserve"><value>Acrylic</value></data>
-  <data name="ThemeMaterialGlass" xml:space="preserve"><value>Glass</value></data>
-  <data name="ThemeMaterialMatte" xml:space="preserve"><value>Matte</value></data>
-  <data name="ThemeTransparencyLabel" xml:space="preserve"><value>Background transparency</value></data>
+  <data name="ThemeTransparencyLabel" xml:space="preserve"><value>Background opacity</value></data>
+  <data name="ThemeBlurStrengthLabel" xml:space="preserve"><value>Blur strength</value></data>
   <data name="ThemeSaveErrorTitle" xml:space="preserve"><value>Couldn't save theme</value></data>
   <data name="AddTitle" xml:space="preserve"><value>Add organizer</value></data>
   <data name="NameLabel" xml:space="preserve"><value>Name</value></data>
@@ -123,9 +129,14 @@
   <data name="StationEdgeOccupiedError" xml:space="preserve"><value>A station already uses this screen edge. Choose another edge.</value></data>
   <data name="StationDuplicateError" xml:space="preserve"><value>Stations cannot be duplicated.</value></data>
   <data name="StationManageModeError" xml:space="preserve"><value>Station mode cannot be changed to or from Floating or Positioned mode.</value></data>
-  <data name="StationContainsOrganizersError" xml:space="preserve"><value>This Station still contains organizers. Drag them out before deleting it.</value></data>
-  <data name="ContainedOrganizerNoGridError" xml:space="preserve"><value>No desktop grid position is available on the target display. The organizer was returned to its Station.</value></data>
-  <data name="OrganizerStationDropError" xml:space="preserve"><value>Could not place the organizer in the Station: {0}</value></data>
+  <data name="OrganizerContainerDropError" xml:space="preserve"><value>Could not place the organizer in the target organizer: {0}</value></data>
+  <data name="OrganizerContainmentSelfError" xml:space="preserve"><value>An organizer cannot be placed inside itself.</value></data>
+  <data name="OrganizerContainmentStationSourceError" xml:space="preserve"><value>A Station cannot be placed inside another organizer.</value></data>
+  <data name="OrganizerContainmentSourceHasChildrenError" xml:space="preserve"><value>An organizer that already contains organizers cannot be placed inside another organizer.</value></data>
+  <data name="OrganizerContainmentTargetContainedError" xml:space="preserve"><value>A contained organizer cannot contain another organizer. Move it back to the Desktop first.</value></data>
+  <data name="OrganizerContainmentMissingError" xml:space="preserve"><value>The source or target organizer no longer exists.</value></data>
+  <data name="OrganizerReleaseNoGridError" xml:space="preserve"><value>There are not enough Desktop grid positions to release the contained positioned organizers. The organizer was not deleted.</value></data>
+  <data name="ContainedOrganizerNoGridError" xml:space="preserve"><value>No desktop grid position is available on the target display. The organizer was returned to its original container.</value></data>
   <data name="MoveOrganizerFilesOnDeleteTitle" xml:space="preserve"><value>Move organizer files to Desktop when deleting</value></data>
   <data name="DeleteBehaviorErrorTitle" xml:space="preserve"><value>Could not save delete setting</value></data>
   <data name="CompactNameScaleTitle" xml:space="preserve"><value>Collapsed name size</value></data>
@@ -215,6 +226,7 @@
   <data name="LanguageErrorTitle" xml:space="preserve"><value>Could not change language</value></data>
   <data name="CollapseOutsideErrorTitle" xml:space="preserve"><value>Could not update automatic collapse</value></data>
   <data name="NoteAlwaysOnTopErrorTitle" xml:space="preserve"><value>Could not update note and to-do always-on-top</value></data>
+  <data name="EdgeGlowErrorTitle" xml:space="preserve"><value>Could not update edge glow</value></data>
   <data name="WindowAlignmentErrorTitle" xml:space="preserve"><value>Could not update window alignment</value></data>
   <data name="RememberExpandedOrganizerPositionErrorTitle" xml:space="preserve"><value>Could not save expanded organizer position setting</value></data>
   <data name="ExpandOnHoverErrorTitle" xml:space="preserve"><value>Could not update hover expansion</value></data>

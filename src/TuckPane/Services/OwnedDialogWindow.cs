@@ -16,6 +16,7 @@ internal sealed class OwnedDialogWindow : Window
     private readonly IntPtr _owner;
     private readonly AppHost _host;
     private readonly Grid _root;
+    private readonly ThemeBackdrop _backdrop = new();
     private readonly ThemeSurface _surface;
     private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private readonly Button _primaryButton;
@@ -43,7 +44,7 @@ internal sealed class OwnedDialogWindow : Window
         };
         _root.KeyDown += Root_KeyDown;
 
-        var surfaceHost = new Grid { IsHitTestVisible = false };
+        var surfaceHost = new SystemBackdropElement { IsHitTestVisible = false };
         var content = new Grid
         {
             Padding = new Thickness(24, 20, 24, 20),
@@ -77,10 +78,11 @@ internal sealed class OwnedDialogWindow : Window
         Grid.SetRow(actions, 1);
         content.Children.Add(actions);
         Content = _root;
-        SystemBackdrop = new TransparentTintBackdrop(Colors.Transparent);
+        IntPtr hwnd = WindowNative.GetWindowHandle(this);
+        SystemBackdrop = new TransparentWindowBackdrop();
+        surfaceHost.SystemBackdrop = _backdrop;
         _surface = new ThemeSurface(surfaceHost);
 
-        IntPtr hwnd = WindowNative.GetWindowHandle(this);
         AppWindow appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
         appWindow.IsShownInSwitchers = false;
         if (appWindow.Presenter is OverlappedPresenter presenter)
@@ -233,7 +235,9 @@ internal sealed class OwnedDialogWindow : Window
     {
         ThemeValues theme = _host.State.GlobalSettings.GetTheme(ThemeTarget.Organizer);
         _root.RequestedTheme = ThemePalette.IsDark(theme) ? ElementTheme.Dark : ElementTheme.Light;
-        _surface.SetTheme(theme, _uiSettings.AdvancedEffectsEnabled);
+        bool useEffects = _uiSettings.AdvancedEffectsEnabled;
+        _backdrop.SetTheme(theme, useEffects);
+        _surface.SetTheme(theme, useEffects);
     }
 
     private void Host_ThemeChanged(object? sender, EventArgs e) => ApplyTheme();

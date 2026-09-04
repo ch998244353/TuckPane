@@ -7,6 +7,7 @@ public sealed class DesktopLayerService : IDisposable
     private readonly IntPtr _expandedOwner;
     private readonly NativeMethods.SubclassProc _activationGuard;
     private static readonly UIntPtr ActivationSubclassId = new(0x47464C59UL);
+    private static IntPtr _lastKnownDesktopIconView;
     private IntPtr _desktopIconView;
     private bool _allowActivation;
     private bool _expanded;
@@ -19,17 +20,11 @@ public sealed class DesktopLayerService : IDisposable
         _activationGuard = ActivationGuard;
         ApplyToolWindowStyle();
         _ = NativeMethods.SetWindowSubclass(_window, _activationGuard, ActivationSubclassId, IntPtr.Zero);
-        if (NativeMethods.SupportsWindows11DwmAttributes)
-        {
-            int corner = NativeMethods.DWMWCP_DONOTROUND;
-            _ = NativeMethods.DwmSetWindowAttribute(window, NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE, ref corner, sizeof(int));
-            int border = NativeMethods.DWMWA_COLOR_NONE;
-            _ = NativeMethods.DwmSetWindowAttribute(window, NativeMethods.DWMWA_BORDER_COLOR, ref border, sizeof(int));
-        }
-        Reattach();
+        ApplyTransparentChrome();
+        Reattach(showWindow: false);
     }
 
-    public void Reattach()
+    public void Reattach(bool showWindow = false)
     {
         if (_expanded)
         {
@@ -46,7 +41,7 @@ public sealed class DesktopLayerService : IDisposable
                 0,
                 0,
                 NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
-                NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER);
+                (showWindow ? NativeMethods.SWP_SHOWWINDOW : 0) | NativeMethods.SWP_NOOWNERZORDER);
             return;
         }
 
@@ -63,8 +58,9 @@ public sealed class DesktopLayerService : IDisposable
         }
 
         uint flags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE |
-            NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOOWNERZORDER;
+            NativeMethods.SWP_NOOWNERZORDER;
         if (!ownerChanged) flags |= NativeMethods.SWP_NOZORDER;
+        if (showWindow) flags |= NativeMethods.SWP_SHOWWINDOW;
         _ = NativeMethods.SetWindowPos(
             _window,
             NativeMethods.HWND_BOTTOM,
@@ -75,7 +71,7 @@ public sealed class DesktopLayerService : IDisposable
             flags);
     }
 
-    public void SetExpanded(bool expanded, bool stayTopmost = false)
+    public void SetExpanded(bool expanded, bool stayTopmost = false, bool showWindow = false)
     {
         if (!expanded && _stayTopmost)
         {
@@ -92,13 +88,13 @@ public sealed class DesktopLayerService : IDisposable
 
         _expanded = expanded;
         _stayTopmost = expanded && stayTopmost;
-        Reattach();
+        Reattach(showWindow);
         if (expanded && !stayTopmost) RaiseAboveNormalWindows();
     }
 
     public void BringAboveDesktopPeers()
     {
-        Reattach();
+        Reattach(showWindow: true);
         _ = NativeMethods.SetWindowPos(
             _window,
             NativeMethods.HWND_TOP,
@@ -217,6 +213,27 @@ public sealed class DesktopLayerService : IDisposable
         _ = NativeMethods.SetWindowPos(_window, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
     }
 
+    private void ApplyTransparentChrome()
+    {
+        if (!NativeMethods.SupportsWindows11DwmAttributes ||
+            _window == IntPtr.Zero ||
+            !NativeMethods.IsWindow(_window))
+            return;
+
+        int corner = NativeMethods.DWMWCP_DONOTROUND;
+        _ = NativeMethods.DwmSetWindowAttribute(
+            _window,
+            NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE,
+            ref corner,
+            sizeof(int));
+        int border = NativeMethods.DWMWA_COLOR_NONE;
+        _ = NativeMethods.DwmSetWindowAttribute(
+            _window,
+            NativeMethods.DWMWA_BORDER_COLOR,
+            ref border,
+            sizeof(int));
+    }
+
     private IntPtr ActivationGuard(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam, UIntPtr subclassId, IntPtr referenceData)
     {
         if (message == NativeMethods.WM_MOUSEACTIVATE && !_allowActivation)
@@ -230,10 +247,18 @@ public sealed class DesktopLayerService : IDisposable
             System.Runtime.InteropServices.Marshal.StructureToPtr(info, lParam, fDeleteOld: false);
             return IntPtr.Zero;
         }
-        return NativeMethods.DefSubclassProc(hWnd, message, wParam, lParam);
+        IntPtr result = NativeMethods.DefSubclassProc(hWnd, message, wParam, lParam);
+        if (message is NativeMethods.WM_NCACTIVATE or
+            NativeMethods.WM_THEMECHANGED or
+            NativeMethods.WM_DWMCOMPOSITIONCHANGED or
+            NativeMethods.WM_SETTINGCHANGE)
+        {
+            ApplyTransparentChrome();
+        }
+        return result;
     }
 
-    internal static IntPtr FindDesktopIconView()
+    internal static IntPtr FindDesktopIconView(bool allowWorkerSpawn = true)
     {
         IntPtr found = IntPtr.Zero;
         NativeMethods.EnumWindows((window, _) =>
@@ -250,8 +275,11 @@ public sealed class DesktopLayerService : IDisposable
 
         if (found != IntPtr.Zero)
         {
+            Volatile.Write(ref _lastKnownDesktopIconView, found);
             return found;
         }
+
+        if (!allowWorkerSpawn) return IntPtr.Zero;
 
         IntPtr progman = NativeMethods.FindWindow("Progman", null);
         if (progman != IntPtr.Zero)
@@ -259,7 +287,14 @@ public sealed class DesktopLayerService : IDisposable
             _ = NativeMethods.SendMessageTimeout(progman, SpawnWorkerMessage, UIntPtr.Zero, IntPtr.Zero, 0, 1000, out _);
             found = NativeMethods.FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
         }
+        if (found != IntPtr.Zero) Volatile.Write(ref _lastKnownDesktopIconView, found);
         return found;
+    }
+
+    internal static IntPtr GetCachedDesktopIconView()
+    {
+        IntPtr cached = Volatile.Read(ref _lastKnownDesktopIconView);
+        return cached != IntPtr.Zero && NativeMethods.IsWindow(cached) ? cached : IntPtr.Zero;
     }
 
     internal static bool IsDesktopHostClassName(string? className) =>

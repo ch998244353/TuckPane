@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '3.0.1'
+    [string]$Version = '3.0.2'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -109,7 +109,9 @@ if ($fileVersion.FileVersion -ne "$Version.0" -or $fileVersion.ProductName -ne '
 
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $publishRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD-PARTY-NOTICES.md') -Destination $publishRoot
-Copy-Item -LiteralPath (Join-Path $projectRoot 'licenses') -Destination $publishRoot -Recurse
+$publishLicenses = Join-Path $publishRoot 'licenses'
+New-Item -ItemType Directory -Path $publishLicenses -Force | Out-Null
+Copy-Item -Path (Join-Path $projectRoot 'licenses\*') -Destination $publishLicenses -Recurse -Force
 
 $portableLauncher = Join-Path $publishRoot '00-启动 TuckPane.exe'
 Copy-Item -LiteralPath (Join-Path $publishRoot 'TuckPane.exe') -Destination $portableLauncher

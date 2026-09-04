@@ -10,7 +10,10 @@ public sealed record DropValidationResult(bool IsValid, IReadOnlyList<string> Er
 
 public static class DropValidator
 {
-    public static DropValidationResult ValidateBatch(IEnumerable<string> sourcePaths, string itemsRoot)
+    public static DropValidationResult ValidateBatch(
+        IEnumerable<string> sourcePaths,
+        string itemsRoot,
+        CancellationToken cancellationToken = default)
     {
         string normalizedRoot = Path.GetFullPath(itemsRoot).TrimEnd(Path.DirectorySeparatorChar);
         string[] paths = sourcePaths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -23,6 +26,7 @@ public static class DropValidator
 
         foreach (string source in paths)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string fullPath;
             try
             {
@@ -59,7 +63,7 @@ public static class DropValidator
                 continue;
             }
 
-            if (isDirectory && !TryValidateTree(fullPath, out string? treeError))
+            if (isDirectory && !TryValidateTree(fullPath, cancellationToken, out string? treeError))
             {
                 errors.Add(treeError!);
                 continue;
@@ -124,20 +128,34 @@ public static class DropValidator
 
     public static bool IsExecutable(string path) => File.Exists(path) && Path.GetExtension(path).ToLowerInvariant() is ".exe" or ".com" or ".scr";
 
-    private static bool TryValidateTree(string root, out string? error)
+    private static bool TryValidateTree(string root, CancellationToken cancellationToken, out string? error)
     {
         try
         {
-            foreach (string entry in Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories))
+            var pending = new Stack<string>();
+            pending.Push(root);
+            while (pending.Count > 0)
             {
-                if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0)
+                cancellationToken.ThrowIfCancellationRequested();
+                string directory = pending.Pop();
+                foreach (string entry in Directory.EnumerateFileSystemEntries(directory))
                 {
-                    error = AppStrings.Format("DirectoryReparseFormat", Path.GetFileName(entry));
-                    return false;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    FileAttributes attributes = File.GetAttributes(entry);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    {
+                        error = AppStrings.Format("DirectoryReparseFormat", Path.GetFileName(entry));
+                        return false;
+                    }
+                    if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
                 }
             }
             error = null;
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {

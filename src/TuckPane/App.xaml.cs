@@ -78,6 +78,9 @@ public partial class App : Application
         UnhandledException += (_, args) =>
         {
             AppLogger.Error("Unhandled UI exception", args.Exception);
+            // Keep recoverable async-void/UI callback failures from terminating
+            // the process. Native fail-fast crashes are still handled by WER.
+            args.Handled = true;
         };
         if (Program.PrimaryInstance is not null) Program.PrimaryInstance.Activated += AppInstance_Activated;
     }
@@ -111,12 +114,19 @@ public partial class App : Application
     {
         _ = _dispatcher.TryEnqueue(async () =>
         {
-            if (!_hostReady)
+            try
             {
-                _pendingActivations.Enqueue(args);
-                return;
+                if (!_hostReady)
+                {
+                    _pendingActivations.Enqueue(args);
+                    return;
+                }
+                await HandleActivationAsync(args);
             }
-            await HandleActivationAsync(args);
+            catch (Exception ex)
+            {
+                AppLogger.Error("处理应用激活失败。", ex);
+            }
         });
     }
 

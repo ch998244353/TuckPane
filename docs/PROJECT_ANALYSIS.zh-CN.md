@@ -60,13 +60,13 @@ Windows App SDK `AppInstance` 在创建 XAML 窗口前完成当前版本的实�
 
 三种模式的差异集中在窗口放置、折叠/展开和可见性状态机。文件目录、项目刷新、拖入、拖出、排序和跨窗口传输共用同一套实现。因此拖放缺陷应优先修复共享链路，而不是分别在三种模式增加分支。
 
-`Floating/Positioned` 收起入口可作为引用收纳进 `Station`，但模式、保存位置、入口缩放和真实目录不变；`Station` 及其他目标模式不能被收纳，也不能充当接收容器。被收纳窗口不显示桌面入口、不占用 Positioned 桌面网格，创建和复制不会继承容器关系。单击 Station 内的收纳窗元素会以元素屏幕矩形为锚点临时展开原窗口；父 Station 保持展开并位于后方，子窗收起后重新隐藏。互斥展开按父子组合处理，切换到无关窗口时按子窗再父 Station 的顺序收敛。
+`Floating/Positioned` 收起入口可作为引用放入任一未被收纳的根收纳窗，包括普通收纳窗和 `Station`；来源的模式、保存位置、入口缩放与真实目录均不改变。关系严格限制为单层：`Station` 不能作为来源，内部已有直接子窗的来源不能再被收纳，已被收纳的目标也不能继续接收子窗，自引用与悬空引用同样拒绝；已被收纳的叶子窗仍可在不同根容器之间移动。被收纳窗口不显示桌面入口、不占用 Positioned 桌面网格，创建和复制不会继承容器关系。单击任一容器内的收纳窗元素会以元素屏幕矩形为锚点临时展开原窗口；父容器保持展开并位于后方，子窗收起后重新隐藏。互斥展开按直接父子组合处理，切换到无关窗口时按子窗再父容器的顺序收敛。
 
 管理页只允许 `Floating ↔ Positioned`；`Station` 与两者之间的选项直接禁用，`AppHost.ApplyOrganizerRuntime` 仍通过共享模式矩阵拦截其他调用入口。添加页不受此限制，仍可新建 Station。
 
-收纳窗拖动统一经过 `MainWindow.BeginWidgetPress -> CommitWidgetDrag -> FinishCompactPressAsync`。只有“`GlobalSettings.WindowAlignmentEnabled` 开启 + `Floating` + 收起且未处于动画 + 指针不在 Station 有效投放区”进入 `WindowAlignmentMath`：窗口中心继续决定跨屏归属，X/Y 各自在 12 DIP 内吸附并保持到偏离 20 DIP。屏幕只对齐当前工作区左、右、上、下四边；窗口之间只比较同屏、可见、收起且未处于动画的 `Floating` 收纳窗 `CompactThumbnailHost` 白色圆角外框，并只允许左对左、右对右、上对上、下对下。窗口尺寸、名称区域和另一轴距离不影响同名边对齐，不提供屏幕/窗口中心线或异名相邻边吸附。候选同距时依次优先屏幕、目标收纳窗 ID、左/上边。`Positioned`、`Station`、展开态和便签不进入此分支，也不作为目标。
+收纳窗拖动统一经过 `MainWindow.BeginWidgetPress -> CommitWidgetDrag -> FinishCompactPressAsync`。只有“`GlobalSettings.WindowAlignmentEnabled` 开启 + `Floating` + 收起且未处于动画 + 指针不在任一收纳窗的有效投放区”进入 `WindowAlignmentMath`：窗口中心继续决定跨屏归属，X/Y 各自在 12 DIP 内吸附并保持到偏离 20 DIP。屏幕只对齐当前工作区左、右、上、下四边；窗口之间只比较同屏、可见、收起且未处于动画的 `Floating` 收纳窗 `CompactThumbnailHost` 白色圆角外框，并只允许左对左、右对右、上对上、下对下。窗口尺寸、名称区域和另一轴距离不影响同名边对齐，不提供屏幕/窗口中心线或异名相邻边吸附。候选同距时依次优先屏幕、目标收纳窗 ID、左/上边。`Positioned`、`Station`、展开态和便签不进入此分支，也不作为目标。
 
-吸附输入由 `CompactThumbnailHost` 相对 `WindowRoot` 的实际布局、XAML RasterizationScale 和客户区屏幕原点共同换算；开始拖动时缓存白框与 HWND 外框偏移，最终仍只执行一次 `SetWindowPos`。其他窗口候选、工作区限制和保存/恢复位置使用同一白框矩形，因此不同紧凑缩放或名称缩放不会改变对齐边。白框尚未完成布局时本次不进入吸附，不使用整个窗口外框冒充白框。显示器、12/20 DIP 阈值和 1 DIP 指示线都按移动窗当前 DPI 换算。命中时最多创建两个由移动窗拥有的原生局部线窗，使用系统强调色并保持 click-through、no-activate、非 topmost；进入 Station 有效投放内容区会立即清空吸附状态并隐藏指示线，离开后重新计算；无命中、松手、取消、捕获丢失、跨屏、关闭窗口或关闭设置时同样立即隐藏。
+吸附输入由 `CompactThumbnailHost` 相对 `WindowRoot` 的实际布局、XAML RasterizationScale 和客户区屏幕原点共同换算；开始拖动时缓存白框与 HWND 外框偏移，最终仍只执行一次 `SetWindowPos`。其他窗口候选、工作区限制和保存/恢复位置使用同一白框矩形，因此不同紧凑缩放或名称缩放不会改变对齐边。白框尚未完成布局时本次不进入吸附，不使用整个窗口外框冒充白框。显示器、12/20 DIP 阈值和 1 DIP 指示线都按移动窗当前 DPI 换算。命中时最多创建两个由移动窗拥有的原生局部线窗，使用系统强调色并保持 click-through、no-activate、非 topmost；进入任一根收纳窗的有效投放内容区会立即清空吸附状态并隐藏指示线，离开后重新计算；无命中、松手、取消、捕获丢失、跨屏、关闭窗口或关闭设置时同样立即隐藏。
 
 `GlobalSettings.ExclusiveExpansion` 默认开启并统一约束三种模式：展开新窗口时折叠上一个窗口；关闭后允许多个窗口持续展开；重新开启时立即保留最近操作的窗口并折叠其余窗口。跨窗口 Shell 拖动期间，正在导出的源窗暂不参与折叠，拖动结束后再恢复互斥。
 
@@ -74,20 +74,26 @@ Windows App SDK `AppInstance` 在创建 XAML 窗口前完成当前版本的实�
 
 `GlobalSettings.PerformanceProfile` 以手动持久化的节能、平衡、高性能三档统一后台策略：指针轮询分别为 100/50/25ms，桌面层修复分别为 8/4/2s；缺失或非法值归一为平衡且不提升 Schema 9。普通窗口仅在启用悬浮展开，或已展开且启用离开收缩时运行指针轮询；Station 仅在逻辑可见时运行，其 25/50/100ms 热路径复用显示器缓存，由初始化、模式变化和桌面修复轮询刷新。节能档禁用自定义动画，平衡和高性能保留现有效果，Windows 辅助功能关闭动画始终优先。
 
-Station 展开时先用不改变 owner Z 序的 `ApplyBounds` 完成最终窗口边界与显示，再由 `DesktopLayerService.SetExpanded(..., stayTopmost: true)` 脱离桌面 owner 并仅把自身设为 `WS_EX_TOPMOST`；`WS_EX_NOACTIVATE` 保持不变，因此覆盖普通同完整性级别应用但不抢键盘焦点。收缩完成后 `SetExpanded(false)` 先解除 topmost，再隐藏并恢复折叠状态。普通 `Floating/Positioned` 窗口仍只做一次非持续置顶的抬升，不改变其层级契约。
+Station 展开时先由 `DesktopLayerService.SetExpanded(..., stayTopmost: true)` 脱离桌面 owner、设置自身 `WS_EX_TOPMOST`/`WS_EX_NOACTIVATE`，再由 `ApplyBounds` 移动并显示自身；owner 切换不携带 `SWP_SHOWWINDOW`。收缩完成后先隐藏、解除 topmost，再恢复桌面 owner，恢复路径同样不显示窗口。普通 `Floating/Positioned` 窗口仍只做一次非持续置顶的抬升，不改变其层级契约。
 
 通用窗口边界更新和紧凑窗口重新附着 Explorer 桌面层都使用 `SWP_NOOWNERZORDER`；owner 未变化的周期修复再加 `SWP_NOZORDER`，避免单个窗口的几何/层级修复改变桌面 owner 组并把其他收纳窗带到全屏应用之上。Station 展开只抬升自身；其他普通/定位收纳窗继续留在桌面层。Station 的展开安全区由整条物理边缘热区、热区到展开窗之间的连接区和展开窗口组成；指针离开这三者后才开始原有 400ms 收缩计时。
 
-`Floating/Positioned` 展开后在玻璃面板外的 56 DIP 透明顶部带居中显示只读收纳窗名称，固定白色、单行超长省略。总控台“设置 → 通用”提供始终生效的“收起名称大小”和“展开后名称大小”两条 60%–100% 全局比例，统一作用于 Floating/Positioned；旧定位比例、统一开关和每窗 `NameScale` 仅保留状态兼容，不再参与渲染。展开标题字号为 `42 × 全局展开比例`；Station 的标题带高度为 0 且不显示顶部名称。展开外框高度包含标题带，网格、手动画布与内容缩放始终以“面板高度 = HWND 高度 - 标题带高度”计算，并在当前显示器工作区内收敛。普通/定位窗口展开完成后由同一个 28 DIP 内侧命中带处理四边、四角 resize 光标、原生命中和按下起始；Station 仍不进入手动 resize。普通/定位窗口始终收缩回展开前保存的紧凑位置，移动展开窗口不会改写该紧凑位置；开启“记住收纳窗展开位置”后，两种模式共用每窗唯一的 `ExpandedPosition`，被 Station 收纳不会禁用或分叉这份位置，移动/缩放后会在重新展开、重启、移出或换站后继续使用；Station 自身仍只使用边缘锚点。
+`Floating/Positioned` 展开后在玻璃面板外的 56 DIP 透明顶部带居中显示只读收纳窗名称，固定白色、单行超长省略。总控台“设置 → 通用”提供始终生效的“收起名称大小”和“展开后名称大小”两条 60%–100% 全局比例，统一作用于 Floating/Positioned；旧定位比例、统一开关和每窗 `NameScale` 仅保留状态兼容，不再参与渲染。展开标题字号为 `42 × 全局展开比例`；Station 的标题带高度为 0 且不显示顶部名称。展开外框高度包含标题带，网格、手动画布与内容缩放始终以“面板高度 = HWND 高度 - 标题带高度”计算，并在当前显示器工作区内收敛。普通/定位窗口展开完成后由同一个 28 DIP 内侧命中带处理四边、四角 resize 光标、原生命中和按下起始；Station 仍不进入手动 resize。普通/定位窗口始终收缩回展开前保存的紧凑位置，移动展开窗口不会改写该紧凑位置；开启“记住收纳窗展开位置”后，两种模式共用每窗唯一的 `ExpandedPosition`，被其他收纳窗收纳不会禁用或分叉这份位置，移动/缩放后会在重新展开、重启、移出或换容器后继续使用；Station 自身仍只使用边缘锚点。
 
-精简列表的 `CompactListItemScale` 每窗独立保存，默认 100%、范围 50%–165%；展开精简列表左右使用 12 DIP 内容边距，普通图标模式保持 28 DIP，Station 同样为 12 DIP。展开精简列表中的 `Ctrl + 滚轮` 每格调整 5%，统一作用于行高、图标、字号、内边距和行距但不改变外框；普通滚轮继续滚动。图标模式继续只使用 `ItemScale`，两者互不覆盖。
+精简列表的 `CompactListItemScale` 每窗独立保存，默认 100%、范围 50%–165%；展开精简列表左右使用 12 DIP 内容边距，普通图标模式保持 28 DIP，Station 同样为 12 DIP。图标和精简模式普通滚轮均按当前行距进入约 160ms 可中断平滑滚动，支持余量累计、目标合并和硬边界；`Ctrl + 滚轮` 每格调整 5%，只改变对应模式比例，两者互不覆盖。
 
-收起预览、展开窗、总控设置和应用对话框共用 `ThemeSurface`。`GlobalSettings` 分别持久化“设置界面”和“收纳窗”两套颜色、`ThemeMaterial` 与背景透明度；`ConsoleWindow` 及其所有者链使用设置主题，`MainWindow` 与由它打开的 `OwnedDialogWindow` 使用收纳主题，所有收纳窗共享同一套收纳主题。收纳窗重命名复用独立 HWND 的 `OwnedDialogWindow`：按当前收纳窗所在屏幕居中、以原 HWND 为 owner、禁用原窗直至关闭，并保持 tool-window/no-taskbar；因此不再受展开 XAML 根边界裁切。确认新名称后进入 `ApplyOrganizerRuntime(Name)`，立即刷新当前窗和所属 Station 的 organizer 投影，再刷新总控台并保存状态。单一 `AppHost.ThemeChanged` 仍让全部已打开外壳重读自己所属的主题；便签继续使用独立的 `NoteTheme`。主题页“修改目标”每次进入默认收纳窗，选择不持久化；切换目标只重读对应控件，不复制主题。背景透明度为 0% 时三种材质的最终色层统一为 100% 不透明；大于 0% 时继续使用各材质的缩放参数。亚克力主体使用 35% 主题色与 65% 白色混合，玻璃和磨砂仍直接使用主题色。总控台通用、添加和管理页的选项行在浅色主题叠加约 9% 黑色、深色主题叠加约 7% 白色，管理页外层大卡保持原层级，输入框略亮。收纳窗紧凑和展开名称固定白色，其他文字、图标和按钮前景仍按 WCAG 相对亮度在黑白之间自动选择。三种材质分别使用固定的模糊/噪点/亮度参数；系统关闭透明效果、Composition 不可用或 GPU 效果创建失败时回退为同色不透明背景。
+收起预览、展开窗、总控设置和应用对话框按所属主题挂载局部 `SystemBackdropElement`，由它承载 `ThemeBackdrop` 作为面板的最终背景。`ThemeBackdrop` 负责桌面采样、所选颜色分支、固定 Glass 光学处理、不透明度合成以及可选的桌面分支模糊；`ThemeSurface` 只负责按当前可见效果缩放的内部玻璃高光和圆角裁剪，不再绘制主背景、HostBackdrop、噪点或边缘。`MainWindow` 的收起缩略图和展开内容面板，以及总控设置 `NavigationView` 的右侧页面内容根，分别通过独立的 `ThemeEdgeSurface` overlay 绘制固定中性双层结构边缘；标题栏、左侧导航栏和应用对话框不接入。圆角、位移、缩放、不透明度和 Station clip 随所在 XAML 视觉树生效。窗口级 `SystemBackdrop` 保持透明，因此大 HWND 的留白和名称区域不承载矩形背景。
+
+`GlobalSettings` 分别持久化“设置界面”和“收纳窗”两套颜色、玻璃背景不透明度、0%–200% 模糊强度和独立纯色模式；为兼容现有 JSON，磁盘字段仍名为 `ThemeTransparency` / `SettingsThemeTransparency`。纯色模式只使用完整主题色并隐藏透明度和模糊设置，关闭后恢复该目标原有玻璃参数。两套主题不显示或保存旧材质选择。`ConsoleWindow` 使用设置主题，`MainWindow` 与由它打开的 `OwnedDialogWindow` 使用收纳主题，所有收纳窗共享同一套收纳主题。收纳窗重命名复用独立 HWND 的 `OwnedDialogWindow`：按当前收纳窗所在屏幕居中、以原 HWND 为 owner、禁用原窗直至关闭，并保持 tool-window/no-taskbar；因此不再受展开 XAML 根边界裁切。确认新名称后进入 `ApplyOrganizerRuntime(Name)`，立即刷新当前窗和所属容器收纳窗的 organizer 投影，再刷新总控台并保存状态。单一 `AppHost.ThemeChanged` 仍让全部已打开外壳重读自己所属的主题；便签继续使用独立的 `NoteTheme`。主题页“修改目标”每次进入默认收纳窗，选择不持久化；切换目标只重读对应控件，不复制主题。
+
+玻璃主题把保存值解释为背景不透明度 `o = clamp(value, 0, .99)`，模糊强度为 `b = clamp(blurStrength, 0, 2)`。`o=0` 完全透明；`0<o<=.99, b=0` 使用 alpha 为 `o` 的清晰主题色画刷。仅 `0<o<=.99, b>0` 创建 Glass：桌面分支使用 `10×b` GaussianBlur，饱和度从 1 过渡到 2、明度从 0 过渡到 0.06，后二者在 `b=1` 封顶；内部淡高光为 `4×o×(1-o)×min(b,1)`。独立纯色模式始终输出完整主题色，并旁路 HostBackdrop、GaussianBlur、调色和高光。
+
+总控台通用、添加和管理页的选项行在浅色主题叠加约 9% 黑色、深色主题叠加约 7% 白色，管理页外层大卡保持原层级，输入框略亮。收纳窗紧凑名称、展开标题和项目名称统一使用全局白色/黑色设置，设置窗口内其他文字、图标和按钮前景仍按 WCAG 相对亮度在黑白之间自动选择。设置页只保留颜色、不透明度和模糊度，不再提供材质区域或预览。系统关闭透明效果、DWM opt-in 失败或 HostBackdrop 创建失败时，真实面板回退为 alpha 为 `o` 的主题色，不伪造模糊，透明窗口外区不参与降级绘制。收纳窗 `DesktopLayerService` 在创建以及系统主题、设置和 DWM 合成重建后重新应用无原生边框属性，避免 HWND 白色矩形框恢复。
 
 ## 4. 状态与持久化
 
-- 根状态模型是 `AppStateV2`，当前 Schema 为 9；包含全局设置和 `OrganizerDefinition` 列表。Schema 7 的单主题在首次加载时原样复制为设置界面和收纳窗两套，保证升级外观不突变。Schema 6 及更早状态仍先把旧应用外壳主题重置为 `#E2E5E9`、亚克力、35% 透明度并清除旧 `Theme` / `ThemeOverride` 兼容字段，再复制为两套。
-- 两套主题分别强制为不透明 ARGB；无效材质回退亚克力，非有限透明度回退 35%，其余值限制为 0–90%。总控设置立即预览当前目标，停止操作约 300ms 后把两套主题一次保存；失败时两套一起回滚到最后成功快照并刷新所有外壳。
+- 根状态模型是 `AppStateV2`，当前 Schema 为 15；包含全局设置和 `OrganizerDefinition` 列表。Schema 15 为设置界面和收纳窗增加独立纯色模式字段，并统一收敛玻璃不透明度上限；旧配置缺失字段时保持玻璃模式，旧 100% 不透明度归一为新的 99% 玻璃上限。之前的单主题复制、文字颜色、透明度重置和旧材质移除迁移继续按原顺序执行，最终写回 Schema 15。
+- 两套主题分别强制为不透明 ARGB；现有 `ThemeTransparency` 字段承载玻璃背景不透明度，非有限值回退 35%，其余值限制为 0%–99%；100% 仅由独立纯色模式提供。非有限模糊强度回退 100%，其余值限制为 0%–200%。纯色模式字段只选择渲染分支，不覆盖保存的玻璃参数。总控设置立即预览当前目标，停止操作约 300ms 后把两套主题一次保存。
 - `GlobalSettings.CollapseOnPointerLeave` 缺失时按 `false` 处理，不提升 Schema；总控台“设置 → 通用”负责保存并在失败时回滚开关。
 - `GlobalSettings.HoverExpandDelayMs` / `PointerLeaveCollapseDelayMs` / `StationPointerLeaveCollapseDelayMs` 缺失时按 350/400/400ms 处理，加载时收敛到 100–2000ms 的 50ms 步进值；`StationActivationDistanceDip` / `StationHoverExpandDelayMs` 缺失时按 16 DIP/120ms 处理，并分别收敛到 4–48 DIP/4 DIP 与 0–500ms/20ms。以上字段都不提升 Schema；旧状态中的未知 `CollapseToCenter` 字段会被忽略。
 - `GlobalSettings.WindowAlignmentEnabled` 缺失时按 `false` 处理，不提升 Schema；总控台“设置 → 通用”的拖动对齐开关保存失败时回滚，关闭后当前对齐锁和指示线立即清除。
@@ -98,7 +104,7 @@ Station 展开时先用不改变 owner Z 序的 `ApplyBounds` 完成最终窗口
 - `StateStore.SaveAsync` 通过临时文件和备份文件完成替换，避免进程中断时直接损坏主状态文件。
 - `GlobalSettings.NoteTheme` 是全部便签的持久化全局主题；任意便签选色后由 `AppHost` 保存全局值、刷新全部已打开便签，并逐个原子更新所有已注册收纳目录顶层的有效 `.tucknote`。子目录、未注册目录和已打开路径不参与批量扫描；单文件失败只记录该文件，不破坏其原内容或阻止其他文件。
 - 每个收纳窗保存身份、名称、模式、布局、显示器/位置、`CompactListItemScale` 等缩放、目录映射和项目顺序。`Notes` 列表及本地 `notes/<guid>.json` 只保留给尚未迁移成功的旧便签，不再接收新内容。
-- `OrganizerDefinition.ContainerStationId` 保存可空的唯一父 Station，不提升 Schema 9；Station 的 `ItemOrder` 使用 `organizer:<guid>` 稳定键参与统一排序。加载归一化只保留“Floating/Positioned 来源 → 现存 Station”关系，清除悬空、自引用、Station 嵌套和错误目标，并让无效来源恢复桌面入口。删除仍包含子收纳窗的 Station 会在任何目录转移前被拒绝。
+- `OrganizerDefinition.ContainerOrganizerId` 保存可空的唯一父容器，磁盘 JSON 为兼容旧状态仍使用 `ContainerStationId` 字段且不提升 Schema；每个容器的 `ItemOrder` 使用 `organizer:<guid>` 稳定键参与统一排序。加载归一化按持久化顺序重放单层关系，仅保留“无子窗的 Floating/Positioned 来源 → 未被收纳的现存目标”，清除悬空、自引用、Station 来源、多层关系和错误顺序键，并让无效来源恢复桌面入口。删除任一容器时会原子解除其直接子窗关系并在父窗附近规划桌面位置；Floating 子窗按顺序错位展开，Positioned 子窗逐个占用最近网格。任一 Positioned 子窗无可用网格时，在目录转移前拒绝删除；保存失败时恢复全部归属、顺序和位置。子窗的真实目录始终不移动。
 - `AppPaths` 决定正常用户根目录以及 `TUCKPANE_TEST_ROOT` 隔离根目录。`note-staging` 也位于相同本地根；启动仅清理其直接 GUID 暂存子目录。测试不得读写正常用户状态。
 
 ## 5. 真实目录、刷新与传输
@@ -109,7 +115,7 @@ Station 展开时先用不改变 owner Z 序的 `ApplyBounds` 完成最终窗口
 
 可移植便签是无 BOM UTF-8 JSON `.tucknote` v1，固定字段为 `format="TuckPane.Note"`、`version=1`、`theme`、`fontSize`、`showRuledLines`、`placement`、`html`；文件名就是窗口标题，不保存 organizer/note ID。读取边界为 64 MiB，并严格拒绝缺失/未知字段、损坏 JSON、未知版本/主题、非法字号或几何。所有创建和保存沿用同目录临时文件与原子发布/替换，主题批量更新只改 `theme`，保留 HTML、字号、横线和窗口位置。便签内联改名会先保存正文，再校验空名、非法/保留文件名和目标冲突，通过同目录 `File.Move` 改真实文件名，并同步打开窗口路径索引、托盘隐藏集合和所属收纳窗 `ItemOrder`；状态保存失败时回滚这些运行时索引和文件名。
 
-文件操作结束后，窗口重新读取目录，并把真实文件、尚未迁移的兼容 `Notes` 以及仅在 Station 中出现的收纳窗引用投影按 `ItemOrder` 合并；目录监听仍只管理真实文件。收纳窗投影使用白色圆角小窗口轮廓，内部保留子窗前四项的实时 2×2 图标预览并显示底部名称；单元大小只读取父 Station 的格子和 `ItemScale`，不读取子窗 `CompactScale/NameScale`。不存在的顺序项会被清理，新项目会进入可见列表。`.tucknote` 在枚举时获得运行时 `PortableNote` 分类，会隐藏扩展名、使用便签图标并支持单击打开，拖出时仍是普通真实文件。删除开关开启时，已打开的顶层便签先保存并隐藏，整目录移动成功后把窗口路径索引重绑到桌面新目录并恢复原可见状态；失败保持旧路径。开关关闭时只删除收纳窗状态与窗口，目录和便签路径原地保留。应用级 `TransferQueue` 继续串行化文件传输；批量入口把递归校验、清单、复制和移动 I/O 放到 worker，保持逐项顺序、取消、进度、暂存回滚及跨盘校验，只有可执行文件的 WScript 快捷方式创建保留在调用线程的 STA 链路。
+文件操作结束后，窗口重新读取目录，并把真实文件、尚未迁移的兼容 `Notes` 以及该窗口直接包含的收纳窗引用投影按 `ItemOrder` 合并；目录监听仍只管理真实文件。父窗处于图标模式时，收纳窗投影使用白色圆角小窗口轮廓，内部保留子窗前四项的实时 2×2 图标预览并显示底部名称；单元大小只读取父窗格子和 `ItemScale`，不读取子窗 `CompactScale/NameScale`。父窗处于精简模式时，引用改用 TuckPane 软件图标与收纳窗名称，并跟随父窗的 `CompactListItemScale`。不存在的顺序项会被清理，新项目会进入可见列表。`.tucknote` 在枚举时获得运行时 `PortableNote` 分类，会隐藏扩展名、使用便签图标并支持单击打开，拖出时仍是普通真实文件。删除开关开启时，已打开的顶层便签先保存并隐藏，整目录移动成功后把窗口路径索引重绑到桌面新目录并恢复原可见状态；失败保持旧路径。开关关闭时只删除收纳窗状态与窗口，目录和便签路径原地保留。应用级 `TransferQueue` 继续串行化文件传输；批量入口把递归校验、清单、复制和移动 I/O 放到 worker，保持逐项顺序、取消、进度、暂存回滚及跨盘校验，只有可执行文件的 WScript 快捷方式创建保留在调用线程的 STA 链路。
 
 真实图片由 `IconCacheService` 先请求 Windows `SingleItem` 缩略图并按实际宽高写入 PNG 缓存，收起预览和展开网格共用该缓存并以 `Uniform` 保持完整比例。缓存身份由规范路径、项目类型、文件长度和最后修改时间组成；目录监听的 `refresh:true` 只对身份变化项重新提取，冷启动也可直接复用同一身份的磁盘 PNG。Windows 未返回图片缩略图或解码失败时回退 Shell 基础图标；Jumbo 与 fallback 路径都不请求或绘制 overlay，因此目录、快捷方式和其他文件均不显示快捷方式箭头、云同步标记等 Shell 叠加图标。缓存版本变化会让旧图标按需重新生成，不主动删除旧缓存文件。
 
@@ -151,7 +157,7 @@ MainWindow 项目指针拖动
 
 低级钩子只负责判断是否越过窗口边界并把升级请求送回 UI 线程，不直接承担 OLE 消息循环。普通真实项目、顶层 `.tucknote` 和兼容旧便签暂存文件依赖 WinUI/OLE 桥接保持输入连续性；只有 `.lnk/.url` 使用原生 Shell 数据对象。拖动期间 `AppHost` 暂缓折叠活动源窗，结束后调用共享互斥收敛逻辑，成功转移时保留目标窗，取消时源窗仍可继续交互。
 
-收纳窗引用复用同一项目换序与“越过完整窗口边界”提升点，但在进入文件/Shell 数据对象链之前被单独拦截。Station 内释放只更新 `ItemOrder`；越界后原收纳窗作为源 Station 的临时 owned window 显示紧凑拖动预览，因此与 Station 同处 topmost 带且始终位于父窗上方。落入另一 Station 时原子换站，落在其他位置时解除归属：Floating 以释放点为中心并限制在工作区，Positioned 选择最近有效桌面网格。保存前失败恢复原 Station、顺序和位置；保存成功后立即按最终 `ContainerStationId` 对齐窗口可见性，后续父 Station 或总控台刷新失败只记录日志，不得再把已脱离 Station 的窗口隐藏。无网格或取消仍恢复原 Station；真实目录和文件始终不移动。桌面入口拖到屏幕边缘仍复用 Station 的可调展开等待时间，并且只在展开面板内容区域接受落点。精简列表把双击绑定到整行，文件、目录、快捷方式和两类便签均不再单击打开；图标模式维持原行为，Station 收纳窗引用例外为单击临时展开且没有普通文件右键菜单。
+收纳窗引用复用同一项目换序与“越过完整窗口边界”提升点，但在进入文件/Shell 数据对象链之前被单独拦截。容器内换序只更新 `ItemOrder`；越界后原收纳窗作为父容器的临时 owned window 显示紧凑拖动预览，Station 容器仍让预览处于其 topmost 带且位于父窗上方。拖动收纳窗悬浮命中另一普通根收纳窗的紧凑白色内容卡片时，目标立即展开；该行为独立于普通悬停展开开关，且在展开动画完成后继续使用内容区插入索引。落入另一未被收纳的根收纳窗时原子更换容器，落在其他位置时解除归属：Floating 以释放点为中心并限制在工作区，Positioned 选择最近有效桌面网格。保存前失败恢复原容器、顺序和位置；保存成功后立即按最终 `ContainerOrganizerId` 对齐窗口可见性，后续父容器或总控台刷新失败只记录日志，不得再把已脱离容器的窗口隐藏。无网格或取消仍恢复原容器；真实目录和文件始终不移动。桌面入口拖到屏幕边缘仍只复用 Station 的可调展开等待时间；普通文件拖入继续沿用原有悬停规则。精简列表把双击绑定到整行，文件、目录、快捷方式和两类便签均不再单击打开；收纳窗引用在图标和精简模式下均可单击临时展开，且没有普通文件右键菜单。
 
 结果处理边界：
 
@@ -175,6 +181,21 @@ Inno 安装器在当前用户 `HKCU\Software\Classes` 注册 `.tucknote` 的 `Tu
 
 3.0.0 不再构建或注册资源管理器右键菜单，因此发布链不包含 Shell DLL、MSIX 稀疏包或本地签名证书。覆盖安装会删除旧版传统菜单注册表项以及安装目录中的 `Shell`、`ShellPackage` 残留；主程序保留既有创建命令行入口供内部兼容使用，但不会据此创建系统右键入口。
 
+## 3.0.2 收纳窗视觉与滚轮输入
+
+- 项目图标由 `MainWindow` 统一维护图片、异步加载中状态与兜底图标的互斥关系；主题、尺寸、展开和收缩刷新不会在已有图标背后重新显示文档兜底。
+- `GlobalSettings.EdgeGlowEnabled` 在 Schema 15 中直接持久化，`AppHost` 保存成功后通过现有主题广播同步所有 `ThemeEdgeSurface`；设置保存失败会恢复原值。
+- 图标和精简列表通过顶层 `PointerWheelChanged` 路由解析普通滚动与 Ctrl 缩放；两种模式都关闭 `ScrollView` 默认鼠标滚轮，普通滚轮按当前行距进入约 160ms 可中断平滑滚动，目标合并并硬边界夹紧。
+- Station 展开先脱离 `SHELLDLL_DefView` desktop owner，再设置自身 topmost/no-activate 后移动并显示；恢复 owner 不携带 `SWP_SHOWWINDOW`，因此底边只影响匹配显示器上的 Station 自身。
+
+本次唯一专项入口为：
+
+```powershell
+dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 --no-restore -- --sep04-bottom-name-wheel
+```
+
+该专项只验证底边 Station 层级时序、名称颜色迁移/对比度、图标与精简滚轮状态和接线，不启动窗口或模拟真实鼠标、键盘、UIA、截图操作。
+
 迁移或覆盖安装时必须先从托盘正常退出用户实例。安装完成后从真实安装路径启动，`StartupService.Apply` 会按 `Environment.ProcessPath` 刷新开机启动项；桌面、开始菜单和卸载注册也必须指向 `app/current`。发布文件与安装文件需要逐文件 SHA-256 比对，卸载器只能管理安装目录，不能覆盖或删除 `source`。
 
 ## 9. 失败处理与测试入口
@@ -185,14 +206,14 @@ Inno 安装器在当前用户 `HKCU\Software\Classes` 注册 `.tucknote` 的 `Tu
 - `TuckPane.LogicChecks --aug27-visual-fixes` 只验证非方形图片缓存保留内容和宽高比，以及缓存身份在元数据不变时稳定、修改时间变化后更新。
 - `TuckPane.LogicChecks --shortcut-clipboard-fixes` 只验证 `.lnk` 左下区域不含 Shell overlay，以及便签复制只在事件结束后向宿主投递而不由 WebView 重复写剪贴板；不读写真实剪贴板，也不启动 UI。
 - `TuckPane.LogicChecks --theme-targets` 是双目标主题专项入口，只验证 Schema 7 复制迁移、两套主题独立修改/归一化/保存重载，以及 56 DIP 标题带与 Station 排除的纯几何约束；不启动窗口或执行鼠标/UI 自动化。
-- `TuckPane.LogicChecks --theme-material-depth` 只验证三种材质参数、亚克力 35% 混色、0% 完全不透明和非零透明度缩放。
+- `TuckPane.LogicChecks --theme-opacity-blur-arc` 是本次主题端点专项入口，只验证 Schema 15、0%–99% 玻璃不透明度、独立纯色模式、模糊 0%–200%、弧光/纹理端点、唯一 Glass 门槛、透明宿主资源生命周期、局部圆角与 DWM 无边框接线；不启动应用，不执行 UIA、鼠标、键盘、截图或任何真实窗口操控。旧 `--theme-material-depth` 与 `--theme-visual-zero-endpoints` 仅保留兼容别名，不属于本次回归范围。
 - `TuckPane.LogicChecks --station-hot-zone` 只验证 Station 触发设置的默认/归一化/保存重载、四边 DPI 热区、展开安全区和双屏拼接线不跨屏。
 - `TuckPane.LogicChecks --aug28-organizer-behavior` 只验证四边 Station 展开安全区和指定显示器可用位置。
 - `TuckPane.LogicChecks --aug29-shell-hover` 只验证中文/空格目录的 Shell 参数解析、三项悬浮延迟的默认值与归一化/独立保存重载，以及旧 `CollapseToCenter` 字段被忽略并在保存后消失。
 - `TuckPane.LogicChecks --aug31-organizer-requirements` 只验证精简缩放、模式矩阵、删除与统一名称状态、顶层便签创建、逐张迁移重试、注册目录顶层主题同步和删除路径映射；不启动窗口或执行鼠标/UIA/Explorer 自动化。
 - `TuckPane.LogicChecks --unified-compact-scale` 只验证两个统一入口大小开关的旧状态默认、独立作用范围、大小归一化、Station 排除、关闭后保留、共享有效值规则和保存重载；不启动窗口或执行鼠标/UI 自动化。
-- `TuckPane.LogicChecks --station-organizer-reference` 只验证收纳接受矩阵、重复拖入幂等、父子缩放数据独立、跨 Station 唯一归属、拖出候选位置、保存重载和非法关系/顺序键归一化；整行命中、实时预览、窗口层级和真实拖动由安装版人工验收。
-- `TuckPane.LogicChecks --organizer-resize-rename-sync` 只验证展开窗 28 DIP 四边/四角命中和原生 hit-test 映射、收纳窗重命名独立 owned-dialog 接线、contained organizer 最新名称投影及父 Station/总控台刷新链；不启动窗口或执行鼠标/UIA。
+- `TuckPane.LogicChecks --organizer-nesting` 只验证单层收纳接受矩阵、跨容器唯一归属、顺序键规范化、事务快照回滚、直接子窗释放与 Floating 布局规划；整行命中、实时预览、窗口层级和真实拖动由安装版人工验收。
+- `TuckPane.LogicChecks --organizer-resize-rename-sync` 只验证展开窗 28 DIP 四边/四角命中和原生 hit-test 映射、收纳窗重命名独立 owned-dialog 接线、contained organizer 最新名称投影及父容器/总控台刷新链；不启动窗口或执行鼠标/UIA。
 - `TuckPane.LogicChecks --window-alignment` 只验证开关默认/保存重载、不同宽高窗口四条同名边、远距排列、屏幕四边、中心线与异名相邻边禁用、12/20 DIP 滞回、双轴和确定性优先级、负坐标/非 100% DPI、视觉外框偏移及跨屏状态清理所需的纯几何约束。
 - `TuckPane.LogicChecks --portable-note-placement` 只验证中文空格目录与隔离桌面目录、本地路径拒绝、同目录原子创建、自动编号/不覆盖/并发重试、严格 v1 重读、无 `.tmp` 残留，以及内部便签 Move/Copy/None 与源路径存在性映射、单个 StorageItem 回读和暂存目录显式清理；不启动 UI 或执行鼠标/Explorer 自动化。
 - `--external-file-drop` 启动跨进程 OLE 探针；隐藏子进程参数 `--external-file-drop-target <Copy|Move|Link>` 只供该探针使用。接收端读取 `FileDrop/CF_HDROP`，验证真实路径和协商结果。
@@ -206,7 +227,7 @@ Inno 安装器在当前用户 `HKCU\Software\Classes` 注册 `.tucknote` 的 `Tu
 ```powershell
 dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 --no-restore -- --theme-targets
 dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 --no-build -- --station-hot-zone
-dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 --no-build -- --theme-material-depth
+dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 --no-restore -- --theme-opacity-blur-arc
 dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 -- --window-alignment
 dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c Release -p:Platform=x64 -- --aug29-shell-hover
 & .\scripts\check-tray-startup.ps1 -ExecutablePath '<TuckPane.exe>' -CreateWindowOnly
@@ -217,3 +238,12 @@ dotnet run --project .\tests\TuckPane.LogicChecks\TuckPane.LogicChecks.csproj -c
 ## 10. 维护规则
 
 修改前先读本文档并查询当前 CodeGraph。若启动/所有权、窗口模式、状态 Schema、存储目录、传输队列、拖放或发布/安装边界发生变化，必须在同一任务内同步更新本文档，并把逻辑检查、跨进程探针、WinUI 构建、真实 UI 和安装版验收分别报告，不能用其中一项代替另一项。
+
+## 11. 本次主题与文字颜色更新
+
+本次实现覆盖前述旧语义：纯色模式现在使用独立的 0%–100% 主题色 alpha，仅隐藏模糊控件且不混入桌面；玻璃模糊下限为 5%，收纳窗玻璃表面和总控设置右侧页面内容区启用静态中性弧光与拉丝纹理边缘。
+
+- 当前状态 Schema 为 15；Schema 14 及更早配置迁移到双目标纯色字段，缺失字段默认玻璃模式，旧 100% 不透明度归一为 99%，不反转或重置其他主题数值。
+- 玻璃背景不透明度范围为 0%–99%；纯色模式提供独立的 0%–100% 主题色 alpha，并隐藏模糊设置。
+- 模糊强度为 0% 时不请求 HostBackdrop，GaussianBlur、饱和度、明度和内部高光归零；独立 `ThemeEdgeSurface` 的中性边缘、弧光与拉丝纹理保持极弱非零强度。收纳窗的收起缩略图、展开内容面板和设置右侧页面内容区保留固定的中性多层玻璃边缘；该边缘不读取主题、不透明度、模糊强度或系统高级效果，标题栏、左侧导航栏和内部对话框不启用。背景、内容裁剪与装饰 Visual 显式使用 `CompositionBorderMode.Soft`，并由同一像素对齐半径同步圆角；原生 HWND 继续关闭 DWM 系统边框与系统圆角。仅中间不透明度与非零模糊创建实时 Glass；HostBackdrop 不可用时 fallback 使用 alpha 为 `o` 的主题色且不伪造模糊。
+- “设置 → 显示”提供全局收纳窗文字颜色自动/白色/黑色，统一作用于收起名称、展开标题和项目名称；自动模式以主题 Tint 为稳定背景代理并按 WCAG 对比度选择纯黑或纯白。

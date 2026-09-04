@@ -8,6 +8,11 @@ namespace TuckPane;
 
 public sealed class AppHost : IDisposable
 {
+    private sealed record OrganizerReleasePlacement(
+        OrganizerDefinition Organizer,
+        NativeMethods.RECT Bounds,
+        double? RuntimeScale);
+
     private readonly StateStore _stateStore = new();
     private readonly DesktopGridService _desktopGrid = new();
     private readonly Dictionary<Guid, MainWindow> _windows = [];
@@ -23,15 +28,37 @@ public sealed class AppHost : IDisposable
     private readonly DispatcherQueue _dispatcher = DispatcherQueue.GetForCurrentThread();
     private TrayIconService? _tray;
     private MainWindow? _expandedWindow;
+    private MainWindow? _organizerDragHoverSource;
+    private MainWindow? _organizerDragHoverTarget;
+    private Task? _organizerDragHoverTask;
+    private NativeMethods.RECT _organizerDragHoverBounds;
     private bool _transparencyNoticeShown;
     private bool _gridFallbackNoticeShown;
-    private bool _exiting;
+    private int _exiting;
 
     public AppStateV2 State { get; private set; } = new();
     public TransferQueue TransferQueue { get; } = new();
     public ConsoleWindow Console { get; private set; } = null!;
     public IReadOnlyCollection<MainWindow> Windows => _windows.Values;
     internal event EventHandler? ThemeChanged;
+
+    public async Task SetOrganizerTextColorAsync(OrganizerTextColor color)
+    {
+        color = GlobalSettings.NormalizeOrganizerTextColor(color);
+        if (State.GlobalSettings.OrganizerTextColor == color) return;
+        OrganizerTextColor previous = State.GlobalSettings.OrganizerTextColor;
+        State.GlobalSettings.OrganizerTextColor = color;
+        try
+        {
+            await SaveStateAsync();
+        }
+        catch
+        {
+            State.GlobalSettings.OrganizerTextColor = previous;
+            throw;
+        }
+        ThemeChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     internal IReadOnlyList<WindowAlignmentTarget> GetWindowAlignmentTargets(MainWindow source, DisplayInfo display)
     {
@@ -45,13 +72,13 @@ public sealed class AppHost : IDisposable
         return targets;
     }
 
-    internal IReadOnlyList<WidgetItem> GetContainedOrganizerItems(Guid stationId) =>
+    internal IReadOnlyList<WidgetItem> GetContainedOrganizerItems(Guid containerId) =>
         State.Organizers
-            .Where(organizer => organizer.ContainerStationId == stationId)
+            .Where(organizer => organizer.ContainerOrganizerId == containerId)
             .Select(organizer => new WidgetItem(
                 organizer.Name,
                 AppPaths.ResolveStoragePath(organizer),
-                OrganizerInteractionMath.OrganizerItemKey(organizer.Id),
+                OrganizerContainment.ItemKey(organizer.Id),
                 WidgetItemKind.Organizer,
                 organizerId: organizer.Id))
             .ToArray();
@@ -63,9 +90,14 @@ public sealed class AppHost : IDisposable
 
     internal void NotifyOrganizerPreviewChanged(Guid organizerId)
     {
-        OrganizerDefinition? organizer = State.Organizers.FirstOrDefault(candidate => candidate.Id == organizerId);
-        if (organizer?.ContainerStationId is Guid stationId && _windows.TryGetValue(stationId, out MainWindow? station))
-            station.RefreshOrganizerPreview(organizerId);
+        Guid currentId = organizerId;
+        while (State.Organizers.FirstOrDefault(candidate => candidate.Id == currentId) is
+               { ContainerOrganizerId: Guid containerId })
+        {
+            if (_windows.TryGetValue(containerId, out MainWindow? container))
+                container.RefreshOrganizerPreview(currentId);
+            currentId = containerId;
+        }
     }
 
     public async Task InitializeAsync()
@@ -88,7 +120,7 @@ public sealed class AppHost : IDisposable
 
     public async Task<OrganizerDefinition> CreateOrganizerAsync(OrganizerDefinition draft, string? storagePath = null)
     {
-        draft.ContainerStationId = null;
+        draft.ContainerOrganizerId = null;
         if (draft.PlacementMode == OrganizerPlacementMode.Station)
             draft.ExpandedContentMode = OrganizerExpandedContentMode.Icon;
         if (draft.PlacementMode == OrganizerPlacementMode.Station)
@@ -267,57 +299,10 @@ public sealed class AppHost : IDisposable
             State.Organizers.Select(item => item.Name),
             AppStrings.Get("CopyNameSuffix"));
         var draft = OrganizerInteractionMath.CopySettings(source, name);
-        var copiedNoteIds = new List<Guid>();
-        try
-        {
-            var idMap = new Dictionary<Guid, Guid>();
-            foreach (NoteDefinition note in source.Notes)
-            {
-                Guid copiedId = Guid.NewGuid();
-                idMap[note.Id] = copiedId;
-                copiedNoteIds.Add(copiedId);
-                await _noteStore.CopyAsync(note.Id, copiedId);
-                draft.Notes.Add(new NoteDefinition
-                {
-                    Id = copiedId,
-                    Name = note.Name,
-                    Theme = note.Theme,
-                    FontSize = note.FontSize,
-                    ShowRuledLines = note.ShowRuledLines,
-                    Placement = note.Placement is null ? null : new NoteWindowPlacement
-                    {
-                        MonitorDevice = note.Placement.MonitorDevice,
-                        XDip = note.Placement.XDip,
-                        YDip = note.Placement.YDip,
-                        WidthDip = note.Placement.WidthDip,
-                        HeightDip = note.Placement.HeightDip
-                    }
-                });
-            }
-            draft.ItemOrder = source.ItemOrder
-                .Where(key => key.StartsWith("note:", StringComparison.OrdinalIgnoreCase))
-                .Select(key => source.Notes.FirstOrDefault(note => OrganizerNoteRules.ItemKey(note.Id)
-                    .Equals(key, StringComparison.OrdinalIgnoreCase)) is { } note && idMap.TryGetValue(note.Id, out Guid copiedId)
-                    ? OrganizerNoteRules.ItemKey(copiedId)
-                    : string.Empty)
-                .Where(key => key.Length > 0)
-                .ToList();
-            foreach (NoteDefinition note in draft.Notes)
-            {
-                string key = OrganizerNoteRules.ItemKey(note.Id);
-                if (!draft.ItemOrder.Contains(key, StringComparer.OrdinalIgnoreCase)) draft.ItemOrder.Add(key);
-            }
-            return await CreateOrganizerAsync(draft);
-        }
-        catch
-        {
-            foreach (Guid noteId in copiedNoteIds)
-            {
-                try { await _noteStore.DeleteAsync(noteId); }
-                catch (Exception cleanupError) { AppLogger.Error($"无法回滚复制便签：{noteId}", cleanupError); }
-            }
-            throw;
-        }
+        draft.Notes.Clear();
+        draft.ItemOrder.Clear();
+        draft.ContainerOrganizerId = null;
+        return await CreateOrganizerAsync(draft);
     }
 
     internal async Task<string> CreateNoteAsync(Guid organizerId, string? text, NativeMethods.POINT anchor)
@@ -1062,6 +1047,7 @@ public sealed class AppHost : IDisposable
         OrganizerPlacementMode previousMode = current.PlacementMode;
         double previousCompactScale = current.CompactScale;
         WidgetPosition? previousPosition = current.Position;
+        Guid[] previousContainmentChain = OrganizerContainment.GetAncestorIds(State.Organizers, current.Id).ToArray();
         current.Name = string.IsNullOrWhiteSpace(edited.Name) ? current.Name : edited.Name.Trim();
         current.PlacementMode = edited.PlacementMode;
         current.DockEdge = edited.DockEdge;
@@ -1082,10 +1068,16 @@ public sealed class AppHost : IDisposable
             current.ManualCanvasBaseHeightDip = null;
         }
         StateStore.Normalize(State);
-        if (current.ContainerStationId is Guid parentStationId &&
-            _windows.TryGetValue(parentStationId, out MainWindow? parentStation))
+        IEnumerable<Guid> affectedParentIds = previousContainmentChain;
+        if (current.ContainerOrganizerId is Guid currentParent)
+            affectedParentIds = affectedParentIds.Append(currentParent);
+        affectedParentIds = affectedParentIds
+            .Distinct()
+            .ToArray();
+        foreach (Guid parentId in affectedParentIds)
         {
-            _ = parentStation.RefreshContainedOrganizerItemsAsync();
+            if (_windows.TryGetValue(parentId, out MainWindow? parentOrganizer))
+                _ = parentOrganizer.RefreshContainedOrganizerItemsAsync();
         }
         if (_windows.TryGetValue(current.Id, out MainWindow? window))
         {
@@ -1134,7 +1126,7 @@ public sealed class AppHost : IDisposable
                 current.Position = DisplayPlacementService.Capture(placement.Bounds);
                 window.ApplyDefinition(changes & ~(OrganizerVisualChange.CompactScale | OrganizerVisualChange.PlacementMode));
                 window.MoveToPositionedPlacement(placement.Bounds, placement.CompactScale);
-                if (current.ContainerStationId is not null) window.SetContained(true);
+                if (current.ContainerOrganizerId is not null) window.SetContained(true);
                 return null;
             }
 
@@ -1151,12 +1143,12 @@ public sealed class AppHost : IDisposable
                 current.Position = DisplayPlacementService.Capture(bounds);
                 window.ApplyDefinition(changes & ~(OrganizerVisualChange.CompactScale | OrganizerVisualChange.NameScale | OrganizerVisualChange.PlacementMode));
                 window.MoveToFloatingPlacement(bounds);
-                if (current.ContainerStationId is not null) window.SetContained(true);
+                if (current.ContainerOrganizerId is not null) window.SetContained(true);
                 return null;
             }
 
             window.ApplyDefinition(changes);
-            if (current.ContainerStationId is not null) window.SetContained(true);
+            if (current.ContainerOrganizerId is not null) window.SetContained(true);
         }
         return null;
     }
@@ -1185,19 +1177,108 @@ public sealed class AppHost : IDisposable
         return FindPositionedPlacement(display, center, organizerId, compactScale);
     }
 
+    private bool TryCreateOrganizerReleasePlan(
+        OrganizerDefinition container,
+        out IReadOnlyList<OrganizerReleasePlacement> releasePlan,
+        out string? error)
+    {
+        IReadOnlyList<OrganizerDefinition> children = OrganizerContainment.GetDirectChildren(State.Organizers, container.Id);
+        if (children.Count == 0)
+        {
+            releasePlan = [];
+            error = null;
+            return true;
+        }
+
+        NativeMethods.RECT parentBounds = _windows.TryGetValue(container.Id, out MainWindow? parentWindow)
+            ? parentWindow.CompactBounds
+            : DisplayPlacementService.RestoreToDisplay(
+                container.Position,
+                DisplayPlacementService.GetDisplay(container.Position?.MonitorDevice),
+                1,
+                1);
+        DisplayInfo display = DisplayPlacementService.ForBounds(parentBounds);
+        var planned = new List<OrganizerReleasePlacement>(children.Count);
+        OrganizerReleaseItem[] floatingItems = children
+            .Where(child => child.PlacementMode == OrganizerPlacementMode.Floating)
+            .Select(child =>
+            {
+                double nameScale = State.GlobalSettings.ResolveCompactNameScale(child.PlacementMode);
+                int width = Math.Max(1, (int)Math.Round(
+                    OrganizerLimits.CalculateCompactWindowWidthDip(child.CompactScale, nameScale) * display.Scale));
+                int height = Math.Max(1, (int)Math.Round(
+                    OrganizerLimits.CalculateCompactWindowHeightDip(child.CompactScale, nameScale) * display.Scale));
+                return new OrganizerReleaseItem(child.Id, width, height);
+            })
+            .ToArray();
+        IReadOnlyDictionary<Guid, NativeMethods.RECT> floatingBounds = OrganizerReleasePlanner.PlanFloating(
+            parentBounds,
+            display.Work,
+            display.Scale,
+            floatingItems);
+
+        foreach (OrganizerDefinition child in children.Where(child => child.PlacementMode == OrganizerPlacementMode.Floating))
+            planned.Add(new(child, floatingBounds[child.Id], null));
+
+        OrganizerDefinition[] positionedChildren = children
+            .Where(child => child.PlacementMode == OrganizerPlacementMode.Positioned)
+            .ToArray();
+        if (positionedChildren.Length == 0)
+        {
+            var floatingById = planned.ToDictionary(item => item.Organizer.Id);
+            releasePlan = children.Select(child => floatingById[child.Id]).ToArray();
+            error = null;
+            return true;
+        }
+
+        DesktopGridSnapshot grid = ReadGridSnapshot(display);
+        var occupied = _windows.Values
+            .Where(window => window.OrganizerId != container.Id)
+            .Where(window => State.Organizers.First(candidate => candidate.Id == window.OrganizerId) is
+                { PlacementMode: OrganizerPlacementMode.Positioned, ContainerOrganizerId: null })
+            .Select(window => window.CompactBounds)
+            .ToList();
+        var parentCenter = new NativeMethods.POINT
+        {
+            X = parentBounds.Left + parentBounds.Width / 2,
+            Y = parentBounds.Top + parentBounds.Height / 2
+        };
+        foreach (OrganizerDefinition child in positionedChildren)
+        {
+            DesktopGridPlacement? placement = DesktopGridService.Find(
+                grid,
+                occupied,
+                parentCenter,
+                child.CompactScale);
+            if (placement is null)
+            {
+                releasePlan = [];
+                error = AppStrings.Get("OrganizerReleaseNoGridError");
+                return false;
+            }
+            occupied.Add(placement.Bounds);
+            planned.Add(new(child, placement.Bounds, placement.CompactScale));
+        }
+
+        var byId = planned.ToDictionary(item => item.Organizer.Id);
+        releasePlan = children.Select(child => byId[child.Id]).ToArray();
+        error = null;
+        return true;
+    }
+
     public async Task<TransferOutcome> DeleteOrganizerAsync(Guid id)
     {
         if (TransferQueue.IsActive) return new(string.Empty, null, TransferStatus.Failed, AppStrings.Get("TransferBeforeDelete"));
         OrganizerDefinition definition = State.Organizers.First(item => item.Id == id);
-        if (definition.PlacementMode == OrganizerPlacementMode.Station &&
-            State.Organizers.Any(item => item.ContainerStationId == definition.Id))
+        if (!TryCreateOrganizerReleasePlan(definition, out IReadOnlyList<OrganizerReleasePlacement> releasePlan, out string? releaseError))
         {
             return new(
                 AppPaths.ResolveStoragePath(definition),
                 null,
                 TransferStatus.Failed,
-                AppStrings.Get("StationContainsOrganizersError"));
+                releaseError ?? AppStrings.Get("OrganizerReleaseNoGridError"));
         }
+        await CollapseContainedChildrenAsync(definition.Id);
         var legacyWindows = new List<(Guid Id, NoteWindow Window, bool WasVisible, bool WasTrayHidden)>();
         try
         {
@@ -1313,16 +1394,6 @@ public sealed class AppHost : IDisposable
                 definition.StorageRelativePath = string.Empty;
                 definition.StorageAbsolutePath = destinationRoot;
                 definition.StorageOwnedByApp = false;
-                try
-                {
-                    await SaveStateAsync();
-                }
-                catch (Exception ex)
-                {
-                    if (_windows.Remove(id, out MainWindow? staleWindow)) staleWindow.ClosePermanently();
-                    CreateWindow(definition);
-                    return new(sourceRoot, destinationRoot, TransferStatus.Failed, ex.Message);
-                }
             }
             }
             finally
@@ -1336,16 +1407,13 @@ public sealed class AppHost : IDisposable
         }
 
         int stateIndex = State.Organizers.IndexOf(definition);
-        Guid? previousContainerId = definition.ContainerStationId;
-        List<string>? previousContainerOrder = previousContainerId is Guid containerId
-            ? State.Organizers.FirstOrDefault(item => item.Id == containerId)?.ItemOrder.ToList()
-            : null;
-        if (previousContainerId is Guid parentId && State.Organizers.FirstOrDefault(item => item.Id == parentId) is { } parent)
-        {
-            parent.ItemOrder.RemoveAll(key =>
-                key.Equals(OrganizerInteractionMath.OrganizerItemKey(definition.Id), StringComparison.OrdinalIgnoreCase));
-            definition.ContainerStationId = null;
-        }
+        OrganizerContainmentSnapshot containmentSnapshot = OrganizerContainment.Capture(State.Organizers);
+        var positionSnapshot = releasePlan.ToDictionary(item => item.Organizer.Id, item => item.Organizer.Position);
+        Guid? previousContainerId = definition.ContainerOrganizerId;
+        OrganizerContainment.ReleaseDirectChildren(State.Organizers, definition.Id);
+        foreach (OrganizerReleasePlacement placement in releasePlan)
+            placement.Organizer.Position = DisplayPlacementService.Capture(placement.Bounds);
+        OrganizerContainment.Detach(State.Organizers, definition.Id);
         State.Organizers.Remove(definition);
         try
         {
@@ -1354,12 +1422,9 @@ public sealed class AppHost : IDisposable
         catch (Exception ex)
         {
             State.Organizers.Insert(Math.Max(0, stateIndex), definition);
-            definition.ContainerStationId = previousContainerId;
-            if (previousContainerId is Guid rollbackParentId && previousContainerOrder is not null &&
-                State.Organizers.FirstOrDefault(item => item.Id == rollbackParentId) is { } rollbackParent)
-            {
-                rollbackParent.ItemOrder = previousContainerOrder;
-            }
+            containmentSnapshot.Restore(State.Organizers);
+            foreach (OrganizerReleasePlacement placement in releasePlan)
+                placement.Organizer.Position = positionSnapshot[placement.Organizer.Id];
             if (outcome.Status == TransferStatus.Moved && outcome.DestinationPath is not null)
             {
                 if (_windows.Remove(id, out MainWindow? staleWindow)) staleWindow.ClosePermanently();
@@ -1371,6 +1436,21 @@ public sealed class AppHost : IDisposable
         {
             if (ReferenceEquals(_expandedWindow, window)) _expandedWindow = null;
             window.ClosePermanently();
+        }
+        foreach (OrganizerReleasePlacement placement in releasePlan)
+        {
+            if (!_windows.TryGetValue(placement.Organizer.Id, out MainWindow? childWindow)) continue;
+            try
+            {
+                if (placement.RuntimeScale is double runtimeScale)
+                    childWindow.MoveToPositionedPlacement(placement.Bounds, runtimeScale);
+                else
+                    childWindow.MoveToFloatingPlacement(placement.Bounds);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("父容器已删除，但子收纳窗位置刷新失败。", ex);
+            }
         }
         if (previousContainerId is Guid previousStationId && _windows.TryGetValue(previousStationId, out MainWindow? previousStation))
             await previousStation.RefreshContainedOrganizerItemsAsync();
@@ -1384,10 +1464,28 @@ public sealed class AppHost : IDisposable
         Console.RefreshAll(id);
     }
 
-    internal void UpdateGlobalTheme(ThemeTarget target, uint colorArgb, ThemeMaterial material, double transparency)
+    internal void UpdateGlobalTheme(
+        ThemeTarget target,
+        uint colorArgb,
+        double transparency,
+        double blurStrength,
+        bool solidColorMode = false,
+        double? solidOpacity = null)
     {
-        ThemeValues theme = GlobalSettings.NormalizeTheme(new(colorArgb, material, transparency));
         GlobalSettings settings = State.GlobalSettings;
+        ThemeValues previous = settings.GetTheme(target);
+        double inactiveGlassTransparency = target == ThemeTarget.Settings
+            ? settings.SettingsThemeTransparency
+            : settings.ThemeTransparency;
+        double effectiveTransparency = solidColorMode
+            ? (solidOpacity ?? (solidColorMode != previous.SolidColorMode ? previous.SolidOpacity : transparency))
+            : (solidColorMode != previous.SolidColorMode ? inactiveGlassTransparency : transparency);
+        ThemeValues theme = GlobalSettings.NormalizeTheme(new(
+            colorArgb,
+            effectiveTransparency,
+            blurStrength,
+            solidColorMode,
+            solidOpacity ?? previous.SolidOpacity));
         if (settings.GetTheme(target) == theme) return;
         settings.SetTheme(target, theme);
         ThemeChanged?.Invoke(this, EventArgs.Empty);
@@ -1466,7 +1564,7 @@ public sealed class AppHost : IDisposable
             MainWindow[] unrelated = _windows.Values
                 .Where(window => !ReferenceEquals(window, source) && window.IsExpanded &&
                     !IsContainedParentChildPair(window, source) && !window.IsShellDragActive)
-                .OrderBy(window => window.ContainerStationId is null ? 1 : 0)
+                .OrderBy(window => window.ContainerOrganizerId is null ? 1 : 0)
                 .ToArray();
             foreach (MainWindow window in unrelated) await window.CollapseForPeerAsync();
         }
@@ -1480,12 +1578,36 @@ public sealed class AppHost : IDisposable
             source.RaiseActiveCompactOrganizerDrag();
     }
 
-    internal async Task CollapseContainedChildrenAsync(Guid stationId)
+    internal async Task CollapseContainedChildrenAsync(Guid containerId)
     {
         foreach (MainWindow child in _windows.Values.Where(window =>
-                     window.ContainerStationId == stationId && window.IsExpanded).ToArray())
+                     window.OrganizerId != containerId &&
+                     OrganizerContainment.IsAncestor(State.Organizers, containerId, window.OrganizerId) &&
+                     window.IsExpanded).ToArray())
         {
             await child.CollapseForPeerAsync();
+        }
+    }
+
+    private IEnumerable<Guid> GetContainmentRefreshIds(IEnumerable<Guid?> seeds)
+    {
+        var result = new HashSet<Guid>();
+        foreach (Guid? seed in seeds)
+        {
+            if (seed is not Guid id) continue;
+            result.Add(id);
+            foreach (Guid ancestorId in OrganizerContainment.GetAncestorIds(State.Organizers, id))
+                result.Add(ancestorId);
+        }
+        return result;
+    }
+
+    private async Task RefreshContainmentParentsAsync(IEnumerable<Guid?> seeds)
+    {
+        foreach (Guid id in GetContainmentRefreshIds(seeds))
+        {
+            if (_windows.TryGetValue(id, out MainWindow? window))
+                await window.RefreshContainedOrganizerItemsAsync();
         }
     }
 
@@ -1507,32 +1629,111 @@ public sealed class AppHost : IDisposable
     public void NotifyCollapsed(MainWindow source)
     {
         if (!ReferenceEquals(_expandedWindow, source)) return;
-        _expandedWindow = source.ContainerStationId is Guid stationId &&
-            _windows.TryGetValue(stationId, out MainWindow? station) && station.IsExpanded
-                ? station
-                : null;
+        _expandedWindow = OrganizerContainment.GetAncestorIds(State.Organizers, source.OrganizerId)
+            .Select(id => _windows.TryGetValue(id, out MainWindow? ancestor) && ancestor.IsExpanded ? ancestor : null)
+            .FirstOrDefault(ancestor => ancestor is not null);
     }
 
-    internal bool HasExpandedContainedChild(Guid stationId) =>
-        _windows.Values.Any(window => window.ContainerStationId == stationId && window.IsExpanded);
+    internal bool HasExpandedContainedChild(Guid containerId) =>
+        _windows.Values.Any(window =>
+            window.OrganizerId != containerId &&
+            OrganizerContainment.IsAncestor(State.Organizers, containerId, window.OrganizerId) &&
+            window.IsExpanded);
 
-    private static bool IsContainedParentChildPair(MainWindow first, MainWindow second) =>
-        first.ContainerStationId == second.OrganizerId || second.ContainerStationId == first.OrganizerId;
+    internal bool ContainsExpandedContainedChildPoint(Guid containerId, NativeMethods.POINT point) =>
+        _windows.Values.Any(window =>
+            window.OrganizerId != containerId &&
+            OrganizerContainment.IsAncestor(State.Organizers, containerId, window.OrganizerId) &&
+            window.IsExpanded && window.ContainsScreenPoint(point));
 
-    internal bool IsOrganizerStationDropTarget(MainWindow source, NativeMethods.POINT dropPoint) =>
+    private bool IsContainedParentChildPair(MainWindow first, MainWindow second) =>
+        OrganizerContainment.IsAncestor(State.Organizers, first.OrganizerId, second.OrganizerId) ||
+        OrganizerContainment.IsAncestor(State.Organizers, second.OrganizerId, first.OrganizerId);
+
+    internal bool IsOrganizerContainerDropTarget(MainWindow source, NativeMethods.POINT dropPoint) =>
         _windows.Values.Any(target =>
             !ReferenceEquals(target, source) &&
-            target.TryGetStationDropIndex(dropPoint, out _));
+            !OrganizerContainment.IsAncestor(State.Organizers, source.OrganizerId, target.OrganizerId) &&
+            target.TryGetOrganizerDropIndex(dropPoint, out _));
+
+    internal bool IsOrganizerDragHoverTarget(MainWindow source, NativeMethods.POINT point) =>
+        _organizerDragHoverSource == source && _organizerDragHoverTarget is not null &&
+        (DragBoundaryMath.Contains(_organizerDragHoverBounds, point) ||
+         _organizerDragHoverTarget.ContainsScreenPoint(point));
+
+    internal void UpdateOrganizerDragHover(MainWindow source, NativeMethods.POINT point)
+        => UpdateOrganizerDragHover(source, source.OrganizerId, point);
+
+    internal void UpdateOrganizerDragHover(MainWindow source, Guid draggedOrganizerId, NativeMethods.POINT point)
+    {
+        if (ReferenceEquals(_organizerDragHoverSource, source) && _organizerDragHoverTarget is not null &&
+            (DragBoundaryMath.Contains(_organizerDragHoverBounds, point) ||
+             _organizerDragHoverTarget.ContainsScreenPoint(point)))
+            return;
+
+        MainWindow? target = _windows.Values.FirstOrDefault(candidate =>
+            !ReferenceEquals(candidate, source) &&
+            candidate.OrganizerId != draggedOrganizerId &&
+            !OrganizerContainment.IsAncestor(State.Organizers, draggedOrganizerId, candidate.OrganizerId) &&
+            candidate.TryGetCompactDropBounds(out NativeMethods.RECT bounds) &&
+            DragBoundaryMath.Contains(bounds, point) &&
+            OrganizerInteractionMath.ShouldExpandForOrganizerDragHover(
+                dragActive: true,
+                sourceIsTarget: ReferenceEquals(source, candidate),
+                targetMode: candidate.DefinitionPlacementMode,
+                targetContained: candidate.ContainerOrganizerId is not null,
+                targetExpanded: candidate.IsExpanded && !candidate.IsAnimating,
+                targetAnimating: candidate.IsAnimating));
+
+        if (target is null)
+        {
+            if (_organizerDragHoverSource == source)
+            {
+                _organizerDragHoverSource = null;
+                _organizerDragHoverTarget = null;
+                _organizerDragHoverTask = null;
+                _organizerDragHoverBounds = default;
+            }
+            return;
+        }
+
+        if (ReferenceEquals(_organizerDragHoverSource, source) &&
+            ReferenceEquals(_organizerDragHoverTarget, target)) return;
+
+        _organizerDragHoverSource = source;
+        _organizerDragHoverTarget = target;
+        _ = target.TryGetCompactDropBounds(out _organizerDragHoverBounds);
+        _organizerDragHoverTask = target.ExpandForOrganizerDragAsync();
+        _ = _organizerDragHoverTask.ContinueWith(
+            _ => { }, TaskScheduler.Default);
+    }
+
+    internal async Task WaitForOrganizerDragHoverAsync(MainWindow source)
+    {
+        if (!ReferenceEquals(_organizerDragHoverSource, source)) return;
+        Task? task = _organizerDragHoverTask;
+        if (task is not null)
+        {
+            try { await task; }
+            catch (Exception ex) { AppLogger.Error("收纳窗拖动悬停展开失败。", ex); }
+        }
+        _organizerDragHoverSource = null;
+        _organizerDragHoverTarget = null;
+        _organizerDragHoverTask = null;
+        _organizerDragHoverBounds = default;
+    }
 
     internal async Task<bool> TryContainDraggedOrganizerAsync(MainWindow source, NativeMethods.POINT dropPoint)
     {
         OrganizerDefinition organizer = State.Organizers.First(item => item.Id == source.OrganizerId);
-        if (source.IsExpanded || organizer.ContainerStationId is not null ||
+        if (source.IsExpanded ||
             organizer.PlacementMode is not (OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned)) return false;
         foreach (MainWindow target in _windows.Values)
         {
-            if (!target.TryGetStationDropIndex(dropPoint, out int insertionIndex)) continue;
-            await MoveOrganizerToStationAsync(organizer, target.OrganizerId, insertionIndex);
+            if (target.OrganizerId == organizer.Id ||
+                OrganizerContainment.IsAncestor(State.Organizers, organizer.Id, target.OrganizerId)) continue;
+            if (!target.TryGetOrganizerDropIndex(dropPoint, out int insertionIndex)) continue;
+            await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex);
             return true;
         }
         return false;
@@ -1544,12 +1745,14 @@ public sealed class AppHost : IDisposable
         _windows.TryGetValue(organizer.Id, out MainWindow? window);
         foreach (MainWindow target in _windows.Values)
         {
-            if (!target.TryGetStationDropIndex(dropPoint, out int insertionIndex)) continue;
-            await MoveOrganizerToStationAsync(organizer, target.OrganizerId, insertionIndex);
+            if (target.OrganizerId == organizer.Id ||
+                OrganizerContainment.IsAncestor(State.Organizers, organizer.Id, target.OrganizerId)) continue;
+            if (!target.TryGetOrganizerDropIndex(dropPoint, out int insertionIndex)) continue;
+            await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex);
             return null;
         }
 
-        Guid? previousContainerId = organizer.ContainerStationId;
+        Guid? previousContainerId = organizer.ContainerOrganizerId;
         if (previousContainerId is null) return null;
         DisplayInfo display = DisplayPlacementService.ForBounds(new NativeMethods.RECT
         {
@@ -1584,9 +1787,9 @@ public sealed class AppHost : IDisposable
         }
 
         OrganizerDefinition parent = State.Organizers.First(item => item.Id == previousContainerId);
-        List<string> previousOrder = parent.ItemOrder.ToList();
+        OrganizerContainmentSnapshot containmentSnapshot = OrganizerContainment.Capture(State.Organizers);
         WidgetPosition? previousPosition = organizer.Position;
-        OrganizerInteractionMath.DetachOrganizerFromStation(State.Organizers, organizer.Id);
+        OrganizerContainment.Detach(State.Organizers, organizer.Id);
         organizer.Position = DisplayPlacementService.Capture(bounds);
         try
         {
@@ -1594,10 +1797,9 @@ public sealed class AppHost : IDisposable
         }
         catch (Exception ex)
         {
-            organizer.ContainerStationId = previousContainerId;
+            containmentSnapshot.Restore(State.Organizers);
             organizer.Position = previousPosition;
-            parent.ItemOrder = previousOrder;
-            return AppStrings.Format("OrganizerStationDropError", ex.Message);
+            return AppStrings.Format("OrganizerContainerDropError", ex.Message);
         }
 
         if (window is not null)
@@ -1618,7 +1820,7 @@ public sealed class AppHost : IDisposable
         }
         try
         {
-            if (_windows.TryGetValue(parent.Id, out MainWindow? parentWindow)) await parentWindow.RefreshContainedOrganizerItemsAsync();
+            await RefreshContainmentParentsAsync([parent.Id]);
             Console.RefreshAll(organizer.Id);
         }
         catch (Exception ex)
@@ -1636,65 +1838,60 @@ public sealed class AppHost : IDisposable
     internal void UpdateContainedOrganizerDragPreview(Guid organizerId, NativeMethods.POINT cursor)
     {
         OrganizerDefinition? organizer = State.Organizers.FirstOrDefault(item => item.Id == organizerId);
-        if (organizer?.ContainerStationId is not Guid stationId ||
-            !_windows.TryGetValue(stationId, out MainWindow? station) ||
+        if (organizer?.ContainerOrganizerId is not Guid containerId ||
+            !_windows.TryGetValue(containerId, out MainWindow? container) ||
             !_windows.TryGetValue(organizerId, out MainWindow? window)) return;
-        window.MoveContainedDragPreview(cursor, station);
+        window.MoveContainedDragPreview(cursor, container);
     }
 
     internal void ReconcileContainedOrganizer(Guid organizerId)
     {
         OrganizerDefinition? organizer = State.Organizers.FirstOrDefault(item => item.Id == organizerId);
         if (organizer is not null && _windows.TryGetValue(organizerId, out MainWindow? window))
-            window.SetContained(organizer.ContainerStationId is not null);
+            window.SetContained(organizer.ContainerOrganizerId is not null);
     }
 
-    private async Task MoveOrganizerToStationAsync(
+    private async Task MoveOrganizerToContainerAsync(
         OrganizerDefinition organizer,
-        Guid stationId,
+        Guid containerId,
         int insertionIndex)
     {
-        OrganizerDefinition station = State.Organizers.First(item => item.Id == stationId);
-        if (!OrganizerInteractionMath.CanContainOrganizer(
-                organizer.PlacementMode,
-                station.PlacementMode,
-                organizer.Id,
-                station.Id))
-            throw new InvalidOperationException("Invalid Station organizer reference.");
-
-        Guid? previousContainerId = organizer.ContainerStationId;
-        var orderSnapshots = State.Organizers
-            .Where(item => item.PlacementMode == OrganizerPlacementMode.Station)
-            .ToDictionary(item => item.Id, item => item.ItemOrder.ToList());
-        if (!OrganizerInteractionMath.PlaceOrganizerInStation(State.Organizers, organizer.Id, station.Id, insertionIndex))
-            throw new InvalidOperationException("Invalid Station organizer reference.");
+        OrganizerContainmentSnapshot snapshot = OrganizerContainment.Capture(State.Organizers);
+        OrganizerContainmentMoveResult move = OrganizerContainment.TryMove(
+            State.Organizers,
+            organizer.Id,
+            containerId,
+            insertionIndex);
+        if (!move.Succeeded) throw new InvalidOperationException(GetContainmentFailureMessage(move.Failure));
         try
         {
             await SaveStateAsync();
         }
         catch
         {
-            organizer.ContainerStationId = previousContainerId;
-            foreach ((Guid id, List<string> order) in orderSnapshots)
-                State.Organizers.First(item => item.Id == id).ItemOrder = order;
+            snapshot.Restore(State.Organizers);
             throw;
         }
 
         if (_windows.TryGetValue(organizer.Id, out MainWindow? sourceWindow)) sourceWindow.SetContained(true);
         try
         {
-            foreach (Guid affectedId in new[] { previousContainerId, (Guid?)station.Id }.Where(id => id is not null).Select(id => id!.Value).Distinct())
-            {
-                if (_windows.TryGetValue(affectedId, out MainWindow? affectedWindow))
-                    await affectedWindow.RefreshContainedOrganizerItemsAsync();
-            }
+            await RefreshContainmentParentsAsync([move.PreviousContainerId, containerId]);
             Console.RefreshAll(organizer.Id);
         }
         catch (Exception ex)
         {
-            AppLogger.Error("收纳窗已移入中转站，但界面刷新失败。", ex);
+            AppLogger.Error("收纳窗已移入容器，但界面刷新失败。", ex);
         }
     }
+
+    private static string GetContainmentFailureMessage(OrganizerContainmentFailure failure) => failure switch
+    {
+        OrganizerContainmentFailure.SameOrganizer => AppStrings.Get("OrganizerContainmentSelfError"),
+        OrganizerContainmentFailure.StationCannotBeContained => AppStrings.Get("OrganizerContainmentStationSourceError"),
+        OrganizerContainmentFailure.TargetIsDescendant => AppStrings.Get("OrganizerContainmentTargetContainedError"),
+        _ => AppStrings.Get("OrganizerContainmentMissingError")
+    };
 
     internal async Task<bool> TryMoveItemToPeerAsync(MainWindow source, string path, NativeMethods.POINT dropPoint)
     {
@@ -1732,7 +1929,7 @@ public sealed class AppHost : IDisposable
         NativeMethods.RECT[] occupied = _windows.Values
             .Where(window => window.OrganizerId != excludeId)
             .Where(window => State.Organizers.First(item => item.Id == window.OrganizerId) is
-                { PlacementMode: OrganizerPlacementMode.Positioned, ContainerStationId: null })
+                { PlacementMode: OrganizerPlacementMode.Positioned, ContainerOrganizerId: null })
             .Select(window => window.CompactBounds)
             .ToArray();
         return DesktopGridService.Find(snapshot, occupied, desiredCenter, compactScale);
@@ -1745,7 +1942,7 @@ public sealed class AppHost : IDisposable
         var occupied = new List<NativeMethods.RECT>();
         bool changed = false;
         foreach (OrganizerDefinition organizer in State.Organizers.Where(item =>
-                     item.PlacementMode == OrganizerPlacementMode.Positioned && item.ContainerStationId is null))
+                     item.PlacementMode == OrganizerPlacementMode.Positioned && item.ContainerOrganizerId is null))
         {
             DisplayInfo display = displays.FirstOrDefault(item => string.Equals(item.Device, organizer.Position?.MonitorDevice, StringComparison.OrdinalIgnoreCase)) ?? primary;
             DesktopGridSnapshot snapshot = ReadGridSnapshot(display);
@@ -2019,6 +2216,23 @@ public sealed class AppHost : IDisposable
             window.ApplyAlwaysOnTopSetting();
     }
 
+    public async Task SetEdgeGlowEnabledAsync(bool enabled)
+    {
+        if (State.GlobalSettings.EdgeGlowEnabled == enabled) return;
+        bool previous = State.GlobalSettings.EdgeGlowEnabled;
+        State.GlobalSettings.EdgeGlowEnabled = enabled;
+        try
+        {
+            await SaveStateAsync();
+        }
+        catch
+        {
+            State.GlobalSettings.EdgeGlowEnabled = previous;
+            throw;
+        }
+        ThemeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public async Task SetExclusiveExpansionAsync(bool enabled)
     {
         if (State.GlobalSettings.ExclusiveExpansion == enabled)
@@ -2130,12 +2344,13 @@ public sealed class AppHost : IDisposable
 
     public async Task ExitAsync()
     {
-        if (_exiting) return;
-        if (TransferQueue.IsActive && !await Console.ConfirmCancelTransferAndExitAsync()) return;
-        if (!await Console.FlushPendingThemeSaveAsync()) return;
+        if (Interlocked.CompareExchange(ref _exiting, 1, 0) != 0) return;
+        if (TransferQueue.IsActive && !await Console.ConfirmCancelTransferAndExitAsync()) { Volatile.Write(ref _exiting, 0); return; }
+        if (!await Console.FlushPendingThemeSaveAsync()) { Volatile.Write(ref _exiting, 0); return; }
         if (!await Console.FlushPendingManageChangesAsync())
         {
             Console.ShowAndActivate();
+            Volatile.Write(ref _exiting, 0);
             return;
         }
 
@@ -2147,6 +2362,7 @@ public sealed class AppHost : IDisposable
         {
             if (await window.FlushForExitAsync()) continue;
             window.ShowAndActivate();
+            Volatile.Write(ref _exiting, 0);
             return;
         }
         TodoWindow[] todoWindows = _externalTodoWindows.Values.Distinct().ToArray();
@@ -2154,12 +2370,13 @@ public sealed class AppHost : IDisposable
         {
             if (await window.FlushForExitAsync()) continue;
             window.ShowAndActivate();
+            Volatile.Write(ref _exiting, 0);
             return;
         }
 
-        _exiting = true;
         TransferQueue.CancelAll();
-        await TransferQueue.WaitForIdleAsync();
+        if (!await TransferQueue.WaitForIdleAsync(TimeSpan.FromSeconds(5)))
+            AppLogger.Error("退出时传输队列未能在 5 秒内结束，将继续关闭窗口。");
         foreach (NoteWindow window in noteWindows) window.ClosePermanentlyWithoutSave();
         foreach (TodoWindow window in todoWindows) window.ClosePermanentlyWithoutSave();
         _noteWindows.Clear();
@@ -2169,6 +2386,7 @@ public sealed class AppHost : IDisposable
         _windows.Clear();
         _tray?.Dispose();
         Console.ClosePermanently();
+        await AppLogger.FlushAsync();
         Application.Current.Exit();
     }
 
@@ -2178,7 +2396,7 @@ public sealed class AppHost : IDisposable
         window.InitializeHostWindow();
         _windows.Add(organizer.Id, window);
         window.Activate();
-        if (organizer.ContainerStationId is not null) window.SetContained(true);
+        if (organizer.ContainerOrganizerId is not null) window.SetContained(true);
         else if (organizer.PlacementMode == OrganizerPlacementMode.Station) window.SetVisible(true);
     }
 
@@ -2186,13 +2404,15 @@ public sealed class AppHost : IDisposable
     {
         _ = _dispatcher.TryEnqueue(async () =>
         {
-            switch (command)
+            try
             {
-                case TrayCommand.OpenConsole:
-                    OpenConsole();
-                    break;
-                case TrayCommand.ShowAll:
-                    foreach (MainWindow window in _windows.Values) window.SetVisible(true);
+                switch (command)
+                {
+                    case TrayCommand.OpenConsole:
+                        OpenConsole();
+                        break;
+                    case TrayCommand.ShowAll:
+                        foreach (MainWindow window in _windows.Values) window.SetVisible(true);
                     foreach (Guid noteId in _trayHiddenNotes.ToArray())
                     {
                         if (_noteWindows.TryGetValue(noteId, out NoteWindow? noteWindow)) noteWindow.RestoreFromTray();
@@ -2208,9 +2428,9 @@ public sealed class AppHost : IDisposable
                         if (_externalTodoWindows.TryGetValue(path, out TodoWindow? todoWindow)) todoWindow.RestoreFromTray();
                     }
                     _trayHiddenExternalTodos.Clear();
-                    break;
-                case TrayCommand.HideAll:
-                    foreach (MainWindow window in _windows.Values) window.SetVisible(false);
+                        break;
+                    case TrayCommand.HideAll:
+                        foreach (MainWindow window in _windows.Values) window.SetVisible(false);
                     _trayHiddenNotes.Clear();
                     foreach ((Guid noteId, NoteWindow noteWindow) in _noteWindows)
                     {
@@ -2232,17 +2452,22 @@ public sealed class AppHost : IDisposable
                         _trayHiddenExternalTodos.Add(path);
                         todoWindow.HideForTray();
                     }
-                    break;
-                case TrayCommand.ToggleStartup:
-                    await SetStartupAsync(!State.GlobalSettings.StartWithWindows);
-                    Console.RefreshAll();
-                    break;
-                case TrayCommand.CancelTransfer:
-                    TransferQueue.CancelCurrent();
-                    break;
-                case TrayCommand.Exit:
-                    await ExitAsync();
-                    break;
+                        break;
+                    case TrayCommand.ToggleStartup:
+                        await SetStartupAsync(!State.GlobalSettings.StartWithWindows);
+                        Console.RefreshAll();
+                        break;
+                    case TrayCommand.CancelTransfer:
+                        TransferQueue.CancelCurrent();
+                        break;
+                    case TrayCommand.Exit:
+                        await ExitAsync();
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"托盘命令处理失败：{command}", ex);
             }
         });
     }

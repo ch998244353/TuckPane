@@ -99,7 +99,6 @@ public sealed class StateStore
                 if (schemaVersion < 7)
                 {
                     current.GlobalSettings.ThemeColorArgb = GlobalSettings.DefaultThemeColorArgb;
-                    current.GlobalSettings.Material = ThemeMaterial.Acrylic;
                     current.GlobalSettings.ThemeTransparency = GlobalSettings.DefaultThemeTransparency;
                 }
                 if (schemaVersion < 8)
@@ -112,7 +111,39 @@ public sealed class StateStore
                     foreach (OrganizerDefinition organizer in current.Organizers ?? [])
                         organizer.StorageOwnedByApp = string.IsNullOrWhiteSpace(organizer.StorageAbsolutePath);
                 }
-                return new(current, schemaVersion < 9, path);
+                if (schemaVersion < 10)
+                {
+                    current.GlobalSettings.ThemeBlurStrength = GlobalSettings.DefaultThemeBlurStrength;
+                    current.GlobalSettings.SettingsThemeBlurStrength = GlobalSettings.DefaultThemeBlurStrength;
+                }
+                if (schemaVersion < 11)
+                {
+                    current.GlobalSettings.OrganizerTextColor = GlobalSettings.DefaultOrganizerTextColor;
+                }
+                if (schemaVersion < 12)
+                {
+                    // Theme transparency was recalibrated in this release.
+                    // Reset both legacy theme endpoints once while preserving
+                    // each user's color, blur strength and all other
+                    // settings. Normalize/Save writes the current schema so subsequent
+                    // loads keep any newly selected transparency values.
+                    current.GlobalSettings.ThemeTransparency = GlobalSettings.DefaultThemeTransparency;
+                    current.GlobalSettings.SettingsThemeTransparency = GlobalSettings.DefaultThemeTransparency;
+                }
+                // Schema 13 removes the two persisted material fields. Older
+                // JSON still deserializes safely because unknown properties
+                // are ignored, then this migration rewrites the state without
+                // those fields so Glass is the only possible treatment.
+                // Schema 14 adds independent solid-colour mode flags. Missing
+                // fields deserialize as false. Schema 15 unifies opacity
+                // semantics so solid colour honours the persisted 0..1 value
+                // and enforces the 5% minimum glass blur.
+                if (schemaVersion < 15)
+                {
+                    current.GlobalSettings.SolidThemeOpacity = 1;
+                    current.GlobalSettings.SettingsSolidThemeOpacity = 1;
+                }
+                return new(current, schemaVersion < 15, path);
             }
 
             AppStateV1 legacy = JsonSerializer.Deserialize<AppStateV1>(json, JsonOptions) ?? new AppStateV1();
@@ -152,8 +183,10 @@ public sealed class StateStore
 
     internal static AppStateV2 Normalize(AppStateV2 state)
     {
-        state.SchemaVersion = 9;
+        state.SchemaVersion = 15;
         state.GlobalSettings ??= new GlobalSettings();
+        state.GlobalSettings.OrganizerTextColor = GlobalSettings.NormalizeOrganizerTextColor(
+            state.GlobalSettings.OrganizerTextColor);
         if (string.IsNullOrWhiteSpace(state.GlobalSettings.DefaultStorageDirectory))
         {
             state.GlobalSettings.DefaultStorageDirectory = null;
@@ -179,6 +212,10 @@ public sealed class StateStore
         state.GlobalSettings.SetTheme(
             ThemeTarget.Settings,
             GlobalSettings.NormalizeTheme(state.GlobalSettings.GetTheme(ThemeTarget.Settings)));
+        state.GlobalSettings.ThemeTransparency = GlobalSettings.NormalizeThemeTransparency(state.GlobalSettings.ThemeTransparency);
+        state.GlobalSettings.SettingsThemeTransparency = GlobalSettings.NormalizeThemeTransparency(state.GlobalSettings.SettingsThemeTransparency);
+        state.GlobalSettings.SolidThemeOpacity = GlobalSettings.NormalizeSolidThemeOpacity(state.GlobalSettings.SolidThemeOpacity);
+        state.GlobalSettings.SettingsSolidThemeOpacity = GlobalSettings.NormalizeSolidThemeOpacity(state.GlobalSettings.SettingsSolidThemeOpacity);
         if (!Enum.IsDefined(state.GlobalSettings.NoteTheme)) state.GlobalSettings.NoteTheme = NoteTheme.SunYellow;
         if (!Enum.IsDefined(state.GlobalSettings.Language)) state.GlobalSettings.Language = AppLanguage.ChineseSimplified;
         if (!Enum.IsDefined(state.GlobalSettings.PerformanceProfile))
@@ -349,41 +386,64 @@ public sealed class StateStore
             organizer.ItemOrder = (organizer.ItemOrder ?? [])
                 .Where(name => !string.IsNullOrWhiteSpace(name))
                 .Select(name => name.StartsWith("note:", StringComparison.OrdinalIgnoreCase) ||
-                    OrganizerInteractionMath.TryParseOrganizerItemKey(name, out _)
+                    OrganizerContainment.TryParseItemKey(name, out _)
                     ? name
                     : Path.GetFileName(name)!)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
 
-        var organizersById = state.Organizers.ToDictionary(organizer => organizer.Id);
+        var originalOrders = state.Organizers.ToDictionary(
+            organizer => organizer.Id,
+            organizer => organizer.ItemOrder.ToList());
+        var requestedContainers = state.Organizers.ToDictionary(
+            organizer => organizer.Id,
+            organizer => organizer.ContainerOrganizerId);
         foreach (OrganizerDefinition organizer in state.Organizers)
         {
-            if (organizer.ContainerStationId is not Guid stationId ||
-                !organizersById.TryGetValue(stationId, out OrganizerDefinition? station) ||
-                !OrganizerInteractionMath.CanContainOrganizer(
-                    organizer.PlacementMode,
-                    station.PlacementMode,
-                    organizer.Id,
-                    station.Id))
+            organizer.ContainerOrganizerId = null;
+        }
+
+        var acceptedParents = new Dictionary<Guid, Guid>();
+        foreach (OrganizerDefinition organizer in state.Organizers)
+        {
+            if (requestedContainers[organizer.Id] is not Guid containerId) continue;
+            if (organizer.PlacementMode == OrganizerPlacementMode.Station ||
+                !state.Organizers.Any(candidate => candidate.Id == containerId) ||
+                organizer.Id == containerId)
+                continue;
+
+            bool cycle = false;
+            var visited = new HashSet<Guid>();
+            Guid current = containerId;
+            while (visited.Add(current))
             {
-                organizer.ContainerStationId = null;
+                if (current == organizer.Id)
+                {
+                    cycle = true;
+                    break;
+                }
+                if (!acceptedParents.TryGetValue(current, out Guid parent)) break;
+                current = parent;
             }
+            if (cycle) continue;
+            acceptedParents[organizer.Id] = containerId;
+            organizer.ContainerOrganizerId = containerId;
         }
 
         foreach (OrganizerDefinition organizer in state.Organizers)
         {
-            HashSet<string> containedKeys = organizer.PlacementMode == OrganizerPlacementMode.Station
-                ? state.Organizers
-                    .Where(candidate => candidate.ContainerStationId == organizer.Id)
-                    .Select(candidate => OrganizerInteractionMath.OrganizerItemKey(candidate.Id))
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase)
-                : [];
-            organizer.ItemOrder = organizer.ItemOrder
-                .Where(key => !OrganizerInteractionMath.TryParseOrganizerItemKey(key, out _) || containedKeys.Contains(key))
+            HashSet<string> containedKeys = state.Organizers
+                .Where(candidate => candidate.ContainerOrganizerId == organizer.Id)
+                .Select(candidate => OrganizerContainment.ItemKey(candidate.Id))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            organizer.ItemOrder = originalOrders[organizer.Id]
+                .Where(key => !OrganizerContainment.TryParseItemKey(key, out _) || containedKeys.Contains(key))
                 .ToList();
-            foreach (string key in containedKeys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase))
+            foreach (OrganizerDefinition child in state.Organizers.Where(candidate =>
+                candidate.ContainerOrganizerId == organizer.Id))
             {
+                string key = OrganizerContainment.ItemKey(child.Id);
                 if (!organizer.ItemOrder.Contains(key, StringComparer.OrdinalIgnoreCase)) organizer.ItemOrder.Add(key);
             }
         }

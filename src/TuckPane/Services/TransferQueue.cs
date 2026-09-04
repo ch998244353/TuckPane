@@ -61,6 +61,18 @@ public sealed class TransferQueue
         lock (_sync) return _idle.Task;
     }
 
+    public async Task<bool> WaitForIdleAsync(TimeSpan timeout)
+    {
+        Task idle = WaitForIdleAsync();
+        if (timeout == Timeout.InfiniteTimeSpan)
+        {
+            await idle;
+            return true;
+        }
+        Task completed = await Task.WhenAny(idle, Task.Delay(timeout));
+        return ReferenceEquals(completed, idle);
+    }
+
     private static TaskCompletionSource CompletedSignal()
     {
         var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

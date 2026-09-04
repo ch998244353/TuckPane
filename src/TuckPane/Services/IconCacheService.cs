@@ -16,7 +16,7 @@ public sealed class IconCacheService
     private const int JumboSize = 256;
     private const int FallbackSize = 32;
     private const int MaximumShortcutIconDepth = 4;
-    private const string CacheVersion = "v7-item-metadata";
+    private const string CacheVersion = "v8-resource-icon-bounds";
     private readonly Dictionary<string, (string Identity, BitmapImage Image)> _memoryCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal static IntPtr CreateDragBitmap(string path, int size)
@@ -40,7 +40,7 @@ public sealed class IconCacheService
     {
         AppPaths.EnsureCreated();
         string key = Path.GetFullPath(path);
-        string identity = BuildCacheIdentity(key);
+        string identity = await Task.Run(() => BuildCacheIdentity(key));
         if (_memoryCache.TryGetValue(key, out var cached) &&
             (!refresh || string.Equals(cached.Identity, identity, StringComparison.Ordinal)))
         {
@@ -81,12 +81,46 @@ public sealed class IconCacheService
     internal static string BuildCacheIdentity(string path)
     {
         string fullPath = Path.GetFullPath(path);
+        return BuildCacheIdentity(fullPath, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static string BuildCacheIdentity(string fullPath, HashSet<string> visited)
+    {
         try
         {
             if (File.Exists(fullPath))
             {
                 var file = new FileInfo(fullPath);
-                return $"{fullPath}|file|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
+                string identity = $"{fullPath}|file|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
+                if (!visited.Add(fullPath)) return identity;
+                string extension = Path.GetExtension(fullPath);
+                if (extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase) &&
+                    TryReadShellLinkIconLocation(fullPath, out string iconPath, out int iconIndex))
+                {
+                    iconPath = NormalizeShortcutResourcePath(fullPath, iconPath);
+                    identity += $"|icon-index|{iconIndex}|target|{BuildCacheIdentity(iconPath, visited)}";
+                }
+                else if (extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase) &&
+                         TryReadShellLinkTarget(fullPath, out string targetPath))
+                {
+                    targetPath = NormalizeShortcutResourcePath(fullPath, targetPath);
+                    identity += $"|target-path|{BuildCacheIdentity(targetPath, visited)}";
+                }
+                else if (extension.Equals(".url", StringComparison.OrdinalIgnoreCase))
+                {
+                    string iconPathValue = ReadInternetShortcutValue(fullPath, "IconFile");
+                    if (!string.IsNullOrWhiteSpace(iconPathValue))
+                    {
+                        iconPathValue = NormalizeShortcutResourcePath(fullPath, iconPathValue.Trim().Trim('"'));
+                        int urlIconIndex = int.TryParse(
+                            ReadInternetShortcutValue(fullPath, "IconIndex"),
+                            NumberStyles.Integer,
+                            CultureInfo.InvariantCulture,
+                            out int parsedIndex) ? parsedIndex : 0;
+                        identity += $"|icon-index|{urlIconIndex}|target|{BuildCacheIdentity(iconPathValue, visited)}";
+                    }
+                }
+                return identity;
             }
             if (Directory.Exists(fullPath))
             {
@@ -99,6 +133,14 @@ public sealed class IconCacheService
             return $"{fullPath}|unavailable|0|0";
         }
         return $"{fullPath}|missing|0|0";
+    }
+
+    private static string NormalizeShortcutResourcePath(string shortcutPath, string resourcePath)
+    {
+        string normalized = Environment.ExpandEnvironmentVariables(resourcePath.Trim().Trim('"'));
+        if (!Path.IsPathFullyQualified(normalized))
+            normalized = Path.Combine(Path.GetDirectoryName(shortcutPath)!, normalized);
+        return Path.GetFullPath(normalized);
     }
 
     private static async Task RefreshAsync(string path, string cachePath)
@@ -133,7 +175,8 @@ public sealed class IconCacheService
         if (!File.Exists(path)) return null;
         string extension = Path.GetExtension(path);
         if (extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase) ||
-            extension.Equals(".url", StringComparison.OrdinalIgnoreCase)) return null;
+            extension.Equals(".url", StringComparison.OrdinalIgnoreCase) ||
+            IsIconResourceExtension(extension)) return null;
         try
         {
             StorageFile file = await StorageFile.GetFileFromPathAsync(path);
@@ -164,21 +207,33 @@ public sealed class IconCacheService
     internal static IconSnapshot ExtractShellIconPixels(string path)
     {
         string extension = Path.GetExtension(path);
-        if (!extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase) &&
-            !extension.Equals(".url", StringComparison.OrdinalIgnoreCase) &&
-            TryExtractShellItemImage(path, JumboSize, out IconSnapshot shellItemImage))
+        if (extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".url", StringComparison.OrdinalIgnoreCase) ||
+            IsIconResourceExtension(extension))
+        {
+            IntPtr icon = GetPreferredIcon(path, JumboSize, out int sourceSize);
+            try
+            {
+                return new(DrawIconPixels(icon, sourceSize), sourceSize, sourceSize);
+            }
+            finally
+            {
+                _ = NativeMethods.DestroyIcon(icon);
+            }
+        }
+        if (TryExtractShellItemImage(path, JumboSize, out IconSnapshot shellItemImage))
         {
             return shellItemImage;
         }
 
-        IntPtr icon = GetPreferredIcon(path, JumboSize, out int sourceSize);
+        IntPtr fallbackIcon = GetPreferredIcon(path, JumboSize, out int fallbackSourceSize);
         try
         {
-            return new(DrawIconPixels(icon, sourceSize), sourceSize, sourceSize);
+            return new(DrawIconPixels(fallbackIcon, fallbackSourceSize), fallbackSourceSize, fallbackSourceSize);
         }
         finally
         {
-            _ = NativeMethods.DestroyIcon(icon);
+            _ = NativeMethods.DestroyIcon(fallbackIcon);
         }
     }
 
@@ -194,6 +249,11 @@ public sealed class IconCacheService
             sourceSize = requestedSize;
             return shellLinkIcon;
         }
+        if (TryGetResourceIcon(path, requestedSize, out IntPtr resourceIcon))
+        {
+            sourceSize = requestedSize;
+            return resourceIcon;
+        }
         if (TryGetJumboIcon(path, out IntPtr jumboIcon))
         {
             sourceSize = JumboSize;
@@ -203,38 +263,37 @@ public sealed class IconCacheService
         return GetFallbackIcon(path);
     }
 
-    private static bool TryGetInternetShortcutIcon(string path, int size, out IntPtr icon)
+    private static bool IsIconResourceExtension(string extension) =>
+        extension.Equals(".ico", StringComparison.OrdinalIgnoreCase) ||
+        extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+        extension.Equals(".dll", StringComparison.OrdinalIgnoreCase) ||
+        extension.Equals(".scr", StringComparison.OrdinalIgnoreCase) ||
+        extension.Equals(".cpl", StringComparison.OrdinalIgnoreCase) ||
+        extension.Equals(".ocx", StringComparison.OrdinalIgnoreCase) ||
+        extension.Equals(".sys", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryGetResourceIcon(string path, int size, out IntPtr icon)
     {
         icon = IntPtr.Zero;
-        if (!Path.GetExtension(path).Equals(".url", StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) return false;
+        if (!IsIconResourceExtension(Path.GetExtension(path)) || !File.Exists(path)) return false;
         try
         {
-            string iconFile = ReadInternetShortcutValue(path, "IconFile");
-            if (string.IsNullOrWhiteSpace(iconFile)) return false;
-            iconFile = Environment.ExpandEnvironmentVariables(iconFile.Trim());
-            if (!Path.IsPathFullyQualified(iconFile))
-                iconFile = Path.Combine(Path.GetDirectoryName(path)!, iconFile);
-            iconFile = Path.GetFullPath(iconFile);
-            if (iconFile.StartsWith(@"\\", StringComparison.Ordinal) || !File.Exists(iconFile)) return false;
-
-            int iconIndex = int.TryParse(
-                ReadInternetShortcutValue(path, "IconIndex"),
-                NumberStyles.Integer,
-                CultureInfo.InvariantCulture,
-                out int parsedIndex)
-                ? parsedIndex
-                : 0;
-            int result = NativeMethods.SHDefExtractIcon(iconFile, iconIndex, 0, out icon, out IntPtr smallIcon, (uint)size);
+            int result = NativeMethods.SHDefExtractIcon(path, 0, 0, out icon, out IntPtr smallIcon, (uint)size);
             if (smallIcon != IntPtr.Zero) _ = NativeMethods.DestroyIcon(smallIcon);
             if (result == 0 && icon != IntPtr.Zero) return true;
             if (icon != IntPtr.Zero) _ = NativeMethods.DestroyIcon(icon);
-            icon = IntPtr.Zero;
         }
         catch
         {
-            icon = IntPtr.Zero;
+            // Fall through to the Shell image list/fallback path.
         }
+        icon = IntPtr.Zero;
         return false;
+    }
+
+    private static bool TryGetInternetShortcutIcon(string path, int size, out IntPtr icon)
+    {
+        return TryGetShortcutIcon(path, size, out icon);
     }
 
     private static string ReadInternetShortcutValue(string path, string key)
@@ -246,32 +305,71 @@ public sealed class IconCacheService
 
     private static bool TryGetShellLinkIcon(string path, int size, out IntPtr icon)
     {
+        return TryGetShortcutIcon(path, size, out icon);
+    }
+
+    private static bool TryGetShortcutIcon(string path, int size, out IntPtr icon)
+    {
         icon = IntPtr.Zero;
-        if (!Path.GetExtension(path).Equals(".lnk", StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) return false;
+        string extension = Path.GetExtension(path);
+        if ((!extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase) &&
+             !extension.Equals(".url", StringComparison.OrdinalIgnoreCase)) ||
+            !File.Exists(path)) return false;
+        return TryGetShortcutIcon(path, size, new HashSet<string>(StringComparer.OrdinalIgnoreCase), out icon);
+    }
 
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private static bool TryGetShortcutIcon(
+        string path,
+        int size,
+        HashSet<string> visited,
+        out IntPtr icon)
+    {
+        icon = IntPtr.Zero;
         string current = Path.GetFullPath(path);
-        for (int depth = 0; depth < MaximumShortcutIconDepth && visited.Add(current); depth++)
+        if (!visited.Add(current) || visited.Count > MaximumShortcutIconDepth) return false;
+        try
         {
-            if (!TryReadShellLinkIconLocation(current, out string iconPath, out int iconIndex)) return false;
-            iconPath = Environment.ExpandEnvironmentVariables(iconPath.Trim());
-            if (!Path.IsPathFullyQualified(iconPath))
-                iconPath = Path.Combine(Path.GetDirectoryName(current)!, iconPath);
-            iconPath = Path.GetFullPath(iconPath);
-            if (iconPath.StartsWith(@"\\", StringComparison.Ordinal) || !File.Exists(iconPath)) return false;
-            if (Path.GetExtension(iconPath).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
+            string extension = Path.GetExtension(current);
+            string iconPath;
+            int iconIndex;
+            if (extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase))
             {
-                current = iconPath;
-                continue;
+                if (!TryReadShellLinkIconLocation(current, out iconPath, out iconIndex))
+                {
+                    if (!TryReadShellLinkTarget(current, out iconPath)) return false;
+                    iconIndex = 0;
+                }
             }
+            else if (extension.Equals(".url", StringComparison.OrdinalIgnoreCase))
+            {
+                iconPath = ReadInternetShortcutValue(current, "IconFile");
+                if (string.IsNullOrWhiteSpace(iconPath)) return false;
+                iconIndex = int.TryParse(
+                    ReadInternetShortcutValue(current, "IconIndex"),
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out int parsedIndex) ? parsedIndex : 0;
+            }
+            else return false;
 
-            int result = NativeMethods.SHDefExtractIcon(iconPath, iconIndex, 0, out icon, out IntPtr smallIcon, (uint)size);
+            iconPath = NormalizeShortcutResourcePath(current, iconPath);
+            if (iconPath.StartsWith(@"\\", StringComparison.Ordinal) || !File.Exists(iconPath)) return false;
+            string targetExtension = Path.GetExtension(iconPath);
+            if (targetExtension.Equals(".lnk", StringComparison.OrdinalIgnoreCase) ||
+                targetExtension.Equals(".url", StringComparison.OrdinalIgnoreCase))
+                return TryGetShortcutIcon(iconPath, size, visited, out icon);
+
+            int result = NativeMethods.SHDefExtractIcon(
+                iconPath, iconIndex, 0, out icon, out IntPtr smallIcon, (uint)size);
             if (smallIcon != IntPtr.Zero) _ = NativeMethods.DestroyIcon(smallIcon);
             if (result == 0 && icon != IntPtr.Zero) return true;
             if (icon != IntPtr.Zero) _ = NativeMethods.DestroyIcon(icon);
-            icon = IntPtr.Zero;
-            return false;
         }
+        catch
+        {
+            // Fall through to the normal Shell icon fallback.
+        }
+        icon = IntPtr.Zero;
         return false;
     }
 
@@ -287,6 +385,29 @@ public sealed class IconCacheService
             var value = new StringBuilder(32768);
             if (shellLink.GetIconLocation(value, value.Capacity, out iconIndex) < 0 || value.Length == 0) return false;
             iconPath = value.ToString();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (shellLink is not null && Marshal.IsComObject(shellLink)) _ = Marshal.FinalReleaseComObject(shellLink);
+        }
+    }
+
+    private static bool TryReadShellLinkTarget(string shortcutPath, out string targetPath)
+    {
+        targetPath = string.Empty;
+        NativeMethods.IShellLinkW? shellLink = null;
+        try
+        {
+            shellLink = (NativeMethods.IShellLinkW)new NativeMethods.ShellLink();
+            ((System.Runtime.InteropServices.ComTypes.IPersistFile)shellLink).Load(shortcutPath, 0);
+            var value = new StringBuilder(32768);
+            if (shellLink.GetPath(value, value.Capacity, IntPtr.Zero, 0) < 0 || value.Length == 0) return false;
+            targetPath = value.ToString();
             return true;
         }
         catch
@@ -517,10 +638,46 @@ public sealed class IconCacheService
         return bitmap;
     }
 
+    internal static bool TryGetVisiblePixelBounds(
+        IconSnapshot snapshot,
+        out IconVisibleBounds bounds,
+        byte alphaThreshold = 16)
+    {
+        int left = snapshot.Width;
+        int top = snapshot.Height;
+        int right = -1;
+        int bottom = -1;
+        for (int y = 0; y < snapshot.Height; y++)
+        {
+            for (int x = 0; x < snapshot.Width; x++)
+            {
+                int alphaIndex = (y * snapshot.Width + x) * 4 + 3;
+                if (snapshot.Pixels[alphaIndex] < alphaThreshold) continue;
+                left = Math.Min(left, x);
+                top = Math.Min(top, y);
+                right = Math.Max(right, x);
+                bottom = Math.Max(bottom, y);
+            }
+        }
+        if (right < left || bottom < top)
+        {
+            bounds = default;
+            return false;
+        }
+        bounds = new(left, top, right + 1, bottom + 1);
+        return true;
+    }
+
     private static string Hash(string path)
     {
         byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{CacheVersion}|{path.ToUpperInvariant()}"));
         return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    internal readonly record struct IconVisibleBounds(int Left, int Top, int Right, int Bottom)
+    {
+        internal int Width => Right - Left;
+        internal int Height => Bottom - Top;
     }
 
     internal sealed record IconSnapshot(byte[] Pixels, int Width, int Height)

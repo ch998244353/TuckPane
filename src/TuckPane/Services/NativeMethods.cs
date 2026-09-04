@@ -8,6 +8,22 @@ internal static class NativeMethods
     internal static bool SupportsWindows11DwmAttributes =>
         OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000);
 
+    internal static bool SetHostBackdropBrushEnabled(IntPtr window, bool enabled)
+    {
+        if (!SupportsWindows11DwmAttributes || window == IntPtr.Zero) return false;
+        int value = enabled ? 1 : 0;
+        int result = DwmSetWindowAttribute(window, DWMWA_USE_HOSTBACKDROPBRUSH, ref value, sizeof(int));
+        string state = enabled ? "启用" : "禁用";
+        if (result >= 0)
+            AppLogger.Info($"DwmSetWindowAttribute(DWMWA_USE_HOSTBACKDROPBRUSH，{state}) 完成，HRESULT=0x{result:X8}。");
+        else
+            AppLogger.Error($"DwmSetWindowAttribute(DWMWA_USE_HOSTBACKDROPBRUSH，{state}) 失败，HRESULT=0x{result:X8}。");
+        return result >= 0;
+    }
+
+    internal static bool EnableHostBackdropBrush(IntPtr window) =>
+        SetHostBackdropBrushEnabled(window, enabled: true);
+
     internal const int GWL_STYLE = -16;
     internal const int GWL_EXSTYLE = -20;
     internal const int GWLP_WNDPROC = -4;

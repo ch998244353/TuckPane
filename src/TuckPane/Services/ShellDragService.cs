@@ -326,7 +326,13 @@ internal static class ShellDragService
         ArgumentNullException.ThrowIfNull(session);
         session.ThrowIfDisposed();
         long dragStarted = Stopwatch.GetTimestamp();
-        var dropSource = new DesktopAwareDropSource(owner, desktopExclusionBounds, dragStarted, cancellationRequested);
+        DesktopTargetSnapshot desktopSnapshot = DesktopTargetSnapshot.Capture();
+        var dropSource = new DesktopAwareDropSource(
+            owner,
+            desktopExclusionBounds,
+            desktopSnapshot,
+            dragStarted,
+            cancellationRequested);
         int oleResult = OleInitialize(IntPtr.Zero);
         if (oleResult < 0) Marshal.ThrowExceptionForHR(oleResult);
         IntPtr dropSourcePointer = IntPtr.Zero;
@@ -425,6 +431,7 @@ internal static class ShellDragService
     private sealed class DesktopAwareDropSource(
         IntPtr owner,
         NativeMethods.RECT desktopExclusionBounds,
+        DesktopTargetSnapshot desktopSnapshot,
         long dragStarted,
         Func<bool>? cancellationRequested) : IDropSource
     {
@@ -442,7 +449,7 @@ internal static class ShellDragService
             NotifyShellLoopActive();
             if (escapePressed || cancellationRequested?.Invoke() == true) return DragDropCancel;
             if ((keyState & MouseKeyLeft) != 0) return Success;
-            if (IsDesktopTarget(owner, out NativeMethods.POINT dropPoint))
+            if (desktopSnapshot.TryGetDesktopDrop(owner, out NativeMethods.POINT dropPoint))
             {
                 if (DragBoundaryMath.Contains(desktopExclusionBounds, dropPoint)) return DragDropCancel;
                 DesktopRequested = true;
@@ -476,44 +483,122 @@ internal static class ShellDragService
         }
     }
 
-    private static bool IsDesktopTarget(IntPtr owner, out NativeMethods.POINT point)
+    private sealed class DesktopTargetSnapshot
     {
-        point = default;
-        if (!NativeMethods.GetCursorPos(out point)) return false;
-        IntPtr hit = NativeMethods.WindowFromPoint(point);
-        if (hit == IntPtr.Zero || hit == owner || NativeMethods.IsChild(owner, hit)) return false;
-        for (IntPtr current = hit; current != IntPtr.Zero; current = NativeMethods.GetParent(current))
+        private DesktopTargetSnapshot(IntPtr desktopView, IntPtr listView, IntPtr desktopHost)
         {
-            _ = NativeMethods.GetWindowThreadProcessId(current, out uint processId);
-            if (processId == Environment.ProcessId || IsTuckPaneProcess(processId)) return false;
+            DesktopView = desktopView;
+            ListView = listView;
+            DesktopHost = desktopHost;
         }
-        IntPtr desktopView = DesktopLayerService.FindDesktopIconView();
-        if (desktopView == IntPtr.Zero) return false;
-        IntPtr listView = NativeMethods.FindWindowEx(desktopView, IntPtr.Zero, "SysListView32", "FolderView");
-        IntPtr desktopHost = NativeMethods.GetParent(desktopView);
-        for (IntPtr current = hit; current != IntPtr.Zero; current = NativeMethods.GetParent(current))
+
+        private IntPtr DesktopView { get; }
+        private IntPtr ListView { get; }
+        private IntPtr DesktopHost { get; }
+
+        internal static DesktopTargetSnapshot Capture()
         {
-            if (current == listView || current == desktopView || current == desktopHost) return true;
+            // Prefer a handle discovered during normal desktop attachment. If
+            // none is cached, perform only a bounded EnumWindows lookup; do
+            // not send the worker-spawn message on the drag/UI critical path.
+            IntPtr desktopView = DesktopLayerService.GetCachedDesktopIconView();
+            if (desktopView == IntPtr.Zero)
+                desktopView = DesktopLayerService.FindDesktopIconView(allowWorkerSpawn: false);
+            return new(
+                desktopView,
+                desktopView == IntPtr.Zero
+                    ? IntPtr.Zero
+                    : NativeMethods.FindWindowEx(desktopView, IntPtr.Zero, "SysListView32", "FolderView"),
+                desktopView == IntPtr.Zero ? IntPtr.Zero : NativeMethods.GetParent(desktopView));
         }
-        return false;
+
+        internal bool TryGetDesktopDrop(IntPtr owner, out NativeMethods.POINT point)
+        {
+            point = default;
+            if (DesktopView == IntPtr.Zero || !NativeMethods.IsWindow(DesktopView) ||
+                !NativeMethods.GetCursorPos(out point)) return false;
+            IntPtr hit = NativeMethods.WindowFromPoint(point);
+            if (hit == IntPtr.Zero || hit == owner || NativeMethods.IsChild(owner, hit)) return false;
+            return hit == ListView || hit == DesktopView || hit == DesktopHost ||
+                (ListView != IntPtr.Zero && NativeMethods.IsChild(ListView, hit)) ||
+                (DesktopView != IntPtr.Zero && NativeMethods.IsChild(DesktopView, hit));
+        }
     }
 
-    private static bool IsTuckPaneProcess(uint processId)
+    internal static async Task<ShellDragSession> PrepareAsync(
+        string path,
+        double grabRatioX = .5,
+        double grabRatioY = .5,
+        bool preferMove = false,
+        CancellationToken cancellationToken = default)
     {
-        if (processId == 0) return false;
+        long started = Stopwatch.GetTimestamp();
+        cancellationToken.ThrowIfCancellationRequested();
+        ShellDataObject data = CreateDataObject(path);
+        IntPtr bitmap = IntPtr.Zero;
+        bool dragImageInitialized = false;
         try
         {
-            using Process process = Process.GetProcessById(checked((int)processId));
-            return string.Equals(process.ProcessName, "TuckPane", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(process.ProcessName, "GlassFolder", StringComparison.OrdinalIgnoreCase);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (preferMove)
+            {
+                object dataObject = Marshal.GetObjectForIUnknown(data.Pointer);
+                try { SetPreferredDropEffect((IDataObject)dataObject, DropEffectMove); }
+                finally { if (Marshal.IsComObject(dataObject)) _ = Marshal.ReleaseComObject(dataObject); }
+            }
+
+            try
+            {
+                Task<IntPtr> bitmapTask = Task.Run(
+                    () => IconCacheService.CreateDragBitmap(path, DragImageSize));
+                if (cancellationToken.CanBeCanceled)
+                {
+                    Task completed = await Task.WhenAny(
+                        bitmapTask,
+                        Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken));
+                    if (!ReferenceEquals(completed, bitmapTask))
+                    {
+                        _ = bitmapTask.ContinueWith(
+                            task =>
+                            {
+                                if (task.Status == TaskStatus.RanToCompletion && task.Result != IntPtr.Zero)
+                                    _ = NativeMethods.DeleteObject(task.Result);
+                                else if (task.IsFaulted)
+                                    _ = task.Exception;
+                            },
+                            CancellationToken.None,
+                            TaskContinuationOptions.ExecuteSynchronously,
+                            TaskScheduler.Default);
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+                }
+                bitmap = await bitmapTask;
+                cancellationToken.ThrowIfCancellationRequested();
+                var grabOffset = new ShellDragPoint
+                {
+                    X = Math.Clamp((int)Math.Round(grabRatioX * DragImageSize), 0, DragImageSize - 1),
+                    Y = Math.Clamp((int)Math.Round(grabRatioY * DragImageSize), 0, DragImageSize - 1)
+                };
+                dragImageInitialized = TryInitializeDragImage(data.Pointer, bitmap, grabOffset);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("无法准备自定义Shell拖动图像，将继续使用系统默认反馈。", ex);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return new ShellDragSession(path, data, bitmap, dragImageInitialized, Stopwatch.GetElapsedTime(started));
         }
-        catch (ArgumentException)
+        catch
         {
-            return false;
-        }
-        catch (InvalidOperationException)
-        {
-            return false;
+            if (bitmap != IntPtr.Zero) _ = NativeMethods.DeleteObject(bitmap);
+            data.Dispose();
+            throw;
         }
     }
 

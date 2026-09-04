@@ -19,6 +19,12 @@
   <data name="StartupTitle" xml:space="preserve"><value>Windows 起動時に TuckPane を開始</value></data>
   <data name="CollapseOutsideTitle" xml:space="preserve"><value>ウィンドウ外のクリックで収納</value></data>
   <data name="NoteAlwaysOnTopTitle" xml:space="preserve"><value>付箋と To Do を常に手前に表示</value></data>
+  <data name="EdgeGlowTitle" xml:space="preserve"><value>エッジグローを表示</value></data>
+  <data name="OrganizerTextColorTitle" xml:space="preserve"><value>収納ウィンドウの文字色</value></data>
+  <data name="OrganizerTextColorAuto" xml:space="preserve"><value>自動</value></data>
+  <data name="OrganizerTextColorWhite" xml:space="preserve"><value>白</value></data>
+  <data name="OrganizerTextColorBlack" xml:space="preserve"><value>黒</value></data>
+  <data name="OrganizerTextColorErrorTitle" xml:space="preserve"><value>収納ウィンドウの文字色を保存できません</value></data>
   <data name="WindowAlignmentTitle" xml:space="preserve"><value>ドラッグ中にウィンドウを整列</value></data>
   <data name="RememberExpandedOrganizerPositionTitle" xml:space="preserve"><value>収納ウィンドウの展開位置を記憶</value></data>
   <data name="UniformFloatingCompactScaleTitle" xml:space="preserve"><value>フローティング入口サイズを統一</value></data>
@@ -44,13 +50,13 @@
   <data name="ThemeTargetSettings" xml:space="preserve"><value>設定画面</value></data>
   <data name="ThemeTargetOrganizer" xml:space="preserve"><value>収納ウィンドウ</value></data>
   <data name="ThemeColorLabel" xml:space="preserve"><value>色</value></data>
+  <data name="ThemeModeLabel" xml:space="preserve"><value>背景モード</value></data>
+  <data name="ThemeGlassMode" xml:space="preserve"><value>ガラスモード</value></data>
+  <data name="ThemeSolidMode" xml:space="preserve"><value>単色モード</value></data>
   <data name="ThemeColorPresetFormat" xml:space="preserve"><value>テーマ色 {0}</value></data>
   <data name="ThemeCustomColor" xml:space="preserve"><value>カスタム</value></data>
-  <data name="ThemeMaterialLabel" xml:space="preserve"><value>素材</value></data>
-  <data name="ThemeMaterialAcrylic" xml:space="preserve"><value>アクリル</value></data>
-  <data name="ThemeMaterialGlass" xml:space="preserve"><value>ガラス</value></data>
-  <data name="ThemeMaterialMatte" xml:space="preserve"><value>マット</value></data>
   <data name="ThemeTransparencyLabel" xml:space="preserve"><value>背景の透明度</value></data>
+  <data name="ThemeBlurStrengthLabel" xml:space="preserve"><value>ぼかしの強さ</value></data>
   <data name="ThemeSaveErrorTitle" xml:space="preserve"><value>テーマを保存できません</value></data>
   <data name="AddTitle" xml:space="preserve"><value>収納ウィンドウを追加</value></data>
   <data name="NameLabel" xml:space="preserve"><value>名前</value></data>
@@ -123,9 +129,14 @@
   <data name="StationEdgeOccupiedError" xml:space="preserve"><value>この画面端には既にステーションがあります。別の端を選択してください。</value></data>
   <data name="StationDuplicateError" xml:space="preserve"><value>ステーションは複製できません。</value></data>
   <data name="StationManageModeError" xml:space="preserve"><value>ステーションモードは、フローティングまたは配置モードとの間で切り替えできません。</value></data>
-  <data name="StationContainsOrganizersError" xml:space="preserve"><value>このステーションには収納ウィンドウが残っています。削除する前に外へドラッグしてください。</value></data>
-  <data name="ContainedOrganizerNoGridError" xml:space="preserve"><value>移動先のディスプレイに空きグリッドがないため、収納ウィンドウを元のステーションへ戻しました。</value></data>
-  <data name="OrganizerStationDropError" xml:space="preserve"><value>収納ウィンドウをステーションへ配置できませんでした: {0}</value></data>
+  <data name="OrganizerContainerDropError" xml:space="preserve"><value>収納ウィンドウを移動先の収納ウィンドウに配置できませんでした: {0}</value></data>
+  <data name="OrganizerContainmentSelfError" xml:space="preserve"><value>収納ウィンドウをそのウィンドウ自身に入れることはできません。</value></data>
+  <data name="OrganizerContainmentStationSourceError" xml:space="preserve"><value>ステーションを別の収納ウィンドウに入れることはできません。</value></data>
+  <data name="OrganizerContainmentSourceHasChildrenError" xml:space="preserve"><value>内部に収納ウィンドウがある収納ウィンドウを、さらに別の収納ウィンドウに入れることはできません。</value></data>
+  <data name="OrganizerContainmentTargetContainedError" xml:space="preserve"><value>すでに別の収納ウィンドウ内にある収納ウィンドウへは追加できません。先にデスクトップへ戻してください。</value></data>
+  <data name="OrganizerContainmentMissingError" xml:space="preserve"><value>移動元または移動先の収納ウィンドウが見つかりません。</value></data>
+  <data name="OrganizerReleaseNoGridError" xml:space="preserve"><value>内部の配置モードの収納ウィンドウを戻すデスクトップグリッドに空きがないため、この収納ウィンドウは削除されませんでした。</value></data>
+  <data name="ContainedOrganizerNoGridError" xml:space="preserve"><value>移動先のディスプレイに空きグリッドがないため、収納ウィンドウを元の収納先へ戻しました。</value></data>
   <data name="MoveOrganizerFilesOnDeleteTitle" xml:space="preserve"><value>収納ウィンドウ削除時にファイルをデスクトップへ移動</value></data>
   <data name="DeleteBehaviorErrorTitle" xml:space="preserve"><value>削除設定を保存できません</value></data>
   <data name="CompactNameScaleTitle" xml:space="preserve"><value>収納時の名前サイズ</value></data>
@@ -215,6 +226,7 @@
   <data name="LanguageErrorTitle" xml:space="preserve"><value>言語を切り替えられません</value></data>
   <data name="CollapseOutsideErrorTitle" xml:space="preserve"><value>自動収納の設定を更新できません</value></data>
   <data name="NoteAlwaysOnTopErrorTitle" xml:space="preserve"><value>付箋と To Do の最前面表示設定を更新できません</value></data>
+  <data name="EdgeGlowErrorTitle" xml:space="preserve"><value>エッジグロー設定を更新できません</value></data>
   <data name="WindowAlignmentErrorTitle" xml:space="preserve"><value>ウィンドウ整列を更新できません</value></data>
   <data name="RememberExpandedOrganizerPositionErrorTitle" xml:space="preserve"><value>展開位置の設定を保存できません</value></data>
   <data name="ExpandOnHoverErrorTitle" xml:space="preserve"><value>ホバー展開の設定を更新できません</value></data>

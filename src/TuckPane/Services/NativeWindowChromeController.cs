@@ -9,13 +9,18 @@ internal sealed class NativeWindowChromeController : IDisposable
     private readonly IntPtr _window;
     private readonly DispatcherQueue _dispatcher;
     private readonly NativeMethods.SubclassProc _subclass;
+    private readonly bool _extendClientFrame;
     private int _visibleFrameThickness = 1;
     private bool _disposed;
 
-    internal NativeWindowChromeController(IntPtr window, DispatcherQueue dispatcher)
+    internal NativeWindowChromeController(
+        IntPtr window,
+        DispatcherQueue dispatcher,
+        bool extendClientFrame = true)
     {
         _window = window;
         _dispatcher = dispatcher;
+        _extendClientFrame = extendClientFrame;
         _subclass = WindowProc;
         _ = NativeMethods.SetWindowSubclass(window, _subclass, SubclassId, IntPtr.Zero);
         Apply(refreshFrame: true);
@@ -43,9 +48,13 @@ internal sealed class NativeWindowChromeController : IDisposable
             LogResult(getFrame, "DwmGetWindowAttribute(DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)");
             if (getFrame >= 0 && visibleFrame > 0) frameThickness = visibleFrame;
         }
-        _visibleFrameThickness = frameThickness;
-
-        var margins = new NativeMethods.MARGINS { Top = frameThickness };
+        // A zero-margin call explicitly clears any previous sheet-of-glass
+        // extension.  The theme pipeline owns desktop sampling and blur; this
+        // controller must never request a full-client DWM glass surface.
+        _visibleFrameThickness = _extendClientFrame ? frameThickness : 0;
+        NativeMethods.MARGINS margins = _extendClientFrame
+            ? new NativeMethods.MARGINS { Top = frameThickness }
+            : new NativeMethods.MARGINS();
         LogResult(NativeMethods.DwmExtendFrameIntoClientArea(_window, ref margins), "DwmExtendFrameIntoClientArea");
 
         if (refreshFrame)
@@ -89,7 +98,8 @@ internal sealed class NativeWindowChromeController : IDisposable
         if (message == NativeMethods.WM_NCCALCSIZE && wParam != UIntPtr.Zero && lParam != IntPtr.Zero)
         {
             var parameters = Marshal.PtrToStructure<NativeMethods.NCCALCSIZE_PARAMS>(lParam);
-            parameters.ProposedClient.Top -= Math.Max(1, _visibleFrameThickness);
+            if (_visibleFrameThickness > 0)
+                parameters.ProposedClient.Top -= _visibleFrameThickness;
             Marshal.StructureToPtr(parameters, lParam, fDeleteOld: false);
             return result;
         }

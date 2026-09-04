@@ -7,6 +7,869 @@ using Windows.Storage;
 using System.Text.Json;
 using System.Xml.Linq;
 
+// Sep 04 drag/resize stability gate.  This entry point is intentionally
+// source/pure-logic based: it never creates a WinUI window, starts OLE, or
+// drives a mouse/keyboard.  Keep this branch focused on the new performance
+// contracts only; legacy selectors below remain unchanged.
+if (args is ["--sep04-drag-stability"])
+{
+    var failures = new List<string>();
+
+    static void Require(List<string> list, bool condition, string message)
+    {
+        if (!condition) list.Add(message);
+    }
+
+    static string ExtractBlock(string source, string marker)
+    {
+        int start = source.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0) return string.Empty;
+        int open = source.IndexOf('{', start);
+        if (open < 0) return source[start..];
+        int depth = 0;
+        bool inString = false;
+        bool inChar = false;
+        bool escaped = false;
+        for (int index = open; index < source.Length; index++)
+        {
+            char ch = source[index];
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+            if ((inString || inChar) && ch == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+            if (!inChar && ch == '"')
+            {
+                inString = !inString;
+                continue;
+            }
+            if (!inString && ch == '\'')
+            {
+                inChar = !inChar;
+                continue;
+            }
+            if (inString || inChar) continue;
+            if (ch == '{') depth++;
+            else if (ch == '}' && --depth == 0) return source[start..(index + 1)];
+        }
+        return source[start..];
+    }
+
+    static int CountOccurrences(string source, string value)
+    {
+        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(value)) return 0;
+        int count = 0;
+        for (int offset = 0; (offset = source.IndexOf(value, offset, StringComparison.Ordinal)) >= 0;
+             offset += value.Length)
+        {
+            count++;
+        }
+        return count;
+    }
+
+    string sourceRoot = Environment.CurrentDirectory;
+    while (!File.Exists(Path.Combine(sourceRoot, "src", "TuckPane", "TuckPane.csproj")) &&
+           Directory.GetParent(sourceRoot) is DirectoryInfo parent)
+    {
+        sourceRoot = parent.FullName;
+    }
+
+    string Read(string relative) => File.ReadAllText(Path.Combine(sourceRoot, "src", "TuckPane", relative));
+    string mainSource = Read("MainWindow.xaml.cs");
+    string storageSource = Read("Services\\StorageService.cs");
+    string shellSource = Read("Services\\ShellDragService.cs");
+    string iconSource = Read("Services\\IconCacheService.cs");
+    string loggerSource = Read("Services\\AppLogger.cs");
+
+    // Drag-in progress must not create a Dispatcher-capturing Progress<T>
+    // for every copied chunk.  Null or an explicitly non-capturing/throttled
+    // sink is acceptable for these no-progress UI paths.
+    string importBlock = ExtractBlock(mainSource, "private async Task ImportFromDragAsync");
+    string pasteBlock = ExtractBlock(mainSource, "private async void PasteMenuItem_Click");
+    Require(failures,
+        !importBlock.Contains("new Progress<TransferProgress>(_ => { })", StringComparison.Ordinal) &&
+        !pasteBlock.Contains("new Progress<TransferProgress>(_ => { })", StringComparison.Ordinal),
+        "拖入/粘贴路径仍创建捕获 UI 上下文的空 Progress<TransferProgress>。");
+    Require(failures,
+        importBlock.Contains("progress = null", StringComparison.Ordinal) ||
+        importBlock.Contains("NonCapturing", StringComparison.OrdinalIgnoreCase) ||
+        importBlock.Contains("Throttl", StringComparison.OrdinalIgnoreCase),
+        "拖入路径没有使用 null、非捕获或节流进度 sink。");
+
+    // FileSystemWatcher notifications must collapse to one pending dispatcher
+    // callback instead of flooding the UI queue.
+    string watcherBlock = ExtractBlock(mainSource, "private void Watcher_Changed");
+    Require(failures,
+        watcherBlock.Contains("Interlocked.Exchange", StringComparison.Ordinal) &&
+        watcherBlock.Contains("_watcherRefreshPosted", StringComparison.Ordinal),
+        "FileSystemWatcher 事件没有使用原子 pending 标志合并刷新。");
+
+    // Refresh uses a cancellation/generation gate and performs filesystem
+    // enumeration off the UI thread.  Icon completion must be bounded rather
+    // than issuing unbounded concurrent Shell work.
+    Require(failures,
+        mainSource.Contains("_catalogRefreshGeneration", StringComparison.Ordinal) &&
+        mainSource.Contains("_catalogRefreshCancellation", StringComparison.Ordinal) &&
+        mainSource.Contains("Interlocked.Increment(ref _catalogRefreshGeneration)", StringComparison.Ordinal),
+        "catalog refresh 缺少可取消、带 generation 的旧任务淘汰契约。");
+    string refreshBlock = ExtractBlock(mainSource, "private async Task RefreshCatalogCoreAsync");
+    Require(failures,
+        refreshBlock.Contains("Task.Run", StringComparison.Ordinal) &&
+        refreshBlock.Contains("generation != Volatile.Read", StringComparison.Ordinal),
+        "catalog 刷新没有在 worker 线程读取目录，或没有阻止旧 generation 覆盖新列表。");
+    string iconBlock = ExtractBlock(mainSource, "private async Task LoadIconAsync");
+    Require(failures,
+        (mainSource + iconSource).Contains("SemaphoreSlim", StringComparison.Ordinal) ||
+        (mainSource + iconSource).Contains("Parallel.ForEachAsync", StringComparison.Ordinal) ||
+        (mainSource + iconSource).Contains("MaxDegreeOfParallelism", StringComparison.Ordinal) ||
+        iconBlock.Contains("WaitAsync", StringComparison.Ordinal),
+        "图标后台补全没有可观察的限并发门控（SemaphoreSlim/等价队列）。");
+
+    // DragOver must be a cheap read of DragEnter's cached classification.  A
+    // synchronous IDataObject COM probe on every pointer update is a freeze
+    // amplifier, especially when the shell owns the drag loop.
+    string itemsDragOver = ExtractBlock(mainSource, "private void ItemsGrid_DragOver");
+    string rootDragOver = ExtractBlock(mainSource, "private void WindowRoot_DragOver");
+    Require(failures,
+        !itemsDragOver.Contains("HasLocalFileDrop(e.DataView)", StringComparison.Ordinal) &&
+        !rootDragOver.Contains("HasLocalFileDrop(e.DataView)", StringComparison.Ordinal),
+        "DragOver 仍重复执行同步 DataView/Shell 文件探测，没有复用 DragEnter 缓存。");
+    Require(failures,
+        mainSource.Contains("DragEnter", StringComparison.Ordinal) &&
+        (mainSource.Contains("_dragHasLocalFile", StringComparison.OrdinalIgnoreCase) ||
+         mainSource.Contains("_externalDragHasFiles", StringComparison.OrdinalIgnoreCase) ||
+         mainSource.Contains("_cachedFileDrop", StringComparison.OrdinalIgnoreCase)),
+        "拖动文件类型没有在 DragEnter 阶段缓存供 DragOver/Drop 复用。");
+
+    // OLE callbacks must not enumerate windows or synchronously probe the
+    // desktop on every QueryContinueDrag call.  A per-drag target snapshot is
+    // required; callback work should remain bounded and lightweight.
+    string queryBlock = ExtractBlock(shellSource, "public int QueryContinueDrag");
+    Require(failures,
+        (!queryBlock.Contains("IsDesktopTarget(", StringComparison.Ordinal) ||
+         queryBlock.Contains("desktopSnapshot.IsDesktopTarget(", StringComparison.Ordinal)) &&
+        !queryBlock.Contains("FindDesktopIconView", StringComparison.Ordinal) &&
+        !queryBlock.Contains("EnumWindows", StringComparison.Ordinal) &&
+        !queryBlock.Contains("SendMessageTimeout", StringComparison.Ordinal) &&
+        !queryBlock.Contains("GetProcessById", StringComparison.Ordinal),
+        "Shell OLE QueryContinueDrag 仍包含桌面窗口/进程同步探测，可能阻塞拖动回调。");
+    Require(failures,
+        shellSource.Contains("DesktopTargetSnapshot", StringComparison.OrdinalIgnoreCase) ||
+        shellSource.Contains("CachedDesktopTarget", StringComparison.OrdinalIgnoreCase) ||
+        shellSource.Contains("desktopTargetCache", StringComparison.OrdinalIgnoreCase) ||
+        shellSource.Contains("_desktopTarget", StringComparison.OrdinalIgnoreCase),
+        "Shell 拖动没有可复用的桌面目标快照/缓存入口。");
+
+    // Hook startup/shutdown must never synchronously wait on a hook thread
+    // from the UI thread.  Rendering-loop fallback remains the safe path.
+    string ensureHook = ExtractBlock(mainSource, "private bool EnsureItemDragBoundaryHook");
+    string shutdownHook = ExtractBlock(mainSource, "private void ShutdownItemDragBoundaryHook");
+    Require(failures,
+        !ensureHook.Contains(".Wait(500)", StringComparison.Ordinal) &&
+        !shutdownHook.Contains(".Join(500)", StringComparison.Ordinal),
+        "项目外拖 hook 安装/退出仍在 UI 线程同步 Wait/Join 500ms。");
+    Require(failures,
+        mainSource.Contains("渲染循环边界检测", StringComparison.Ordinal) ||
+        mainSource.Contains("rendering loop", StringComparison.OrdinalIgnoreCase),
+        "hook 不可用时缺少渲染循环边界检测降级路径。");
+
+    // Drag entry points need Task-returning boundaries so cleanup exceptions
+    // cannot escape async-void event handlers.  The shared RunSafelyAsync
+    // wrapper is still required at event seams.
+    foreach (string marker in new[]
+    {
+        "private async void BeginContainedOrganizerDrag",
+        "private async void BeginNativeShellDrag",
+        "private async void BeginXamlShellDrag"
+    })
+    {
+        Require(failures, !mainSource.Contains(marker, StringComparison.Ordinal),
+            $"拖动入口仍是 {marker}，清理异常可能逃逸 Dispatcher。");
+    }
+    Require(failures,
+        mainSource.Contains("RunSafelyAsync", StringComparison.Ordinal) &&
+        mainSource.Contains("cleanupError", StringComparison.Ordinal),
+        "拖动清理没有统一安全异常边界。");
+
+    // Contained organizer dragging must have explicit cancellation, capture
+    // loss and maximum-duration exits; a bare while + Delay(16) can otherwise
+    // leave _shellDragActive set forever.
+    string nestedDrag = ExtractBlock(mainSource, "private async Task BeginContainedOrganizerDrag");
+    if (nestedDrag.Length == 0)
+        nestedDrag = ExtractBlock(mainSource, "private async void BeginContainedOrganizerDrag");
+    Require(failures,
+        nestedDrag.Contains("CancellationToken", StringComparison.Ordinal) ||
+        nestedDrag.Contains("CancellationTokenSource", StringComparison.Ordinal),
+        "嵌套收纳窗拖动没有可传播的取消 token。");
+    Require(failures,
+        nestedDrag.Contains("GetElapsedTime", StringComparison.Ordinal) ||
+        nestedDrag.Contains("Max", StringComparison.OrdinalIgnoreCase) &&
+        nestedDrag.Contains("TimeSpan", StringComparison.Ordinal),
+        "嵌套收纳窗拖动没有最大持续时间/超时出口。");
+
+    // Window movement must be consumed by one render tick.  Pointer handlers
+    // may record input, but must not submit competing SetWindowPos calls.
+    string dragRendering = ExtractBlock(mainSource, "private void DragRendering");
+    Require(failures,
+        dragRendering.Contains("CommitWidgetDrag", StringComparison.Ordinal) &&
+        mainSource.Contains("_pendingWidgetDragCursor", StringComparison.Ordinal) &&
+        mainSource.Contains("_hasPendingWidgetDragCursor", StringComparison.Ordinal) &&
+        dragRendering.Count(ch => ch == ';') > 0,
+        "窗口拖动没有通过单一渲染节拍消费待处理光标。");
+    string expandedMoved = ExtractBlock(mainSource, "private void ExpandedView_PointerMoved");
+    string compactMoved = ExtractBlock(mainSource, "private void CompactTile_PointerMoved");
+    Require(failures,
+        !expandedMoved.Contains("UpdateWidgetDragFromCursor", StringComparison.Ordinal) &&
+        !compactMoved.Contains("UpdateWidgetDragFromCursor", StringComparison.Ordinal),
+        "PointerMoved 仍直接提交窗口位置，和渲染循环形成竞争。");
+    string commitBlock = ExtractBlock(mainSource, "private void CommitWidgetDrag");
+    Require(failures,
+        CountOccurrences(commitBlock, "NativeMethods.SetWindowPos(") <= 1,
+        "单次窗口拖动提交路径包含多次 SetWindowPos，未满足每帧单次提交契约。");
+
+    // Runtime-only pure TransferQueue checks.  No windows, COM or real input
+    // are involved; this verifies serial ordering, cancellation and idle
+    // convergence without re-running legacy transfer tests.
+    try
+    {
+        var queue = new TransferQueue();
+        int active = 0;
+        int maximumActive = 0;
+        var order = new List<int>();
+        Task<int>[] serialTasks = Enumerable.Range(0, 3).Select(index => queue.RunAsync(async token =>
+        {
+            int now = Interlocked.Increment(ref active);
+            int observed;
+            do
+            {
+                observed = Volatile.Read(ref maximumActive);
+                if (now <= observed) break;
+            }
+            while (Interlocked.CompareExchange(ref maximumActive, now, observed) != observed);
+            await Task.Delay(20, token);
+            lock (order) order.Add(index);
+            Interlocked.Decrement(ref active);
+            return index;
+        })).ToArray();
+        await Task.WhenAll(serialTasks);
+        Require(failures, maximumActive == 1, "TransferQueue 同时执行了多个传输 action。");
+        Require(failures, order.Count == 3 && order.Distinct().Count() == 3,
+            "TransferQueue 没有完成每个排队 action，或发生了重复执行。");
+        Require(failures, await queue.WaitForIdleAsync(TimeSpan.FromSeconds(1)), "TransferQueue 完成后未及时进入 idle。");
+
+        var cancelQueue = new TransferQueue();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<int> cancelled = cancelQueue.RunAsync(async token =>
+        {
+            started.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return 1;
+        });
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        cancelQueue.CancelCurrent();
+        try
+        {
+            await cancelled;
+            failures.Add("TransferQueue.CancelCurrent 未取消当前 action。");
+        }
+        catch (OperationCanceledException) { }
+        Require(failures, await cancelQueue.WaitForIdleAsync(TimeSpan.FromSeconds(1)), "CancelCurrent 后 TransferQueue 未及时 idle。");
+    }
+    catch (Exception ex)
+    {
+        failures.Add($"TransferQueue 纯逻辑专项执行异常：{ex.GetType().Name}: {ex.Message}");
+    }
+
+    // Recursive filesystem operations must check cancellation in enumeration,
+    // verification and copy loops, not only at the outer batch boundary.
+    string copyDirectoryBlock = ExtractBlock(storageSource, "private static async Task CopyDirectoryAsync");
+    Require(failures,
+        copyDirectoryBlock.Contains("CancellationToken", StringComparison.Ordinal) &&
+        copyDirectoryBlock.Contains("ThrowIfCancellationRequested", StringComparison.Ordinal),
+        "CopyDirectoryAsync 缺少递归枚举循环中的取消检查。");
+    string copyFileBlock = ExtractBlock(storageSource, "private static async Task CopyFileAsync");
+    Require(failures,
+        copyFileBlock.Contains("CancellationToken", StringComparison.Ordinal) &&
+        copyFileBlock.Contains("ReadAsync", StringComparison.Ordinal) &&
+        copyFileBlock.Contains("WriteAsync", StringComparison.Ordinal) &&
+        copyFileBlock.Contains("cancellationToken", StringComparison.Ordinal),
+        "CopyFileAsync 没有把取消 token 传递到异步读写 I/O。");
+    string verifyBlock = ExtractBlock(storageSource, "private static void VerifyEquivalent");
+    Require(failures,
+        verifyBlock.Contains("CancellationToken", StringComparison.Ordinal) &&
+        verifyBlock.Contains("BuildManifest(source, cancellationToken)", StringComparison.Ordinal) &&
+        verifyBlock.Contains("BuildManifest(destination, cancellationToken)", StringComparison.Ordinal),
+        "VerifyEquivalent 没有把取消 token 传播到递归清单校验。");
+    string manifestBlock = ExtractBlock(storageSource, "private static DirectoryManifest BuildManifest");
+    Require(failures,
+        manifestBlock.Contains("CancellationToken", StringComparison.Ordinal) &&
+        manifestBlock.Contains("ThrowIfCancellationRequested", StringComparison.Ordinal),
+        "BuildManifest 缺少递归枚举循环中的取消检查。");
+    Require(failures,
+        storageSource.Contains("TryDelete(staging)", StringComparison.Ordinal) &&
+        storageSource.Contains("OperationCanceledException", StringComparison.Ordinal),
+        "传输取消后没有统一清理 staging 并返回 Cancelled 状态。");
+
+    // Performance trace is opt-in and logging failures must not affect the app.
+    Require(failures,
+        loggerSource.Contains("TUCKPANE_PERF_TRACE", StringComparison.Ordinal) &&
+        loggerSource.Contains("Channel.CreateBounded", StringComparison.Ordinal) &&
+        loggerSource.Contains("catch", StringComparison.Ordinal),
+        "AppLogger 缺少默认关闭的性能开关/有界异步日志及失败隔离。");
+
+    if (failures.Count > 0)
+        throw new InvalidOperationException(
+            $"Sep 04 drag stability gate failed ({failures.Count}): {string.Join("；", failures)}");
+
+    Console.WriteLine("PASS: Sep 04 drag stability");
+    return;
+}
+
+// Sep 04 focused contracts for the bottom Station layer transition, organizer
+// text-color migration/contrast and smooth wheel input.  This selector is
+// intentionally pure-logic/source based: it never creates a window or drives
+// real input devices.
+if (args is ["--sep04-bottom-name-wheel"])
+{
+    var failures = new List<string>();
+    static void Require(List<string> list, bool condition, string message)
+    {
+        if (!condition) list.Add(message);
+    }
+
+    string sourceRoot = Environment.CurrentDirectory;
+    while (!Directory.Exists(Path.Combine(sourceRoot, "src")) &&
+           Directory.GetParent(sourceRoot) is DirectoryInfo parent)
+        sourceRoot = parent.FullName;
+    string Read(string relative) => File.ReadAllText(Path.Combine(sourceRoot, "src", "TuckPane", relative));
+    string mainSource = Read("MainWindow.xaml.cs");
+    string desktopLayer = Read("Services\\DesktopLayerService.cs");
+    string consoleSource = Read("ConsoleWindow.xaml.cs");
+    string consoleXaml = Read("ConsoleWindow.xaml");
+
+    // Bottom Station must leave the desktop owner before it is shown/raised;
+    // restoring the owner must not carry SWP_SHOWWINDOW.  Keep this as a
+    // source-level contract so it remains deterministic without HWND tests.
+    int expandStart = mainSource.IndexOf("private async Task ExpandAsync", StringComparison.Ordinal);
+    int collapseStart = mainSource.IndexOf("private async Task CollapseAsync", StringComparison.Ordinal);
+    int expandEnd = collapseStart > expandStart ? collapseStart : mainSource.Length;
+    string expandSource = expandStart >= 0 ? mainSource[expandStart..expandEnd] : string.Empty;
+    int ownerDetach = expandSource.IndexOf("SetExpanded(true, stayTopmost: true)", StringComparison.Ordinal);
+    int expandedShow = expandSource.IndexOf("ApplyBounds(expandedBounds, show: true", StringComparison.Ordinal);
+    Require(failures, ownerDetach >= 0 && expandedShow >= 0 && ownerDetach < expandedShow,
+        "Station 展开未先脱离 desktop owner/topmost，再移动并显示自身。");
+    Require(failures,
+        desktopLayer.Contains("SWP_NOOWNERZORDER", StringComparison.Ordinal) &&
+        desktopLayer.Contains("HWND_TOPMOST", StringComparison.Ordinal) &&
+        desktopLayer.Contains("HWND_NOTOPMOST", StringComparison.Ordinal),
+        "DesktopLayerService 缺少安全的 topmost/no-owner-z-order 转换契约。");
+    var bottomDisplay = new DisplayInfo(
+        "sep04-bottom-display",
+        new NativeMethods.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 },
+        new NativeMethods.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1040 },
+        1);
+    Require(failures,
+        DisplayPlacementService.IsStationHotZone(
+            new NativeMethods.POINT { X = 960, Y = 1075 }, bottomDisplay,
+            OrganizerDockEdge.Bottom, GlobalSettings.DefaultStationActivationDistanceDip) &&
+        !DisplayPlacementService.IsStationHotZone(
+            new NativeMethods.POINT { X = 960, Y = 5 }, bottomDisplay,
+            OrganizerDockEdge.Bottom, GlobalSettings.DefaultStationActivationDistanceDip) &&
+        !DisplayPlacementService.IsStationHotZone(
+            new NativeMethods.POINT { X = 1920, Y = 1075 }, bottomDisplay,
+            OrganizerDockEdge.Bottom, GlobalSettings.DefaultStationActivationDistanceDip),
+        "底部 Station 热区未限制在配置显示器底边，或误触发其他边缘/显示器。");
+    Type? layerMath = typeof(OrganizerInteractionMath).Assembly.GetType("TuckPane.Core.StationLayerTransitionMath");
+    var expandPlanProperty = layerMath?.GetProperty("ExpandPlan",
+        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+    var collapsePlanProperty = layerMath?.GetProperty("CollapsePlan",
+        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+    string[] expandPlan = (expandPlanProperty?.GetValue(null) as System.Collections.IEnumerable)?.Cast<object>()
+        .Select(item => item.ToString() ?? string.Empty).ToArray() ?? [];
+    string[] collapsePlan = (collapsePlanProperty?.GetValue(null) as System.Collections.IEnumerable)?.Cast<object>()
+        .Select(item => item.ToString() ?? string.Empty).ToArray() ?? [];
+    Require(failures,
+        expandPlan.SequenceEqual(["DetachDesktopOwner", "SetTopmostNoActivate", "MoveAndShow"]),
+        "Station 展开纯逻辑计划未按脱离 owner→topmost→移动显示顺序定义。");
+    Require(failures,
+        collapsePlan.SequenceEqual(["Hide", "ClearTopmost", "AttachDesktopOwner"]),
+        "Station 收缩纯逻辑计划未按隐藏→解除 topmost→恢复 owner 顺序定义。");
+    int reattachOwner = desktopLayer.IndexOf("if (_desktopIconView", StringComparison.Ordinal);
+    if (reattachOwner >= 0)
+    {
+        string ownerRestore = desktopLayer[reattachOwner..];
+        int showFlag = ownerRestore.IndexOf("SWP_SHOWWINDOW", StringComparison.Ordinal);
+        int ownerChanged = ownerRestore.IndexOf("ownerChanged", StringComparison.Ordinal);
+        Require(failures, showFlag < 0 || ownerChanged < 0 || showFlag > ownerRestore.IndexOf("if (!ownerChanged)", StringComparison.Ordinal),
+            "恢复 desktop owner 时仍可能使用 SWP_SHOWWINDOW，导致 peer 窗口被整体显示/抬升。");
+    }
+
+    // Text color enum/persistence: legacy 0/1 remain White/Black, value 2 is
+    // Auto, and missing/invalid values normalize to Auto.
+    Require(failures, Enum.GetNames<OrganizerTextColor>().Contains("Auto"),
+        "OrganizerTextColor 缺少 Auto 枚举值。");
+    Require(failures, (int)OrganizerTextColor.White == 0 && (int)OrganizerTextColor.Black == 1,
+        "OrganizerTextColor 旧磁盘数值 0/1 未保持 White/Black 含义。");
+    OrganizerTextColor autoValue = (OrganizerTextColor)2;
+    Require(failures, GlobalSettings.DefaultOrganizerTextColor == autoValue,
+        "名称颜色默认值不是 Auto。");
+    Require(failures, GlobalSettings.NormalizeOrganizerTextColor((OrganizerTextColor)99) == autoValue,
+        "非法名称颜色没有归一为 Auto。");
+
+    string sep04MigrationRoot = Path.Combine(Path.GetTempPath(), $"TuckPane-sep04-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(sep04MigrationRoot);
+    try
+    {
+        async Task<AppStateV2> Load(string json)
+        {
+            string path = Path.Combine(sep04MigrationRoot, Guid.NewGuid() + ".json");
+            await File.WriteAllTextAsync(path, json);
+            return await new StateStore(path).LoadAsync();
+        }
+        AppStateV2 legacy = await Load("{\"SchemaVersion\":10,\"GlobalSettings\":{},\"Organizers\":[]}");
+        AppStateV2 missing = await Load("{\"SchemaVersion\":15,\"GlobalSettings\":{},\"Organizers\":[]}");
+        AppStateV2 explicitWhite = await Load("{\"SchemaVersion\":15,\"GlobalSettings\":{\"OrganizerTextColor\":0},\"Organizers\":[]}");
+        AppStateV2 explicitBlack = await Load("{\"SchemaVersion\":15,\"GlobalSettings\":{\"OrganizerTextColor\":1},\"Organizers\":[]}");
+        AppStateV2 explicitAuto = await Load("{\"SchemaVersion\":15,\"GlobalSettings\":{\"OrganizerTextColor\":2},\"Organizers\":[]}");
+        AppStateV2 invalid = await Load("{\"SchemaVersion\":15,\"GlobalSettings\":{\"OrganizerTextColor\":99},\"Organizers\":[]}");
+        Require(failures, legacy.GlobalSettings.OrganizerTextColor == autoValue && missing.GlobalSettings.OrganizerTextColor == autoValue,
+            "旧 Schema/当前 Schema 缺失名称颜色字段没有迁移为 Auto。");
+        Require(failures, explicitWhite.GlobalSettings.OrganizerTextColor == OrganizerTextColor.White &&
+            explicitBlack.GlobalSettings.OrganizerTextColor == OrganizerTextColor.Black &&
+            explicitAuto.GlobalSettings.OrganizerTextColor == autoValue,
+            "显式保存的名称颜色值 0/1/2 没有保持 White/Black/Auto。");
+        Require(failures, invalid.GlobalSettings.OrganizerTextColor == autoValue,
+            "JSON 非法名称颜色值没有归一为 Auto。");
+    }
+    finally
+    {
+        if (Directory.Exists(sep04MigrationRoot)) Directory.Delete(sep04MigrationRoot, recursive: true);
+    }
+
+    // ThemePalette contrast resolver is pure and deterministic.  Reflection
+    // keeps this test compiling against the pre-feature baseline (red first).
+    var resolveText = typeof(ThemePalette).GetMethod(
+        "ResolveOrganizerTextColor",
+        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+    Require(failures, resolveText is not null,
+        "ThemePalette 缺少 ResolveOrganizerTextColor 纯逻辑入口。");
+    if (resolveText is not null)
+    {
+        object? Resolve(OrganizerTextColor mode, ThemeValues theme) =>
+            resolveText.Invoke(null, [mode, theme]);
+        ThemeValues light = new(0xFFF4F5F7, .35);
+        ThemeValues dark = new(0xFF202124, .35);
+        object? autoLight = Resolve(autoValue, light);
+        object? autoDark = Resolve(autoValue, dark);
+        object? white = Resolve(OrganizerTextColor.White, light);
+        object? black = Resolve(OrganizerTextColor.Black, dark);
+        Require(failures, autoLight is Windows.UI.Color lightColor && lightColor.R < 64 && lightColor.G < 64 && lightColor.B < 64,
+            "亮色主题 Auto 名称颜色没有选择高对比度黑色。");
+        Require(failures, autoDark is Windows.UI.Color darkColor && darkColor.R > 220 && darkColor.G > 220 && darkColor.B > 220,
+            "暗色主题 Auto 名称颜色没有选择高对比度白色。");
+        Require(failures, white is Windows.UI.Color wc && wc.R > 240 && wc.G > 240 && wc.B > 240 &&
+            black is Windows.UI.Color bc && bc.R < 40 && bc.G < 40 && bc.B < 40,
+            "显式白/黑没有返回稳定纯色覆盖。");
+    }
+    Require(failures,
+        consoleXaml.Contains("OrganizerTextColorAuto", StringComparison.Ordinal) &&
+        consoleSource.Contains("OrganizerTextColorAuto", StringComparison.Ordinal) &&
+        consoleSource.Contains("Tag", StringComparison.Ordinal) &&
+        !consoleSource.Contains("SelectedIndex = (int)GlobalSettings.NormalizeOrganizerTextColor", StringComparison.Ordinal),
+        "名称颜色设置缺少 Auto 资源或仍依赖 ComboBox.SelectedIndex 数值映射。");
+    Require(failures,
+        mainSource.Contains("ResolveOrganizerTextColor", StringComparison.Ordinal) &&
+        (mainSource.Contains("CompactName", StringComparison.Ordinal) || mainSource.Contains("NameBrush", StringComparison.Ordinal)),
+        "收起标题、展开标题和项目名称没有统一接入动态名称画刷刷新。");
+
+    // Wheel action and smooth-state contracts.
+    Type wheelType = typeof(OrganizerInteractionMath).Assembly.GetType("TuckPane.Core.OrganizerWheelAction")!;
+    Require(failures, wheelType.IsEnum && Enum.GetNames(wheelType).Contains("ScrollGrid"),
+        "OrganizerWheelAction 缺少图标模式普通滚动动作 ScrollGrid。");
+    var resolveWheel = typeof(OrganizerInteractionMath).GetMethod("ResolveWheelAction",
+        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+    if (resolveWheel is not null)
+    {
+        object? iconAction = resolveWheel.Invoke(null, [true, false, false, false, false, false, false, true]);
+        Require(failures, iconAction?.ToString() == "ScrollGrid",
+            "图标模式普通滚轮没有进入 ScrollGrid 动作。");
+    }
+    Require(failures,
+        mainSource.Contains("ScrollGrid", StringComparison.Ordinal) &&
+        mainSource.Contains("ScrollTo", StringComparison.Ordinal) &&
+        mainSource.Contains("PointerWheelChanged", StringComparison.Ordinal),
+        "图标/精简滚轮没有接入统一 ScrollTo 平滑滚动入口。");
+    Require(failures,
+        mainSource.Contains("Handled = true", StringComparison.Ordinal) ||
+        mainSource.Contains("e.Handled", StringComparison.Ordinal),
+        "图标和精简模式未屏蔽 ScrollView 默认鼠标滚轮，可能发生双重滚动。");
+    Require(failures,
+        mainSource.Contains("ScrollableHeight", StringComparison.Ordinal) &&
+        mainSource.Contains("Remainder", StringComparison.Ordinal) &&
+        (mainSource.Contains("PowerSaver", StringComparison.Ordinal) || mainSource.Contains("ReducedMotion", StringComparison.Ordinal)),
+        "平滑滚动状态缺少余量、动态 ScrollableHeight 边界或减少动画收敛处理。");
+
+    // Exercise the pure scroll state seam when present: high-resolution wheel
+    // remainder, queued targets, hard bounds and critically-damped stepping.
+    Type? scrollMath = typeof(OrganizerInteractionMath).Assembly.GetType("TuckPane.Core.OrganizerScrollMath");
+    Type? scrollStateType = typeof(OrganizerInteractionMath).Assembly.GetType("TuckPane.Core.SmoothScrollState");
+    Require(failures, scrollMath is not null && scrollStateType is not null,
+        "缺少 OrganizerScrollMath/SmoothScrollState 纯逻辑滚动入口。");
+    if (scrollMath is not null && scrollStateType is not null)
+    {
+        var state = new SmoothScrollState(0, 0, 0, 0);
+        SmoothScrollState half = OrganizerScrollMath.ConsumeWheelDelta(state, 60, 36, 500);
+        SmoothScrollState full = OrganizerScrollMath.ConsumeWheelDelta(half, 60, 36, 500);
+        Require(failures, half.Remainder == 60 && Math.Abs(half.TargetOffset) < .001,
+            "+60 高精度滚轮未保留余量且未提前改变目标。");
+        Require(failures, full.Remainder == 0 && Math.Abs(full.TargetOffset) < .001,
+            "第二个 +60 未与已有余量合并并在顶部硬边界夹紧。");
+
+        SmoothScrollState queued = OrganizerScrollMath.QueueTarget(
+            new SmoothScrollState(24, 80, 0, 0), 36, 200);
+        Require(failures, Math.Abs(queued.TargetOffset - 116) < .001,
+            "连续输入没有累加到已有目标偏移。");
+        SmoothScrollState clamped = OrganizerScrollMath.ClampState(
+            new SmoothScrollState(180, 240, 0, 0), 100);
+        Require(failures, clamped.CurrentOffset == 100 && clamped.TargetOffset == 100,
+            "ScrollableHeight 缩小时 current/target 没有同步夹紧。");
+        SmoothScrollState down = OrganizerScrollMath.ConsumeWheelDelta(
+            new SmoothScrollState(200, 200, 0, 0), -240, 36, 500);
+        Require(failures, down.TargetOffset > 200 && down.Remainder == 0,
+            "-240 滚轮未按 Windows 语义向下累计两行。");
+        SmoothScrollState stepped = OrganizerScrollMath.Step(
+            new SmoothScrollState(0, 180, 0, 0), .016, 300, false);
+        Require(failures, stepped.CurrentOffset > 0 && stepped.CurrentOffset < 180,
+            "临界阻尼动画帧未在 current 与 target 之间推进。");
+        SmoothScrollState reduced = OrganizerScrollMath.Step(
+            new SmoothScrollState(0, 180, 0, 0), .016, 300, true);
+        Require(failures, reduced.CurrentOffset == 180 && reduced.Velocity == 0,
+            "减少动画效果时滚动没有直接收敛到目标。");
+        SmoothScrollState invalidRow = OrganizerScrollMath.ConsumeWheelDelta(
+            state, 120, double.NaN, 500);
+        Require(failures, !double.IsNaN(invalidRow.CurrentOffset) && invalidRow.Remainder == 0,
+            "非法行高导致滚动状态 NaN 或残余未清理。");
+    }
+
+    if (failures.Count > 0)
+        throw new InvalidOperationException($"{failures[0]}（本专项共 {failures.Count} 项契约未满足）");
+
+    Console.WriteLine("PASS: Sep 04 bottom Station, name color and smooth wheel");
+    return;
+}
+
+if (args is ["--sep03-organizer-visual-input-fixes"])
+{
+    var failures = new List<string>();
+    static void Require(List<string> failures, bool condition, string message)
+    {
+        if (!condition) failures.Add(message);
+    }
+
+    object? InvokeOrganizerMath(string methodName, Type[] parameterTypes, object?[] arguments)
+    {
+        System.Reflection.MethodInfo? method = typeof(OrganizerInteractionMath).GetMethod(
+            methodName,
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic,
+            binder: null,
+            types: parameterTypes,
+            modifiers: null);
+        Require(failures, method is not null, $"缺少收纳窗专项纯逻辑入口：OrganizerInteractionMath.{methodName}。");
+        return method?.Invoke(null, arguments);
+    }
+
+    string sourceRoot = Environment.CurrentDirectory;
+    string mainWindowXamlPath = Path.Combine(sourceRoot, "src", "TuckPane", "MainWindow.xaml");
+    string mainWindowSourcePath = Path.Combine(sourceRoot, "src", "TuckPane", "MainWindow.xaml.cs");
+    string consoleXamlPath = Path.Combine(sourceRoot, "src", "TuckPane", "ConsoleWindow.xaml");
+    string consoleSourcePath = Path.Combine(sourceRoot, "src", "TuckPane", "ConsoleWindow.xaml.cs");
+    string edgeSurfacePath = Path.Combine(sourceRoot, "src", "TuckPane", "Services", "ThemeEdgeSurface.cs");
+
+    string mainWindowXaml = await File.ReadAllTextAsync(mainWindowXamlPath);
+    string mainWindowSource = await File.ReadAllTextAsync(mainWindowSourcePath);
+    string consoleXaml = await File.ReadAllTextAsync(consoleXamlPath);
+    string consoleSource = await File.ReadAllTextAsync(consoleSourcePath);
+    string edgeSurfaceSource = await File.ReadAllTextAsync(edgeSurfacePath);
+
+    XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+    XElement? fallbackElement = XDocument.Parse(mainWindowXaml)
+        .Descendants()
+        .FirstOrDefault(element => (string?)element.Attribute(x + "Name") == "ItemFallbackIcon");
+    Require(failures, fallbackElement is not null, "项目模板缺少 ItemFallbackIcon。");
+    Require(failures, (string?)fallbackElement?.Attribute("Visibility") == "Collapsed",
+        "ItemFallbackIcon 的初始状态不是 Collapsed，透明图标仍会露出白色文档轮廓。");
+
+    object? Fallback(bool hasImageSource, bool iconLoadPending, bool organizerPreviewVisible) =>
+        InvokeOrganizerMath(
+            "ShouldShowItemFallback",
+            [typeof(bool), typeof(bool), typeof(bool)],
+            [hasImageSource, iconLoadPending, organizerPreviewVisible]);
+    object? loadedFallback = Fallback(true, false, false);
+    object? loadingFallback = Fallback(false, true, false);
+    object? failedFallback = Fallback(false, false, false);
+    object? builtInFallback = Fallback(true, false, false);
+    object? organizerPreviewFallback = Fallback(false, false, true);
+    Require(failures,
+        loadedFallback is false && loadingFallback is false && failedFallback is true &&
+        builtInFallback is false && organizerPreviewFallback is false,
+        "真实图标、加载中、加载失败、内置图标和收纳窗预览没有遵守图片/兜底互斥矩阵。");
+    Require(failures,
+        mainWindowSource.Contains("ShouldShowItemFallback", StringComparison.Ordinal),
+        "MainWindow 未统一使用图片/兜底互斥逻辑，刷新或收缩仍可能重新显示兜底。");
+
+    System.Reflection.PropertyInfo? edgeGlowProperty = typeof(GlobalSettings).GetProperty("EdgeGlowEnabled");
+    Require(failures, edgeGlowProperty?.PropertyType == typeof(bool),
+        "GlobalSettings 缺少持久化布尔设置 EdgeGlowEnabled。");
+    Require(failures,
+        edgeGlowProperty?.GetValue(new GlobalSettings()) is true,
+        "EdgeGlowEnabled 默认值不是 true。");
+
+    string persistenceRoot = Path.Combine(Path.GetTempPath(), $"TuckPane-sep03-edge-glow-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(persistenceRoot);
+    try
+    {
+        string legacyPath = Path.Combine(persistenceRoot, "schema15-missing.json");
+        await File.WriteAllTextAsync(legacyPath,
+            """
+            {
+              "SchemaVersion": 15,
+              "GlobalSettings": {},
+              "Organizers": []
+            }
+            """);
+        AppStateV2 missingField = await new StateStore(legacyPath).LoadAsync();
+        Require(failures,
+            edgeGlowProperty?.GetValue(missingField.GlobalSettings) is true,
+            "Schema 15 配置缺少 EdgeGlowEnabled 时没有自然加载为 true。");
+
+        if (edgeGlowProperty is not null)
+        {
+            string disabledPath = Path.Combine(persistenceRoot, "disabled.json");
+            var disabledState = new AppStateV2();
+            edgeGlowProperty.SetValue(disabledState.GlobalSettings, false);
+            var store = new StateStore(disabledPath);
+            await store.SaveAsync(disabledState);
+            AppStateV2 reloaded = await store.LoadAsync();
+            Require(failures,
+                edgeGlowProperty.GetValue(reloaded.GlobalSettings) is false,
+                "关闭 EdgeGlowEnabled 后保存重载没有保持 false。");
+        }
+    }
+    finally
+    {
+        Directory.Delete(persistenceRoot, recursive: true);
+    }
+
+    Require(failures,
+        consoleXaml.Contains("x:Name=\"EdgeGlowToggle\"", StringComparison.Ordinal) &&
+        consoleXaml.Contains("Toggled=\"EdgeGlowToggle_Toggled\"", StringComparison.Ordinal),
+        "设置的显示页面缺少边缘弧光 ToggleSwitch 或切换事件。");
+    Require(failures,
+        edgeSurfaceSource.Contains("internal void SetEnabled(bool enabled)", StringComparison.Ordinal) &&
+        edgeSurfaceSource.Contains("_visual.IsVisible = enabled", StringComparison.Ordinal),
+        "ThemeEdgeSurface 未通过 Composition Visual 可见性提供 SetEnabled。");
+    Require(failures,
+        mainWindowSource.Contains("_compactEdgeSurface.SetEnabled", StringComparison.Ordinal) &&
+        mainWindowSource.Contains("_expandedEdgeSurface.SetEnabled", StringComparison.Ordinal) &&
+        consoleSource.Contains("_settingsEdgeSurface.SetEnabled", StringComparison.Ordinal),
+        "收起、展开和设置内容区三处边缘层没有全部接入 EdgeGlowEnabled。");
+
+    Type? wheelActionType = typeof(OrganizerInteractionMath).Assembly.GetType("TuckPane.Core.OrganizerWheelAction");
+    Require(failures, wheelActionType?.IsEnum == true, "缺少 OrganizerWheelAction 枚举。");
+    if (wheelActionType?.IsEnum == true)
+    {
+        string[] requiredActions = ["Ignore", "ScrollCompactList", "ScaleCompactList", "ScaleGrid"];
+        string[] actualActions = Enum.GetNames(wheelActionType);
+        Require(failures, requiredActions.All(actualActions.Contains),
+            "OrganizerWheelAction 缺少 Ignore、ScrollCompactList、ScaleCompactList 或 ScaleGrid。");
+    }
+
+    string? ResolveAction(
+        bool expanded,
+        bool animating,
+        bool resizing,
+        bool reordering,
+        bool shellDragging,
+        bool controlPressed,
+        bool compactList,
+        bool pointerInsideList) => InvokeOrganizerMath(
+            "ResolveWheelAction",
+            [typeof(bool), typeof(bool), typeof(bool), typeof(bool), typeof(bool), typeof(bool), typeof(bool), typeof(bool)],
+            [expanded, animating, resizing, reordering, shellDragging, controlPressed, compactList, pointerInsideList])?.ToString();
+
+    Require(failures,
+        ResolveAction(true, false, false, false, false, false, true, true) == "ScrollCompactList" &&
+        ResolveAction(true, false, false, false, false, true, true, true) == "ScaleCompactList" &&
+        ResolveAction(true, false, false, false, false, true, false, true) == "ScaleGrid",
+        "普通精简滚动、Ctrl 精简缩放和 Ctrl 图标缩放没有解析为独立动作。");
+    Require(failures,
+        ResolveAction(false, false, false, false, false, false, true, true) == "Ignore" &&
+        ResolveAction(true, true, false, false, false, false, true, true) == "Ignore" &&
+        ResolveAction(true, false, true, false, false, false, true, true) == "Ignore" &&
+        ResolveAction(true, false, false, true, false, false, true, true) == "Ignore" &&
+        ResolveAction(true, false, false, false, true, false, true, true) == "Ignore" &&
+        ResolveAction(true, false, false, false, false, false, false, true) == "Ignore" &&
+        ResolveAction(true, false, false, false, false, false, true, false) == "Ignore",
+        "滚轮动作未完整排除收起、动画、缩放、换序、Shell 拖动、图标普通滚轮或列表外命中。");
+
+    (double ScrollDeltaDip, int Remainder)? ConsumeWheel(int remainder, int delta, double rowHeightDip)
+    {
+        object? result = InvokeOrganizerMath(
+            "ConsumeCompactListWheelDelta",
+            [typeof(int), typeof(int), typeof(double)],
+            [remainder, delta, rowHeightDip]);
+        if (result is not System.Runtime.CompilerServices.ITuple tuple || tuple.Length != 2) return null;
+        return (Convert.ToDouble(tuple[0]), Convert.ToInt32(tuple[1]));
+    }
+
+    (double ScrollDeltaDip, int Remainder)? upward = ConsumeWheel(0, 120, 45);
+    (double ScrollDeltaDip, int Remainder)? downward = ConsumeWheel(0, -120, 45);
+    (double ScrollDeltaDip, int Remainder)? firstHalf = ConsumeWheel(0, 60, 45);
+    (double ScrollDeltaDip, int Remainder)? secondHalf = ConsumeWheel(firstHalf?.Remainder ?? 0, 60, 45);
+    Require(failures,
+        upward is { ScrollDeltaDip: -45, Remainder: 0 } &&
+        downward is { ScrollDeltaDip: 45, Remainder: 0 },
+        "精简列表滚轮 ±120 的方向错误，或每格没有移动一条当前高度为 45 DIP 的行。");
+    Require(failures,
+        firstHalf is { ScrollDeltaDip: 0, Remainder: 60 } &&
+        secondHalf is { ScrollDeltaDip: -45, Remainder: 0 },
+        "高精度滚轮两个 +60 增量没有累计为向上一行。");
+
+    int wheelHandlerStart = mainWindowSource.IndexOf(
+        "private void ExpandedView_PointerWheelChanged", StringComparison.Ordinal);
+    int wheelHandlerEnd = mainWindowSource.IndexOf(
+        "private void CommitCanvasResize", Math.Max(0, wheelHandlerStart), StringComparison.Ordinal);
+    string wheelHandlerSource = wheelHandlerStart >= 0 && wheelHandlerEnd > wheelHandlerStart
+        ? mainWindowSource[wheelHandlerStart..wheelHandlerEnd]
+        : string.Empty;
+    Require(failures,
+        wheelHandlerSource.Contains("e.KeyModifiers", StringComparison.Ordinal) &&
+        !wheelHandlerSource.Contains("GetAsyncKeyState", StringComparison.Ordinal) &&
+        wheelHandlerSource.Contains("ResolveWheelAction", StringComparison.Ordinal) &&
+        wheelHandlerSource.Contains("ConsumeCompactListWheelDelta", StringComparison.Ordinal) &&
+        wheelHandlerSource.Contains("ItemsScrollView.ScrollBy", StringComparison.Ordinal),
+        "顶层滚轮入口未使用事件修饰键和统一动作解析来驱动精简列表 ScrollBy。");
+
+    if (failures.Count > 0)
+        throw new InvalidOperationException($"{failures[0]}（本专项共 {failures.Count} 项契约未满足）");
+
+    Console.WriteLine("PASS: Sep 03 organizer visual and input fixes");
+    return;
+}
+
+if (args is ["--organizer-drag-hover"])
+{
+    static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
+    Require(OrganizerInteractionMath.ShouldExpandForOrganizerDragHover(
+        true, false, OrganizerPlacementMode.Floating, false, false, false),
+        "有效的 Floating 拖动目标未触发展开。");
+    Require(OrganizerInteractionMath.ShouldExpandForOrganizerDragHover(
+        true, false, OrganizerPlacementMode.Positioned, false, false, false),
+        "有效的 Positioned 拖动目标未触发展开。");
+    Require(!OrganizerInteractionMath.ShouldExpandForOrganizerDragHover(
+        true, true, OrganizerPlacementMode.Floating, false, false, false) &&
+        !OrganizerInteractionMath.ShouldExpandForOrganizerDragHover(
+            true, false, OrganizerPlacementMode.Station, false, false, false) &&
+        !OrganizerInteractionMath.ShouldExpandForOrganizerDragHover(
+            true, false, OrganizerPlacementMode.Floating, true, false, false) &&
+        !OrganizerInteractionMath.ShouldExpandForOrganizerDragHover(
+            true, false, OrganizerPlacementMode.Floating, false, true, false) &&
+        !OrganizerInteractionMath.ShouldExpandForOrganizerDragHover(
+            true, false, OrganizerPlacementMode.Floating, false, false, true) &&
+        !OrganizerInteractionMath.ShouldExpandForOrganizerDragHover(
+            false, false, OrganizerPlacementMode.Floating, false, false, false),
+        "拖动悬停展开排除条件不完整。");
+
+    string mainWindowSource = await File.ReadAllTextAsync(Path.Combine(
+        Environment.CurrentDirectory, "src", "TuckPane", "MainWindow.xaml.cs"));
+    Require(mainWindowSource.Contains("TryGetCompactDropBounds", StringComparison.Ordinal) &&
+            mainWindowSource.Contains("UpdateOrganizerDragHover(this, cursor)", StringComparison.Ordinal) &&
+            mainWindowSource.Contains("WaitForOrganizerDragHoverAsync(this)", StringComparison.Ordinal),
+        "MainWindow 未接入紧凑卡片命中、拖动悬停展开和释放等待。");
+    string appHostSource = await File.ReadAllTextAsync(Path.Combine(
+        Environment.CurrentDirectory, "src", "TuckPane", "AppHost.cs"));
+    Require(appHostSource.Contains("UpdateOrganizerDragHover", StringComparison.Ordinal) &&
+            appHostSource.Contains("ExpandForOrganizerDragAsync", StringComparison.Ordinal) &&
+            appHostSource.Contains("TryGetCompactDropBounds", StringComparison.Ordinal),
+        "AppHost 未提供统一拖动悬停目标扫描与展开入口。");
+
+    Console.WriteLine("PASS: organizer drag hover");
+    return;
+}
+
+if (args is ["--dialog-window-unification"])
+{
+    static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
+    string mainSource2 = await File.ReadAllTextAsync(Path.Combine(
+        Environment.CurrentDirectory, "src", "TuckPane", "MainWindow.xaml.cs"));
+    int start = mainSource2.IndexOf("private async Task ShowDeleteDialogAsync()", StringComparison.Ordinal);
+    int end = mainSource2.IndexOf("private async Task ShowRenameDialogAsync()", start, StringComparison.Ordinal);
+    Require(start >= 0 && end > start, "无法定位收纳窗删除对话框方法。");
+    string deleteSource = mainSource2[start..end];
+    Require(deleteSource.Contains("OwnedDialogWindow.ShowConfirmationAsync", StringComparison.Ordinal) &&
+            !deleteSource.Contains("new ContentDialog", StringComparison.Ordinal) &&
+            !deleteSource.Contains("XamlRoot", StringComparison.Ordinal),
+        "删除收纳窗仍使用内嵌 ContentDialog。");
+    foreach (string marker in new[]
+    {
+        "OwnedDialogWindow.ShowTextInputAsync", "ShowRenameFileDialogAsync",
+        "ShowRenameNoteDialogAsync", "ShowDeleteNoteDialogAsync", "CreateUniqueFolder"
+    })
+        Require(mainSource2.Contains(marker, StringComparison.Ordinal), $"缺少收纳窗右键弹窗统一接线：{marker}");
+
+    Console.WriteLine("PASS: dialog window unification");
+    return;
+}
+
+if (args is ["--drag-input-safety"])
+{
+    static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
+    IntPtr packed = DragMessageRelay.PackClientPosition(new NativeMethods.POINT { X = -25, Y = 320 });
+    Require(unchecked((short)(packed.ToInt64() & 0xFFFF)) == -25 &&
+            unchecked((short)((packed.ToInt64() >> 16) & 0xFFFF)) == 320,
+        "拖动消息坐标打包未保留负数与高位坐标。");
+
+    string mainWindowSource = await File.ReadAllTextAsync(Path.Combine(
+        Environment.CurrentDirectory, "src", "TuckPane", "MainWindow.xaml.cs"));
+    int hookStart = mainWindowSource.IndexOf("private IntPtr ItemDragBoundaryHookProc", StringComparison.Ordinal);
+    int hookEnd = mainWindowSource.IndexOf("private static uint GetForwardedMouseKeyState", hookStart, StringComparison.Ordinal);
+    Require(hookStart >= 0 && hookEnd > hookStart, "无法定位拖动边界钩子实现。");
+    string hookSource = mainWindowSource[hookStart..hookEnd];
+    Require(hookSource.Contains("ScreenToClient", StringComparison.Ordinal) &&
+            hookSource.Contains("PackClientPosition", StringComparison.Ordinal) &&
+            !hookSource.Contains("keys, IntPtr.Zero", StringComparison.Ordinal),
+        "低级拖动钩子仍在向输入栈发送零坐标消息。");
+    Require(hookSource.Contains("catch (Exception ex)", StringComparison.Ordinal) &&
+            hookSource.Contains("CallNextHookEx", StringComparison.Ordinal),
+        "低级拖动钩子缺少异常隔离或后续钩子调用。");
+
+    string appSource = await File.ReadAllTextAsync(Path.Combine(
+        Environment.CurrentDirectory, "src", "TuckPane", "App.xaml.cs"));
+    Require(appSource.Contains("args.Handled = true", StringComparison.Ordinal) &&
+            appSource.Contains("处理应用激活失败", StringComparison.Ordinal),
+        "应用激活/未处理异常边界未建立。");
+
+    Console.WriteLine("PASS: drag input safety");
+    return;
+}
+
 if (args is ["--organizer-resize-rename-sync"])
 {
     static void Require(bool condition, string message)
@@ -68,7 +931,7 @@ if (args is ["--organizer-resize-rename-sync"])
     {
         Id = Guid.Parse("22222222-2222-2222-2222-222222222222"),
         Name = "改名前",
-        ContainerStationId = stationId,
+        ContainerOrganizerId = stationId,
         StorageAbsolutePath = Path.GetTempPath()
     };
     var host = new AppHost();
@@ -109,9 +972,9 @@ if (args is ["--organizer-resize-rename-sync"])
     int applyEnd = appHostSource.IndexOf("internal DesktopGridPlacement? FindNearestPositionedPlacement", applyStart, StringComparison.Ordinal);
     Require(applyEnd > applyStart, "无法确定 organizer runtime 应用方法源码边界。");
     string applySource = appHostSource[applyStart..applyEnd];
-    Require(applySource.Contains("ContainerStationId", StringComparison.Ordinal) &&
+    Require(applySource.Contains("ContainerOrganizerId", StringComparison.Ordinal) &&
             applySource.Contains("RefreshContainedOrganizerItemsAsync", StringComparison.Ordinal),
-        "名称 runtime 更新没有复用父 Station 刷新链。");
+        "名称 runtime 更新没有复用父收纳窗刷新链。");
 
     Console.WriteLine("PASS: organizer resize rename sync");
     return;
@@ -219,9 +1082,9 @@ if (args is ["--default-storage-directory"])
             GlobalSettings = new GlobalSettings { DefaultStorageDirectory = defaultRoot }
         });
         AppStateV2 reloaded = await store.LoadAsync();
-        Require(reloaded.SchemaVersion == 9 &&
+        Require(reloaded.SchemaVersion == 10 &&
                 reloaded.GlobalSettings.DefaultStorageDirectory == normalizedDefaultRoot,
-            "默认存储根目录没有按 Schema 9 持久化。 ");
+            "默认存储根目录没有按 Schema 10 持久化。 ");
 
         Guid relativeId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
         Guid absoluteId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
@@ -238,7 +1101,7 @@ if (args is ["--default-storage-directory"])
             }
         }));
         AppStateV2 migrated = await new StateStore(statePath).LoadAsync();
-        Require(migrated.SchemaVersion == 9 &&
+        Require(migrated.SchemaVersion == 10 &&
                 migrated.Organizers.Single(item => item.Id == relativeId).StorageOwnedByApp &&
                 !migrated.Organizers.Single(item => item.Id == absoluteId).StorageOwnedByApp,
             "Schema 8 目录所有权没有按相对/绝对路径迁移。 ");
@@ -430,14 +1293,14 @@ if (args is ["--aug31-note-station-fixes"])
             enabled: true,
             draggingExpanded: false,
             OrganizerPlacementMode.Floating,
-            overStationDropTarget: false),
+            overOrganizerDropTarget: false),
         "普通 Floating 收起拖动没有保留窗口对齐。");
     Require(
         !OrganizerInteractionMath.ShouldUseWindowAlignment(
             enabled: true,
             draggingExpanded: false,
             OrganizerPlacementMode.Floating,
-            overStationDropTarget: true),
+            overOrganizerDropTarget: true),
         "进入 Station 投放区后仍启用了窗口对齐。");
     Require(
         OrganizerInteractionMath.ShouldRememberExpandedPosition(true, OrganizerPlacementMode.Floating) &&
@@ -546,158 +1409,228 @@ if (args is ["--window-behavior-fixes"])
     return;
 }
 
-if (args is ["--station-organizer-reference"])
+if (args is ["--organizer-nesting"])
 {
     static void Require(bool condition, string message)
+    { if (!condition) throw new InvalidOperationException(message); }
+
+    static string Hierarchy(IReadOnlyList<OrganizerDefinition> items) => string.Join("|", items.Select(item =>
+        $"{item.Id:N}>{item.ContainerOrganizerId?.ToString("N") ?? "-"}[{string.Join(",", item.ItemOrder)}]"));
+    static string Settings(OrganizerDefinition item) => JsonSerializer.Serialize(new
     {
-        if (!condition) throw new InvalidOperationException(message);
+        item.PlacementMode, item.DockEdge, item.ExpandedContentMode,
+        item.CompactScale, item.CanvasScale, item.ItemScale, item.NameScale, item.CompactListItemScale,
+        item.StorageRelativePath, item.StorageAbsolutePath, item.StorageOwnedByApp
+    });
+    static void Reject(IReadOnlyList<OrganizerDefinition> items, Guid source, Guid target,
+        OrganizerContainmentFailure failure, string message)
+    {
+        string before = Hierarchy(items);
+        OrganizerContainmentMoveResult result = OrganizerContainment.TryMove(items, source, target, 0);
+        Require(!result.Succeeded && result.Failure == failure && Hierarchy(items) == before, message);
     }
 
-    string root = Path.Combine(Path.GetTempPath(), $"TuckPane-station-organizer-{Guid.NewGuid():N}");
+    static bool HasNoGhostKeys(IReadOnlyList<OrganizerDefinition> organizers) => organizers.All(container =>
+        container.ItemOrder.All(key => !OrganizerContainment.TryParseItemKey(key, out Guid childId) ||
+            organizers.Any(child => child.Id == childId && child.ContainerOrganizerId == container.Id)));
+    static bool SameRect(NativeMethods.RECT first, NativeMethods.RECT second) =>
+        first.Left == second.Left && first.Top == second.Top && first.Right == second.Right && first.Bottom == second.Bottom;
+    static bool Intersects(NativeMethods.RECT first, NativeMethods.RECT second) =>
+        first.Left < second.Right && first.Right > second.Left && first.Top < second.Bottom && first.Bottom > second.Top;
+
+    string root = Path.Combine(Path.GetTempPath(), $"TuckPane-organizer-nesting-{Guid.NewGuid():N}");
     Directory.CreateDirectory(root);
     try
     {
-        var defaultNames = new GlobalSettings();
-        Require(
-            defaultNames.ResolveCompactNameScale(OrganizerPlacementMode.Floating) == 1 &&
-            defaultNames.ResolveCompactNameScale(OrganizerPlacementMode.Positioned) == 1 &&
-            defaultNames.ResolveExpandedNameScale(OrganizerPlacementMode.Floating) == 1 &&
-            defaultNames.ResolveExpandedNameScale(OrganizerPlacementMode.Positioned) == 1,
-            "全局收起/展开名称比例默认值不是 100%。");
-        var nameSettings = StateStore.Normalize(new AppStateV2
+        foreach (OrganizerPlacementMode sourceMode in new[] { OrganizerPlacementMode.Floating, OrganizerPlacementMode.Positioned })
         {
-            GlobalSettings = new GlobalSettings
+            foreach (OrganizerPlacementMode targetMode in Enum.GetValues<OrganizerPlacementMode>())
             {
-                UniformFloatingCompactNameScale = .72,
-                UniformPositionedCompactNameScale = .88,
-                ExpandedNameScale = .2
+                var matrixSource = new OrganizerDefinition { PlacementMode = sourceMode };
+                var target = new OrganizerDefinition { PlacementMode = targetMode };
+                OrganizerContainmentMoveResult result = OrganizerContainment.TryMove([matrixSource, target], matrixSource.Id, target.Id, 0);
+                Require(result.Succeeded && result.Failure == OrganizerContainmentFailure.None &&
+                        matrixSource.ContainerOrganizerId == target.Id && target.ItemOrder.SequenceEqual([OrganizerContainment.ItemKey(matrixSource.Id)]),
+                    $"{sourceMode} 来源无法放入 {targetMode} 收纳窗。");
             }
-        }).GlobalSettings;
-        Require(
-            nameSettings.ResolveCompactNameScale(OrganizerPlacementMode.Floating) == .72 &&
-            nameSettings.ResolveCompactNameScale(OrganizerPlacementMode.Positioned) == .72 &&
-            nameSettings.ResolveCompactNameScale(OrganizerPlacementMode.Station) == 1 &&
-            nameSettings.ResolveExpandedNameScale(OrganizerPlacementMode.Floating) == .6 &&
-            nameSettings.ResolveExpandedNameScale(OrganizerPlacementMode.Positioned) == .6 &&
-            nameSettings.ResolveExpandedNameScale(OrganizerPlacementMode.Station) == 1,
-            "全局收起/展开名称比例没有统一作用于悬浮和定位，或错误影响了 Station。");
-        string legacyNamesPath = Path.Combine(root, "legacy-names.json");
-        await File.WriteAllTextAsync(
-            legacyNamesPath,
-            """{"SchemaVersion":8,"GlobalSettings":{"UniformFloatingCompactNameScale":0.73,"UniformPositionedCompactNameScale":0.91},"Organizers":[]}""");
-        GlobalSettings migratedNames = (await new StateStore(legacyNamesPath).LoadAsync()).GlobalSettings;
-        Require(
-            migratedNames.ResolveCompactNameScale(OrganizerPlacementMode.Floating) == .73 &&
-            migratedNames.ResolveCompactNameScale(OrganizerPlacementMode.Positioned) == .73 &&
-            migratedNames.ExpandedNameScale == 1,
-            "旧状态没有沿用悬浮名称比例，或缺失的展开名称比例没有回退 100%。");
+        }
 
-        Guid childId = Guid.NewGuid();
-        Guid positionedId = Guid.NewGuid();
-        Guid stationAId = Guid.NewGuid();
-        Guid stationBId = Guid.NewGuid();
-        var originalPosition = new WidgetPosition { MonitorDevice = "display", XDip = 21, YDip = 34 };
-        var child = new OrganizerDefinition
-        {
-            Id = childId,
-            Name = "child",
+        var stationSource = new OrganizerDefinition { PlacementMode = OrganizerPlacementMode.Station };
+        var stationTarget = new OrganizerDefinition { PlacementMode = OrganizerPlacementMode.Floating };
+        Reject([stationSource, stationTarget], stationSource.Id, stationTarget.Id,
+            OrganizerContainmentFailure.StationCannotBeContained,
+            "Station 来源未被拒绝，或拒绝时修改了层级状态。");
+
+        var self = new OrganizerDefinition();
+        Reject([self], self.Id, self.Id, OrganizerContainmentFailure.SameOrganizer,
+            "自引用未被拒绝，或拒绝时修改了层级状态。");
+
+        var sourceWithChild = new OrganizerDefinition();
+        var directChild = new OrganizerDefinition { ContainerOrganizerId = sourceWithChild.Id };
+        sourceWithChild.ItemOrder = [OrganizerContainment.ItemKey(directChild.Id)];
+        var sourceTarget = new OrganizerDefinition();
+        Require(OrganizerContainment.TryMove(
+                    [sourceWithChild, directChild, sourceTarget], sourceWithChild.Id, sourceTarget.Id, 0).Succeeded &&
+                sourceWithChild.ContainerOrganizerId == sourceTarget.Id &&
+                directChild.ContainerOrganizerId == sourceWithChild.Id,
+            "已有子树的来源无法整体移动，或后代关系被破坏。");
+
+        var occupiedTargetParent = new OrganizerDefinition();
+        var occupiedTarget = new OrganizerDefinition { ContainerOrganizerId = occupiedTargetParent.Id };
+        occupiedTargetParent.ItemOrder = [OrganizerContainment.ItemKey(occupiedTarget.Id)];
+        var occupiedTargetSource = new OrganizerDefinition();
+        Require(OrganizerContainment.TryMove(
+                    [occupiedTargetParent, occupiedTarget, occupiedTargetSource],
+                    occupiedTargetSource.Id, occupiedTarget.Id, 0).Succeeded &&
+                occupiedTargetSource.ContainerOrganizerId == occupiedTarget.Id,
+            "已被收纳的目标无法继续作为嵌套父窗。");
+
+        var cycleRoot = new OrganizerDefinition();
+        var cycleMiddle = new OrganizerDefinition { ContainerOrganizerId = cycleRoot.Id };
+        var cycleLeaf = new OrganizerDefinition { ContainerOrganizerId = cycleMiddle.Id };
+        cycleRoot.ItemOrder = [OrganizerContainment.ItemKey(cycleMiddle.Id)];
+        cycleMiddle.ItemOrder = [OrganizerContainment.ItemKey(cycleLeaf.Id)];
+        OrganizerContainmentMoveResult cycleMove = OrganizerContainment.TryMove(
+            [cycleRoot, cycleMiddle, cycleLeaf], cycleRoot.Id, cycleLeaf.Id, 0);
+        Require(!cycleMove.Succeeded && cycleMove.Failure == OrganizerContainmentFailure.TargetIsDescendant,
+            "移动到自身后代没有被拒绝。");
+
+        var parentA = new OrganizerDefinition { ItemOrder = ["alpha.txt"] };
+        var parentB = new OrganizerDefinition { PlacementMode = OrganizerPlacementMode.Station, ItemOrder = ["beta.txt"] };
+        var firstChild = new OrganizerDefinition {
             PlacementMode = OrganizerPlacementMode.Floating,
-            Position = originalPosition,
-            CompactScale = 2.25,
-            NameScale = .65,
-            StorageAbsolutePath = Path.Combine(root, "child")
+            ExpandedContentMode = OrganizerExpandedContentMode.Icon,
+            CompactScale = 2.25, CanvasScale = .8, ItemScale = .75, NameScale = .65, CompactListItemScale = 1.1,
+            StorageAbsolutePath = Path.Combine(root, "absolute-child"), StorageRelativePath = string.Empty, StorageOwnedByApp = false
         };
-        var positioned = new OrganizerDefinition { Id = positionedId, PlacementMode = OrganizerPlacementMode.Positioned };
-        var stationA = new OrganizerDefinition
-        {
-            Id = stationAId,
-            Name = "A",
-            PlacementMode = OrganizerPlacementMode.Station,
-            ItemScale = .75,
-            ItemOrder = ["alpha.txt"]
+        var secondChild = new OrganizerDefinition {
+            PlacementMode = OrganizerPlacementMode.Positioned,
+            ExpandedContentMode = OrganizerExpandedContentMode.CompactList,
+            CompactScale = 1.4, CanvasScale = .7, ItemScale = 1.2, NameScale = .9, CompactListItemScale = 1.3,
+            StorageRelativePath = Path.Combine("Windows", "relative-child"), StorageOwnedByApp = true
         };
-        var stationB = new OrganizerDefinition
-        {
-            Id = stationBId,
-            Name = "B",
-            PlacementMode = OrganizerPlacementMode.Station,
-            DockEdge = OrganizerDockEdge.Left,
-            ItemScale = 1.4
-        };
-        List<OrganizerDefinition> organizers = [child, positioned, stationA, stationB];
-        string key = OrganizerInteractionMath.OrganizerItemKey(childId);
+        List<OrganizerDefinition> siblings = [parentA, parentB, firstChild, secondChild];
+        string firstSettings = Settings(firstChild);
+        string secondSettings = Settings(secondChild);
+        string firstKey = OrganizerContainment.ItemKey(firstChild.Id);
+        string secondKey = OrganizerContainment.ItemKey(secondChild.Id);
 
-        Require(
-            OrganizerInteractionMath.CanContainOrganizer(OrganizerPlacementMode.Floating, OrganizerPlacementMode.Station, childId, stationAId) &&
-            OrganizerInteractionMath.CanContainOrganizer(OrganizerPlacementMode.Positioned, OrganizerPlacementMode.Station, positionedId, stationAId) &&
-            !OrganizerInteractionMath.CanContainOrganizer(OrganizerPlacementMode.Station, OrganizerPlacementMode.Station, stationAId, stationBId) &&
-            !OrganizerInteractionMath.CanContainOrganizer(OrganizerPlacementMode.Floating, OrganizerPlacementMode.Floating, childId, positionedId) &&
-            !OrganizerInteractionMath.CanContainOrganizer(OrganizerPlacementMode.Floating, OrganizerPlacementMode.Station, childId, childId),
-            "收纳窗来源/目标接受矩阵或自引用拒绝错误。");
+        Require(OrganizerContainment.TryMove(siblings, firstChild.Id, parentA.Id, int.MaxValue).Succeeded &&
+                OrganizerContainment.TryMove(siblings, secondChild.Id, parentA.Id, int.MaxValue).Succeeded &&
+                OrganizerContainment.GetDirectChildren(siblings, parentA.Id)
+                    .Select(item => item.Id).SequenceEqual([firstChild.Id, secondChild.Id]),
+            "同一父窗无法保留多个直接子窗的顺序。");
+        Require(OrganizerContainment.TryMove(siblings, secondChild.Id, parentA.Id, 1).Succeeded &&
+                parentA.ItemOrder.SequenceEqual(["alpha.txt", secondKey, firstKey]),
+            "同父换序没有生成唯一、稳定的顺序键。");
+        Require(OrganizerContainment.TryMove(siblings, secondChild.Id, parentB.Id, 1).Succeeded &&
+                secondChild.ContainerOrganizerId == parentB.Id &&
+                !parentA.ItemOrder.Contains(secondKey, StringComparer.OrdinalIgnoreCase) &&
+                parentB.ItemOrder.SequenceEqual(["beta.txt", secondKey]),
+            "跨父移动没有保持唯一归属和顺序键。");
+        Require(OrganizerContainment.Detach(siblings, firstChild.Id) == parentA.Id &&
+                firstChild.ContainerOrganizerId is null &&
+                siblings.All(item => !item.ItemOrder.Contains(firstKey, StringComparer.OrdinalIgnoreCase)),
+            "Detach 没有解除归属并清理全部顺序键。");
+        Require(Settings(firstChild) == firstSettings && Settings(secondChild) == secondSettings,
+            "收纳、换序、跨父或 Detach 改变了存储字段、模式或缩放设置。");
 
-        Require(OrganizerInteractionMath.PlaceOrganizerInStation(organizers, childId, stationAId, 1) &&
-                OrganizerInteractionMath.PlaceOrganizerInStation(organizers, childId, stationAId, 1) &&
-                child.ContainerStationId == stationAId && stationA.ItemOrder.SequenceEqual(["alpha.txt", key]) &&
-                child.PlacementMode == OrganizerPlacementMode.Floating && ReferenceEquals(child.Position, originalPosition) &&
-                child.CompactScale == 2.25 && child.NameScale == .65,
-            "首次/重复拖入不幂等，或改变了来源模式、位置和入口缩放。");
+        Guid legacyParentId = Guid.NewGuid();
+        Guid legacyChildId = Guid.NewGuid();
+        string legacyKey = OrganizerContainment.ItemKey(legacyChildId);
+        string legacyPath = Path.Combine(root, "legacy-containment.json");
+        await File.WriteAllTextAsync(legacyPath, $$"""{"SchemaVersion":8,"GlobalSettings":{},"Organizers":[{"Id":"{{legacyParentId}}","PlacementMode":0,"ItemOrder":["{{legacyKey}}"]},{"Id":"{{legacyChildId}}","PlacementMode":1,"ContainerStationId":"{{legacyParentId}}"}]}""");
+        var legacyStore = new StateStore(legacyPath);
+        AppStateV2 legacyState = await legacyStore.LoadAsync();
+        Require(legacyState.Organizers.Single(item => item.Id == legacyParentId).PlacementMode == OrganizerPlacementMode.Floating &&
+                legacyState.Organizers.Single(item => item.Id == legacyChildId).ContainerOrganizerId == legacyParentId &&
+                legacyState.Organizers.Single(item => item.Id == legacyParentId).ItemOrder.Contains(legacyKey, StringComparer.OrdinalIgnoreCase),
+            "旧 ContainerStationId 未读取为普通父窗关系。");
+        await legacyStore.SaveAsync(legacyState);
+        string persistedLegacy = await File.ReadAllTextAsync(legacyPath);
+        AppStateV2 legacyReloaded = await legacyStore.LoadAsync();
+        Require(persistedLegacy.Contains("\"ContainerStationId\"", StringComparison.Ordinal) &&
+                !persistedLegacy.Contains("\"ContainerOrganizerId\"", StringComparison.Ordinal) &&
+                legacyReloaded.Organizers.Single(item => item.Id == legacyChildId).ContainerOrganizerId == legacyParentId,
+            "兼容 JSON 键未稳定写回，或普通父窗关系重载丢失。");
 
-        var projected = new WidgetItem(child.Name, child.StorageAbsolutePath!, key, WidgetItemKind.Organizer, organizerId: child.Id);
-        Require(projected.Kind == WidgetItemKind.Organizer && projected.OrganizerId == child.Id &&
-                OrganizerInteractionMath.TryParseOrganizerItemKey(projected.RelativeName, out Guid parsedId) && parsedId == child.Id &&
-                stationA.ItemScale == .75 && child.CompactScale == 2.25,
-            "中转站收纳窗投影、稳定顺序键或父子缩放解耦错误。");
-
-        Require(OrganizerInteractionMath.PlaceOrganizerInStation(organizers, childId, stationBId, 0) &&
-                child.ContainerStationId == stationBId && !stationA.ItemOrder.Contains(key) &&
-                stationB.ItemOrder.Count(item => item.Equals(key, StringComparison.OrdinalIgnoreCase)) == 1,
-            "跨中转站移动没有保持唯一归属和唯一顺序键。");
-
-        (int Left, int Top, int Width, int Height) centered = OrganizerInteractionMath.CreateCenteredBounds(500, 400, 100, 60);
-        Require(OrganizerInteractionMath.DetachOrganizerFromStation(organizers, childId) == stationBId &&
-                child.ContainerStationId is null && organizers.All(item => !item.ItemOrder.Contains(key)) &&
-                centered == (450, 370, 100, 60),
-            "拖出没有解除归属或按释放点生成桌面候选位置。");
-        child.Position = new WidgetPosition { MonitorDevice = "desktop", XDip = centered.Left, YDip = centered.Top };
-        string detachedPath = Path.Combine(root, "detached-state.json");
-        var detachedStore = new StateStore(detachedPath);
-        await detachedStore.SaveAsync(new AppStateV2 { GlobalSettings = nameSettings, Organizers = organizers });
-        AppStateV2 detachedReloaded = await detachedStore.LoadAsync();
-        OrganizerDefinition detachedChild = detachedReloaded.Organizers.Single(item => item.Id == childId);
-        Require(detachedChild.ContainerStationId is null &&
-                detachedChild.Position is { MonitorDevice: "desktop", XDip: 450, YDip: 370 } &&
-                detachedReloaded.Organizers.Count == organizers.Count,
-            "拖回桌面的解除归属、位置或收纳窗定义没有完整保存。");
-
-        OrganizerInteractionMath.PlaceOrganizerInStation(organizers, childId, stationBId, 0);
-        var store = new StateStore(Path.Combine(root, "state.json"));
-        await store.SaveAsync(new AppStateV2 { GlobalSettings = nameSettings, Organizers = organizers });
-        AppStateV2 reloaded = await store.LoadAsync();
-        OrganizerDefinition reloadedChild = reloaded.Organizers.Single(item => item.Id == childId);
-        OrganizerDefinition reloadedStation = reloaded.Organizers.Single(item => item.Id == stationBId);
         Guid missingId = Guid.NewGuid();
-        var invalidChild = new OrganizerDefinition { Id = Guid.NewGuid(), ContainerStationId = missingId };
-        var invalidStation = new OrganizerDefinition
-        {
-            Id = Guid.NewGuid(),
-            PlacementMode = OrganizerPlacementMode.Station,
-            ItemOrder = [OrganizerInteractionMath.OrganizerItemKey(invalidChild.Id), OrganizerInteractionMath.OrganizerItemKey(missingId)]
-        };
-        StateStore.Normalize(new AppStateV2 { Organizers = [invalidChild, invalidStation] });
-        Require(reloaded.GlobalSettings.UniformFloatingCompactNameScale == .72 &&
-                reloaded.GlobalSettings.ExpandedNameScale == .6 &&
-                reloadedChild.ContainerStationId == stationBId && reloadedStation.ItemOrder.Contains(key) &&
-                invalidChild.ContainerStationId is null && invalidStation.ItemOrder.All(item =>
-                    !OrganizerInteractionMath.TryParseOrganizerItemKey(item, out _)),
-            "保存重载、悬空归属或非法收纳窗顺序键归一化错误。");
+        var repairParent = new OrganizerDefinition { ItemOrder = ["keep.txt"] };
+        var dangling = new OrganizerDefinition { ContainerOrganizerId = missingId };
+        repairParent.ItemOrder.Add(OrganizerContainment.ItemKey(dangling.Id));
+        repairParent.ItemOrder.Add(OrganizerContainment.ItemKey(missingId));
+        var deepRoot = new OrganizerDefinition();
+        var deepMiddle = new OrganizerDefinition { ContainerOrganizerId = deepRoot.Id };
+        var deepLeaf = new OrganizerDefinition { ContainerOrganizerId = deepMiddle.Id };
+        deepRoot.ItemOrder = [OrganizerContainment.ItemKey(deepMiddle.Id)];
+        deepMiddle.ItemOrder = [OrganizerContainment.ItemKey(deepLeaf.Id)];
+        var cycleA = new OrganizerDefinition();
+        var cycleB = new OrganizerDefinition();
+        cycleA.ContainerOrganizerId = cycleB.Id;
+        cycleB.ContainerOrganizerId = cycleA.Id;
+        cycleA.ItemOrder = [OrganizerContainment.ItemKey(cycleB.Id)];
+        cycleB.ItemOrder = [OrganizerContainment.ItemKey(cycleA.Id)];
+        var corrupted = new AppStateV2 { Organizers = [repairParent, dangling, deepRoot, deepMiddle, deepLeaf, cycleA, cycleB] };
+        StateStore.Normalize(corrupted);
+        Require(dangling.ContainerOrganizerId is null && repairParent.ItemOrder.SequenceEqual(["keep.txt"]) &&
+                deepMiddle.ContainerOrganizerId == deepRoot.Id &&
+                deepLeaf.ContainerOrganizerId == deepMiddle.Id &&
+                HasNoGhostKeys(corrupted.Organizers) &&
+                !(cycleA.ContainerOrganizerId == cycleB.Id && cycleB.ContainerOrganizerId == cycleA.Id),
+            "Normalize 未同时修复悬空、深层、循环关系或幽灵顺序键。");
 
-        Console.WriteLine("PASS: station organizer reference");
+        OrganizerContainment.Detach(siblings, secondChild.Id);
+        firstChild.ContainerOrganizerId = parentA.Id;
+        secondChild.ContainerOrganizerId = parentA.Id;
+        var grandchild = new OrganizerDefinition { ContainerOrganizerId = firstChild.Id };
+        firstChild.ItemOrder = [OrganizerContainment.ItemKey(grandchild.Id)];
+        parentA.ItemOrder = [secondKey, "document.txt", firstKey];
+        IReadOnlyList<OrganizerDefinition> released = OrganizerContainment.ReleaseDirectChildren(
+            [parentA, firstChild, secondChild, grandchild], parentA.Id);
+        Require(released.Select(item => item.Id).SequenceEqual([secondChild.Id, firstChild.Id]) &&
+                firstChild.ContainerOrganizerId is null && secondChild.ContainerOrganizerId is null &&
+                grandchild.ContainerOrganizerId == firstChild.Id && parentA.ItemOrder.SequenceEqual(["document.txt"]),
+            "删除前释放未按父窗顺序仅解除直接子窗。");
+        Require(Settings(firstChild) == firstSettings && Settings(secondChild) == secondSettings,
+            "释放直接子窗改变了存储字段、模式或缩放设置。");
+
+        Guid[] releaseIds = Enumerable.Range(1, 4).Select(_ => Guid.NewGuid()).ToArray();
+        OrganizerReleaseItem[] releaseItems = releaseIds.Select(id => new OrganizerReleaseItem(id, 40, 30)).ToArray();
+        var workArea = new NativeMethods.RECT { Left = 0, Top = 0, Right = 500, Bottom = 500 };
+        var lowerParentBounds = new NativeMethods.RECT { Left = 100, Top = 100, Right = 220, Bottom = 180 };
+        IReadOnlyDictionary<Guid, NativeMethods.RECT> lowerPlan = OrganizerReleasePlanner.PlanFloating(lowerParentBounds, workArea, 1, releaseItems);
+        IReadOnlyDictionary<Guid, NativeMethods.RECT> repeatedLowerPlan = OrganizerReleasePlanner.PlanFloating(lowerParentBounds, workArea, 1, releaseItems);
+        Require(lowerPlan.Count == 4 && releaseIds.All(id => SameRect(lowerPlan[id], repeatedLowerPlan[id])) &&
+                lowerPlan[releaseIds[0]].Top >= lowerParentBounds.Bottom + 12 &&
+                lowerPlan[releaseIds[0]].Left == lowerPlan[releaseIds[3]].Left &&
+                lowerPlan[releaseIds[3]].Top > lowerPlan[releaseIds[0]].Top &&
+                releaseIds.Take(3).Select(id => lowerPlan[id].Left).Distinct().Count() == 3,
+            "Floating 释放排列不稳定、未优先置于下方，或超过三列规则错误。");
+        var upperParentBounds = new NativeMethods.RECT { Left = 100, Top = 400, Right = 220, Bottom = 480 };
+        IReadOnlyDictionary<Guid, NativeMethods.RECT> upperPlan = OrganizerReleasePlanner.PlanFloating(upperParentBounds, workArea, 1, releaseItems);
+        Require(upperPlan.Values.All(bounds => bounds.Bottom <= upperParentBounds.Top - 12) &&
+                upperPlan.Values.All(bounds => bounds.Left >= workArea.Left && bounds.Top >= workArea.Top &&
+                    bounds.Right <= workArea.Right && bounds.Bottom <= workArea.Bottom),
+            "Floating 释放在下方不足时未稳定切换到上方夹区或越出工作区。");
+
+        var nestingGridDisplay = new DisplayInfo("nesting-grid",
+            new NativeMethods.RECT { Left = 0, Top = 0, Right = 128, Bottom = 128 },
+            new NativeMethods.RECT { Left = 0, Top = 0, Right = 128, Bottom = 128 }, 1);
+        var nestingGridSnapshot = new DesktopGridSnapshot(nestingGridDisplay, 64, 64, [], true);
+        var occupied = new List<NativeMethods.RECT>();
+        for (int index = 0; index < 4; index++)
+        {
+            DesktopGridPlacement? placement = DesktopGridService.Find(nestingGridSnapshot, occupied, null, 1.2);
+            Require(placement is not null && occupied.All(bounds => !Intersects(bounds, placement.Bounds)),
+                $"第 {index + 1} 个定位子窗未取得无冲突桌面网格。");
+            occupied.Add(placement!.Bounds);
+        }
+        Require(DesktopGridService.Find(nestingGridSnapshot, occupied, null, 1.2) is null,
+            "桌面网格已满时仍返回了冲突位置。");
+
+        Console.WriteLine("PASS: organizer nesting");
     }
-    finally
-    {
-        try { Directory.Delete(root, recursive: true); }
-        catch { }
-    }
+    finally { try { Directory.Delete(root, recursive: true); } catch { } }
     return;
 }
 
@@ -1117,12 +2050,31 @@ if (args.Length is 1 or 2 && args[0] == "--organizer-icon-content")
         string outerShortcutPath = Path.Combine(root, "outer.lnk");
         CreateShortcut(innerShortcutPath, Environment.ProcessPath ?? sourceIconPath, $"{sourceIconPath},0");
         CreateShortcut(outerShortcutPath, null, $"{innerShortcutPath},0");
+        string urlChainPath = Path.Combine(root, "outer.url");
+        await File.WriteAllTextAsync(urlChainPath, $"[InternetShortcut]{Environment.NewLine}URL=about:blank{Environment.NewLine}IconFile=\"{Path.GetFileName(innerShortcutPath)}\"{Environment.NewLine}IconIndex=0{Environment.NewLine}");
 
         IconCacheService.IconSnapshot expected = IconCacheService.ExtractShellIconPixels(sourceIconPath);
         IconCacheService.IconSnapshot actual = IconCacheService.ExtractShellIconPixels(outerShortcutPath);
+        Require(IconCacheService.TryGetVisiblePixelBounds(expected, out IconCacheService.IconVisibleBounds expectedBounds) &&
+                expectedBounds.Width >= expected.Width / 3 && expectedBounds.Height >= expected.Height / 3,
+            $"直接资源图标主体占比异常：{expectedBounds.Width}x{expectedBounds.Height}/{expected.Width}x{expected.Height}。");
         double fixtureSimilarity = Similarity(expected, actual);
         Require(fixtureSimilarity >= .95,
             $"二级快捷方式没有解析到最终图标，像素相似度仅 {fixtureSimilarity:F4}。");
+        Require(IconCacheService.TryGetVisiblePixelBounds(actual, out IconCacheService.IconVisibleBounds actualBounds) &&
+                actualBounds.Width >= expectedBounds.Width * .8 && actualBounds.Height >= expectedBounds.Height * .8,
+            $"二级快捷方式图标主体被缩小：资源 {expectedBounds.Width}x{expectedBounds.Height}，快捷方式 {actualBounds.Width}x{actualBounds.Height}。");
+
+        IconCacheService.IconSnapshot urlChainIcon = IconCacheService.ExtractShellIconPixels(urlChainPath);
+        Require(Similarity(expected, urlChainIcon) >= .95 &&
+                IconCacheService.TryGetVisiblePixelBounds(urlChainIcon, out IconCacheService.IconVisibleBounds urlBounds) &&
+                urlBounds.Width >= expectedBounds.Width * .8 && urlBounds.Height >= expectedBounds.Height * .8,
+            "URL→LNK→资源图标链没有解析到最终资源，或主体被缩小。");
+        string chainIdentityBefore = IconCacheService.BuildCacheIdentity(outerShortcutPath);
+        File.SetLastWriteTimeUtc(innerShortcutPath, File.GetLastWriteTimeUtc(innerShortcutPath).AddSeconds(2));
+        string chainIdentityAfter = IconCacheService.BuildCacheIdentity(outerShortcutPath);
+        Require(!string.Equals(chainIdentityBefore, chainIdentityAfter, StringComparison.Ordinal),
+            "中间快捷方式元数据变化后，外层图标缓存身份没有变化。");
 
         if (args.Length == 2)
         {
@@ -1131,6 +2083,14 @@ if (args.Length is 1 or 2 && args[0] == "--organizer-icon-content")
             (string expectedPath, _) = ResolveExpectedShortcutIcon(actualShortcutPath);
             expected = IconCacheService.ExtractShellIconPixels(expectedPath);
             actual = IconCacheService.ExtractShellIconPixels(actualShortcutPath);
+            IconCacheService.IconVisibleBounds realExpectedBounds = default;
+            IconCacheService.IconVisibleBounds realActualBounds = default;
+            Require(IconCacheService.TryGetVisiblePixelBounds(expected, out realExpectedBounds) &&
+                    IconCacheService.TryGetVisiblePixelBounds(actual, out realActualBounds) &&
+                    realExpectedBounds.Width >= expected.Width / 3 && realExpectedBounds.Height >= expected.Height / 3 &&
+                    realActualBounds.Width >= realExpectedBounds.Width * .8 &&
+                    realActualBounds.Height >= realExpectedBounds.Height * .8,
+                $"真实快捷方式图标主体占比异常：资源 {realExpectedBounds.Width}x{realExpectedBounds.Height}，快捷方式 {realActualBounds.Width}x{realActualBounds.Height}。");
             double actualSimilarity = Similarity(expected, actual);
             Require(actualSimilarity >= .95,
                 $"真实快捷方式没有解析到最终图标，像素相似度仅 {actualSimilarity:F4}：{actualShortcutPath}");
@@ -2304,78 +3264,916 @@ if (args is ["--theme-material-removal"])
         if (!condition) throw new InvalidOperationException(message);
     }
 
-    Require(Enum.GetValues<ThemeMaterial>().SequenceEqual(
-            [ThemeMaterial.Acrylic, ThemeMaterial.Glass, ThemeMaterial.Matte]),
-        "可选材质不是 Acrylic、Glass、Matte 三种。");
-
-    AppStateV2 legacyFrosted = StateStore.Normalize(new AppStateV2
-    {
-        GlobalSettings = new GlobalSettings { Material = (ThemeMaterial)2 }
-    });
-    Require(legacyFrosted.GlobalSettings.Material == ThemeMaterial.Matte,
-        "旧 FrostedGlass 数值 2 没有迁移到 Matte。");
+    string sourceRoot = Path.Combine(Environment.CurrentDirectory, "src", "TuckPane");
+    string model = File.ReadAllText(Path.Combine(sourceRoot, "Models", "AppState.cs"));
+    string console = File.ReadAllText(Path.Combine(sourceRoot, "ConsoleWindow.xaml"));
+    Require(!model.Contains("ThemeMaterial", StringComparison.Ordinal) &&
+            !model.Contains("SettingsThemeMaterial", StringComparison.Ordinal) &&
+            !console.Contains("ThemeMaterial", StringComparison.Ordinal),
+        "材质枚举、持久化字段或设置入口仍然存在。");
 
     Console.WriteLine("PASS: theme material removal");
     return;
 }
 
-if (args is ["--theme-material-depth"])
+if (args is ["--theme-opacity-blur-arc"])
 {
     static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
     }
 
-    ThemeEffectParameters acrylic = ThemePalette.Effect(ThemeMaterial.Acrylic);
-    ThemeEffectParameters glass = ThemePalette.Effect(ThemeMaterial.Glass);
-    ThemeEffectParameters matte = ThemePalette.Effect(ThemeMaterial.Matte);
-    Require(acrylic == new ThemeEffectParameters(30, 1f, .80f, 0, .90f),
-        "亚克力没有使用高白色覆盖的无颗粒参数。");
-    Require(glass == new ThemeEffectParameters(10, 2f, .90f, 0, .06f),
-        "玻璃材质参数被意外改变。");
-    Require(matte == new ThemeEffectParameters(18, .75f, .92f, .035f, .50f),
-        "磨砂没有使用 3.5% 的有效颗粒参数。");
-
-    var blueSettings = new GlobalSettings { ThemeColorArgb = 0xFF0055FF };
-    ThemeValues blueTheme = blueSettings.GetTheme(ThemeTarget.Organizer);
-    Windows.UI.Color acrylicTint = ThemePalette.MaterialTintColor(blueTheme, ThemeMaterial.Acrylic);
-    Require(acrylicTint.R == 166 && acrylicTint.G == 196 && acrylicTint.B == 255,
-        "亚克力没有按 65% 白色 + 35% 主题色混合。");
-    Require(ThemePalette.MaterialTintColor(blueTheme, ThemeMaterial.Glass) == ThemePalette.SurfaceColor(blueTheme) &&
-            ThemePalette.MaterialTintColor(blueTheme, ThemeMaterial.Matte) == ThemePalette.SurfaceColor(blueTheme),
-        "玻璃或磨砂错误使用了亚克力白色混合。");
-
-    Require(ThemePalette.OuterEdgeThickness == 1.25f &&
-            ThemePalette.InnerEdgeThickness == .75f &&
-            ThemePalette.InnerEdgeInset == 1.5f,
-        "双层边缘厚度或内缩参数错误。");
-    foreach (ThemeMaterial material in Enum.GetValues<ThemeMaterial>())
+    static void Near(double actual, double expected, string message)
     {
-        Require(ThemePalette.OuterEdgeStops(material).Count >= 3 &&
-                ThemePalette.InnerEdgeStops(material).Count >= 3,
-            $"{material} 没有外边界和内反光两层参数。");
+        Require(Math.Abs(actual - expected) < .0001, $"{message} 实际={actual:0.####}，期望={expected:0.####}。");
     }
-    Require(ThemePalette.HasPrismaticEdge(ThemeMaterial.Glass) &&
-            !ThemePalette.HasPrismaticEdge(ThemeMaterial.Acrylic) &&
-            !ThemePalette.HasPrismaticEdge(ThemeMaterial.Matte),
-        "彩色棱镜边缘没有仅限玻璃材质。");
-    foreach (ThemeMaterial material in Enum.GetValues<ThemeMaterial>())
+
+    string sourceRoot = Path.Combine(Environment.CurrentDirectory, "src", "TuckPane");
+    string modelSource = File.ReadAllText(Path.Combine(sourceRoot, "Models", "AppState.cs"));
+    string paletteSource = File.ReadAllText(Path.Combine(sourceRoot, "Services", "ThemePalette.cs"));
+    string surfaceSource = File.ReadAllText(Path.Combine(sourceRoot, "Services", "ThemeSurface.cs"));
+    string consoleSource = File.ReadAllText(Path.Combine(sourceRoot, "ConsoleWindow.xaml.cs"));
+    string mainSource = File.ReadAllText(Path.Combine(sourceRoot, "MainWindow.xaml.cs"));
+    string mainXamlSource = File.ReadAllText(Path.Combine(sourceRoot, "MainWindow.xaml"));
+    string consoleXamlSource = File.ReadAllText(Path.Combine(sourceRoot, "ConsoleWindow.xaml"));
+    string edgePath = Path.Combine(sourceRoot, "Services", "ThemeEdgeSurface.cs");
+
+    Require(modelSource.Contains("SchemaVersion { get; set; } = 15", StringComparison.Ordinal) &&
+            modelSource.Contains("MaximumThemeTransparency = .99", StringComparison.Ordinal) &&
+            modelSource.Contains("MaximumThemeBlurStrength = 2", StringComparison.Ordinal) &&
+            modelSource.Contains("SolidColorMode", StringComparison.Ordinal),
+        "主题状态未写回 Schema 15，或玻璃/纯色上限字段缺失。 ");
+    Require(GlobalSettings.NormalizeThemeTransparency(-1) == 0 &&
+            GlobalSettings.NormalizeThemeTransparency(.99) == .99 &&
+            GlobalSettings.NormalizeThemeTransparency(1) == .99 &&
+            GlobalSettings.NormalizeThemeBlurStrength(.01) == .05 &&
+            GlobalSettings.NormalizeThemeBlurStrength(2) == 2,
+        "玻璃不透明度或模糊强度端点归一化错误。 ");
+
+    const uint color = 0xFF1A80E3;
+    ThemeCompositionPlan transparent = ThemePalette.BuildCompositionPlan(
+        new ThemeValues(color, 0, 1), useEffects: true);
+    Require(!transparent.RequiresHostBackdrop && !transparent.UsesGaussianBlur &&
+            transparent.HighlightOpacity == 0 && transparent.SurfaceOpacity == 0,
+        "透明端点仍创建玻璃效果或高光。 ");
+    ThemeCompositionPlan solid = ThemePalette.BuildCompositionPlan(
+        new ThemeValues(color, .35, 1, SolidColorMode: true, SolidOpacity: .35), useEffects: true);
+    Require(!solid.RequiresHostBackdrop && !solid.UsesGaussianBlur &&
+            solid.DesktopOpacity == 0 && Math.Abs(solid.SurfaceOpacity - .35f) < .0001f &&
+            Math.Abs(solid.TintOpacity - .35f) < .0001f &&
+            solid.HighlightOpacity == 0,
+        "纯色模式未旁路桌面、模糊或高光。 ");
+    ThemeCompositionPlan glass = ThemePalette.BuildCompositionPlan(
+        new ThemeValues(color, .5, 2), useEffects: true);
+    Near(glass.BlurAmount, 20, "模糊 200% 未按比例放大");
+    Near(glass.Saturation, 2, "模糊饱和度未在 100% 封顶");
+    Near(glass.LuminosityOpacity, .06, "模糊明度未在 100% 封顶");
+    Near(glass.HighlightOpacity, 1, "玻璃高光端点公式错误");
+
+    Require(ThemePalette.GlassArcStops.Count >= 4 &&
+            ThemePalette.GlassTextureStops.Count >= 6 &&
+            ThemePalette.GlassArcStops.First().Color.A == 0 &&
+            ThemePalette.GlassArcStops.Last().Color.A == 0 &&
+            ThemePalette.GlassTextureStops.First().Color.A == 0 &&
+            ThemePalette.GlassTextureStops.Last().Color.A == 0,
+        "弧光/纹理渐变未保持透明端点。 ");
+    Require(File.Exists(edgePath),
+        "缺少独立 ThemeEdgeSurface 边缘渲染层，边缘不可由 ThemeSurface 兼任。 ");
+    string edgeSource = File.ReadAllText(edgePath);
+    Require((edgeSource.Contains("CompositionShapeVisual", StringComparison.Ordinal) ||
+             edgeSource.Contains("ShapeVisual", StringComparison.Ordinal)) &&
+            edgeSource.Contains("CompositionRoundedRectangleGeometry", StringComparison.Ordinal) &&
+            edgeSource.Contains("CreateShapeVisual", StringComparison.Ordinal) &&
+            edgeSource.Contains("CreateRoundedRectangleGeometry", StringComparison.Ordinal) &&
+            edgeSource.Contains("CompositionBorderMode.Soft", StringComparison.Ordinal) &&
+            edgeSource.Contains("StrokeBrush", StringComparison.Ordinal) &&
+            edgeSource.Contains("StrokeThickness", StringComparison.Ordinal) &&
+            edgeSource.Contains("CornerRadius", StringComparison.Ordinal) &&
+            edgeSource.Contains("StrokeLineJoin.Round", StringComparison.Ordinal),
+        "ThemeEdgeSurface 未使用双层圆角 ShapeVisual 描边，或缺少 Soft 抗锯齿。 ");
+    Require(edgeSource.Contains("OrganizerGlassOuterEdgeStops", StringComparison.Ordinal) &&
+            edgeSource.Contains("OrganizerGlassInnerEdgeStops", StringComparison.Ordinal) &&
+            edgeSource.Contains("GlassEdgeHighlightStops", StringComparison.Ordinal) &&
+            edgeSource.Contains("GlassEdgeTextureStops", StringComparison.Ordinal) &&
+            !edgeSource.Contains("CreateHostBackdropBrush", StringComparison.Ordinal) &&
+            !edgeSource.Contains("GaussianBlurEffect", StringComparison.Ordinal),
+        "ThemeEdgeSurface 应使用固定中性边缘渐变，不能创建第二个 backdrop 或 Gaussian blur。 ");
+    object? minimumEdgeOpacity = typeof(ThemePalette).GetField(
+        "GlassEdgeMinimumOpacity",
+        System.Reflection.BindingFlags.Static |
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic)?.GetValue(null);
+    Require(minimumEdgeOpacity is float minimum && minimum > 0 && minimum <= 1 &&
+            paletteSource.Contains("GlassEdgeMinimumOpacity", StringComparison.Ordinal) &&
+            edgeSource.Contains("GlassEdgeMinimumOpacity", StringComparison.Ordinal) &&
+            edgeSource.Contains("_visual.Opacity = ThemePalette.GlassEdgeMinimumOpacity", StringComparison.Ordinal),
+        "透明、纯色、零模糊和普通玻璃状态没有保留可见的中性边缘强度。 ");
+    Require(edgeSource.Contains("RefreshGeometry", StringComparison.Ordinal) &&
+            edgeSource.Contains("ActualWidth", StringComparison.Ordinal) &&
+            edgeSource.Contains("ActualHeight", StringComparison.Ordinal) &&
+            edgeSource.Contains("RasterizationScale", StringComparison.Ordinal) &&
+            edgeSource.Contains("SizeChanged", StringComparison.Ordinal) &&
+            edgeSource.Contains("Loaded", StringComparison.Ordinal) &&
+            edgeSource.Contains("XamlRoot", StringComparison.Ordinal),
+        "ThemeEdgeSurface 没有覆盖首次布局、尺寸变化或 DPI 变化后的几何刷新。 ");
+    Require(edgeSource.Contains("Math.Max(0", StringComparison.Ordinal) &&
+            edgeSource.Contains("Math.Min", StringComparison.Ordinal) &&
+            edgeSource.Contains("ConfigureGeometry", StringComparison.Ordinal),
+        "ThemeEdgeSurface 未钳制圆角/内缩几何，0×0 或极小尺寸可能产生负尺寸。 ");
+    Require(!surfaceSource.Contains("GlassArcStops", StringComparison.Ordinal) &&
+            !surfaceSource.Contains("GlassTextureStops", StringComparison.Ordinal) &&
+            !surfaceSource.Contains("showPersistentGlassEdge", StringComparison.Ordinal) &&
+            !surfaceSource.Contains("showArcGlow", StringComparison.Ordinal),
+        "ThemeSurface 仍承担整面弧光、纹理或永久边缘职责，可能覆盖独立边缘层。 ");
+    Require(!mainSource.Contains("showPersistentGlassEdge", StringComparison.Ordinal) &&
+            !mainSource.Contains("showArcGlow", StringComparison.Ordinal) &&
+            !consoleSource.Contains("showPersistentGlassEdge", StringComparison.Ordinal) &&
+            !consoleSource.Contains("showArcGlow", StringComparison.Ordinal),
+        "窗口接线仍通过旧 showArcGlow/showPersistentGlassEdge 参数控制边缘。 ");
+    string compactEdgeCallSource = string.Concat(mainSource.Where(character => !char.IsWhiteSpace(character)));
+    string consoleEdgeCallSource = string.Concat(consoleSource.Where(character => !char.IsWhiteSpace(character)));
+    Require(compactEdgeCallSource.Contains("newThemeEdgeSurface(CompactEdgeOverlay", StringComparison.Ordinal) &&
+            compactEdgeCallSource.Contains("newThemeEdgeSurface(ExpandedEdgeOverlay", StringComparison.Ordinal) &&
+            consoleEdgeCallSource.Contains("newThemeEdgeSurface(SettingsEdgeOverlay", StringComparison.Ordinal),
+        "收起态、展开态或设置页没有分别创建独立 ThemeEdgeSurface。 ");
+
+    static XNamespace XamlNamespace() =>
+        XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
+
+    static XElement? FindNamedElement(XDocument document, string name)
     {
-        float scale = ThemePalette.Effect(material).TintOpacityScale;
-        float opaque = ThemePalette.EffectiveTintOpacity(new ThemeValues(0xFF112233, material, 0), material);
-        float middle = ThemePalette.EffectiveTintOpacity(new ThemeValues(0xFF112233, material, .35), material);
-        float maximum = ThemePalette.EffectiveTintOpacity(new ThemeValues(0xFF112233, material, .9), material);
-        Require(Math.Abs(opaque - 1) < .0001f &&
-                Math.Abs(middle - .65f * scale) < .0001f &&
-                Math.Abs(maximum - .1f * scale) < .0001f &&
-                opaque > middle && middle > maximum,
-            $"{material} 没有在 0% 时完全不透明，或非零透明度没有保留材质缩放。");
+        XNamespace x = XamlNamespace();
+        return document.Descendants().FirstOrDefault(element =>
+            (string?)element.Attribute(x + "Name") == name);
+    }
+
+    static bool IsLastElement(XElement element) =>
+        element.Parent is not null && element.Parent.Elements().LastOrDefault() == element;
+
+    static void RequireOverlay(XDocument document, string overlayName, string expectedParent)
+    {
+        XElement overlay = FindNamedElement(document, overlayName) ??
+            throw new InvalidOperationException($"XAML 缺少 {overlayName}。 ");
+        XElement parent = overlay.Parent ??
+            throw new InvalidOperationException($"{overlayName} 没有宿主父节点。 ");
+        XNamespace x = XamlNamespace();
+        string? parentName = (string?)parent.Attribute(x + "Name");
+        Require(parentName == expectedParent,
+            $"{overlayName} 错误挂载在 {parentName ?? parent.Name.LocalName}，应位于 {expectedParent}。 ");
+        Require(IsLastElement(overlay),
+            $"{overlayName} 不是 {expectedParent} 的最后一个子元素，可能被内容兄弟节点覆盖。 ");
+        Require(string.Equals((string?)overlay.Attribute("IsHitTestVisible"), "False", StringComparison.OrdinalIgnoreCase),
+            $"{overlayName} 必须不可命中，不能拦截收纳窗交互。 ");
+        string? zIndex = (string?)overlay.Attribute(XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml/presentation") + "ZIndex") ??
+            (string?)overlay.Attribute("Canvas.ZIndex");
+        Require(int.TryParse(zIndex, out int parsedZ) && parsedZ >= 100,
+            $"{overlayName} 没有置于内容之上（Canvas.ZIndex 应至少为 100）。 ");
+    }
+
+    XDocument mainDocument = XDocument.Parse(mainXamlSource, LoadOptions.PreserveWhitespace);
+    XDocument consoleDocument = XDocument.Parse(consoleXamlSource, LoadOptions.PreserveWhitespace);
+    RequireOverlay(mainDocument, "CompactEdgeOverlay", "CompactThumbnailHost");
+    RequireOverlay(mainDocument, "ExpandedEdgeOverlay", "ExpandedPanel");
+    RequireOverlay(consoleDocument, "SettingsEdgeOverlay", "SettingsContentRoot");
+    XElement settingsRoot = FindNamedElement(consoleDocument, "SettingsContentRoot") ??
+        throw new InvalidOperationException("设置页缺少 SettingsContentRoot。 ");
+    XElement? navigation = settingsRoot.Ancestors().FirstOrDefault(element => element.Name.LocalName == "NavigationView");
+    Require(navigation is not null &&
+            navigation.Attribute(XamlNamespace() + "Name")?.Value == "RootNavigation",
+        "SettingsContentRoot 没有位于 RootNavigation 的右侧内容树中。 ");
+    Require(settingsRoot.Parent?.Name.LocalName == "NavigationView",
+        "SettingsContentRoot 必须是 NavigationView 的内容根，不能覆盖标题栏或左侧导航栏。 ");
+    XElement settingsOverlay = FindNamedElement(consoleDocument, "SettingsEdgeOverlay")!;
+    Require(settingsOverlay.Ancestors().Any(element => element == settingsRoot) &&
+            !settingsOverlay.Ancestors().Any(element => element.Attribute(XamlNamespace() + "Name")?.Value == "TitleBarDragRegion"),
+        "SettingsEdgeOverlay 的覆盖范围越过了设置右侧内容区。 ");
+    Require(!consoleDocument.Descendants().Any(element =>
+            element.Attribute(XamlNamespace() + "Name")?.Value == "SettingsEdgeOverlay" &&
+            element.Ancestors().Any(ancestor => ancestor.Attribute(XamlNamespace() + "Name")?.Value == "RootNavigation" &&
+                                                 ancestor.Name.LocalName == "NavigationViewItem")),
+        "SettingsEdgeOverlay 错误放入左侧导航菜单项。 ");
+
+    static void CheckEdgeGeometry(
+        double width,
+        double height,
+        double radius,
+        double scale,
+        bool requirePositiveInnerAndOuter = true)
+    {
+        double pixelWidth = Math.Round(Math.Max(0, width) * Math.Max(1, scale)) / Math.Max(1, scale);
+        double pixelHeight = Math.Round(Math.Max(0, height) * Math.Max(1, scale)) / Math.Max(1, scale);
+        double clampedRadius = Math.Min(Math.Max(0, radius), Math.Min(pixelWidth, pixelHeight) / 2);
+        double outerHalf = ThemePalette.OrganizerGlassOuterEdgeThicknessDip / 2;
+        double innerOffset = ThemePalette.OrganizerGlassInnerEdgeInsetDip +
+            ThemePalette.OrganizerGlassInnerEdgeThicknessDip / 2;
+        double outerWidth = Math.Max(0, pixelWidth - outerHalf * 2);
+        double outerHeight = Math.Max(0, pixelHeight - outerHalf * 2);
+        double innerWidth = Math.Max(0, pixelWidth - innerOffset * 2);
+        double innerHeight = Math.Max(0, pixelHeight - innerOffset * 2);
+        Require(!requirePositiveInnerAndOuter || pixelWidth == 0 || pixelHeight == 0 ||
+                (outerWidth > 0 && outerHeight > 0 && innerWidth > 0 && innerHeight > 0),
+            $"{width}×{height}@{scale} 的边缘几何没有产生非零内外缘。 ");
+        Require(clampedRadius <= Math.Min(pixelWidth, pixelHeight) / 2 + .0001 &&
+                outerWidth >= 0 && outerHeight >= 0 && innerWidth >= 0 && innerHeight >= 0,
+            "边缘圆角或内缩几何超出宿主边界。 ");
+    }
+
+    CheckEdgeGeometry(39, 39, 12, 1);
+    CheckEdgeGeometry(640, 420, 18, 1);
+    CheckEdgeGeometry(640, 420, 18, 1.25);
+    CheckEdgeGeometry(2, 2, 18, 2, requirePositiveInnerAndOuter: false);
+    Require(ThemePalette.OrganizerGlassOuterEdgeThicknessDip == 1.25f &&
+            ThemePalette.OrganizerGlassInnerEdgeThicknessDip == .75f &&
+            ThemePalette.OrganizerGlassInnerEdgeInsetDip == 1.5f,
+        "边缘 DIP 参数不是固定的 1.25/0.75/1.5。 ");
+
+    static void RequireVisibleGradient(
+        IReadOnlyList<(float Offset, Windows.UI.Color Color)> stops,
+        string label)
+    {
+        Require(stops.Count >= 3 && stops.First().Color.A == 0 && stops.Last().Color.A == 0 &&
+                stops.Skip(1).Take(stops.Count - 2).Any(stop => stop.Color.A >= 4),
+            $"{label} 必须拥有透明端点和可见中间 alpha。 ");
+    }
+    RequireVisibleGradient(ThemePalette.GlassArcStops, "玻璃弧光");
+    RequireVisibleGradient(ThemePalette.GlassTextureStops, "玻璃拉丝纹理");
+    Require(ThemePalette.OrganizerGlassOuterEdgeStops.First().Color.A >= 80 &&
+            ThemePalette.OrganizerGlassOuterEdgeStops.Skip(1).Any(stop => stop.Color.A > 0) &&
+            ThemePalette.OrganizerGlassInnerEdgeStops.First().Color.A >= 40 &&
+            ThemePalette.OrganizerGlassInnerEdgeStops.Skip(1).Any(stop => stop.Color.A > 0),
+        "四边圆角外缘/内缘渐变 alpha 过低，可能再次出现代码存在但肉眼不可见。 ");
+
+    Require(consoleXamlSource.Contains("Maximum=\"1\"", StringComparison.Ordinal) &&
+            consoleSource.Contains("Maximum = theme.SolidColorMode ? 1 : GlobalSettings.MaximumThemeTransparency", StringComparison.Ordinal) &&
+            consoleXamlSource.Contains("Minimum=\".05\"", StringComparison.Ordinal) &&
+            consoleXamlSource.Contains("Maximum=\"2\"", StringComparison.Ordinal),
+        "设置页滑块未声明 99% 玻璃不透明度和 5%–200% 模糊范围。 ");
+
+    Console.WriteLine("PASS: theme opacity blur arc");
+    return;
+}
+
+if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoints"])
+{
+    bool zeroEndpointOnly = args is ["--theme-visual-zero-endpoints"];
+
+    static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
+    static void Near(double actual, double expected, string message)
+    {
+        Require(Math.Abs(actual - expected) < .0001, $"{message} 实际={actual:0.####}，期望={expected:0.####}。");
+    }
+
+    static string Read(string root, params string[] parts) =>
+        File.ReadAllText(Path.Combine([root, .. parts]));
+
+    static int Count(string source, string token)
+    {
+        int count = 0;
+        for (int offset = 0; (offset = source.IndexOf(token, offset, StringComparison.Ordinal)) >= 0; offset += token.Length)
+            count++;
+        return count;
+    }
+
+    if (zeroEndpointOnly)
+    {
+        var failures = new List<string>();
+
+        void CheckEndpoint(bool condition, string message)
+        {
+            if (!condition) failures.Add(message);
+        }
+
+        void CheckNear(double actual, double expected, string message)
+        {
+            if (Math.Abs(actual - expected) >= .0001)
+                failures.Add($"{message} 实际={actual:0.####}，期望={expected:0.####}。");
+        }
+
+        float ReadPlanFloat(ThemeCompositionPlan plan, string propertyName, string message)
+        {
+            var property = typeof(ThemeCompositionPlan).GetProperty(propertyName);
+            if (property?.GetValue(plan) is not float value)
+            {
+                failures.Add(message);
+                return float.NaN;
+            }
+            return value;
+        }
+
+        bool ReadPlanBool(ThemeCompositionPlan plan, string propertyName, string message)
+        {
+            var property = typeof(ThemeCompositionPlan).GetProperty(propertyName);
+            if (property?.GetValue(plan) is not bool value)
+            {
+                failures.Add(message);
+                return false;
+            }
+            return value;
+        }
+
+        static object? ReadStaticMember(Type type, string memberName)
+        {
+            const System.Reflection.BindingFlags flags =
+                System.Reflection.BindingFlags.Static |
+                System.Reflection.BindingFlags.Public |
+                System.Reflection.BindingFlags.NonPublic;
+            return type.GetProperty(memberName, flags)?.GetValue(null) ??
+                type.GetField(memberName, flags)?.GetValue(null);
+        }
+
+        const uint endpointColor = 0xFF1A80E3;
+        string modelSource = Read(Environment.CurrentDirectory, "src", "TuckPane", "Models", "AppState.cs");
+        string themeConsoleXaml = Read(Environment.CurrentDirectory, "src", "TuckPane", "ConsoleWindow.xaml");
+        string themeConsoleCode = Read(Environment.CurrentDirectory, "src", "TuckPane", "ConsoleWindow.xaml.cs");
+        CheckEndpoint(modelSource.Contains("SchemaVersion { get; set; } = 14", StringComparison.Ordinal) &&
+                      modelSource.Contains("MaximumThemeTransparency = .99", StringComparison.Ordinal) &&
+                      modelSource.Contains("MaximumThemeBlurStrength = 2", StringComparison.Ordinal) &&
+                      modelSource.Contains("SolidColorMode", StringComparison.Ordinal),
+            "主题状态未升级到 Schema 14 或缺少纯色/新上限字段。 ");
+        CheckEndpoint(themeConsoleXaml.Contains("ThemeGlassModeButton", StringComparison.Ordinal) &&
+                      themeConsoleXaml.Contains("ThemeSolidModeButton", StringComparison.Ordinal) &&
+                      themeConsoleXaml.Contains("Maximum=\".99\"", StringComparison.Ordinal) &&
+                      themeConsoleXaml.Contains("Maximum=\"2\"", StringComparison.Ordinal),
+            "主题设置页缺少玻璃/纯色模式或滑块上限。 ");
+        CheckEndpoint(themeConsoleCode.Contains("ThemeTransparencyRow.Visibility", StringComparison.Ordinal) &&
+                      themeConsoleCode.Contains("ThemeBlurStrengthRow.Visibility", StringComparison.Ordinal) &&
+                      themeConsoleCode.Contains("solidColorMode", StringComparison.Ordinal),
+            "纯色模式没有隐藏透明度/模糊控件或接入状态更新。 ");
+        ThemeCompositionPlan transparentEndpoint = ThemePalette.BuildCompositionPlan(
+            new ThemeValues(endpointColor, 0, 1), useEffects: true);
+        CheckNear(transparentEndpoint.TintOpacity, 0, "不透明度 0% 的主题色比例未归零");
+        CheckNear(transparentEndpoint.DesktopOpacity, 1, "不透明度 0% 的玻璃混合比例错误");
+        CheckNear(ReadPlanFloat(
+                transparentEndpoint,
+                "SurfaceOpacity",
+                "主题合成计划缺少最终整层不透明度 SurfaceOpacity。"),
+            0,
+            "不透明度 0% 的最终整层输出未完全透明");
+        CheckEndpoint(!ReadPlanBool(
+                transparentEndpoint,
+                "RequiresHostBackdrop",
+                "主题合成计划缺少精确的 HostBackdrop 门槛 RequiresHostBackdrop。") &&
+              !transparentEndpoint.UsesGaussianBlur &&
+              transparentEndpoint.BlurAmount == 0 &&
+              transparentEndpoint.Saturation == 1 &&
+              transparentEndpoint.LuminosityOpacity == 0 &&
+              transparentEndpoint.HighlightOpacity == 0,
+            "不透明度 0% 仍请求 HostBackdrop、Gaussian、调色或高光。 ");
+
+        ThemeCompositionPlan clearHalf = ThemePalette.BuildCompositionPlan(
+            new ThemeValues(endpointColor, .5, 0), useEffects: true);
+        CheckNear(clearHalf.TintOpacity, .5, "不透明度 50% 的主题色混合比例错误");
+        CheckNear(clearHalf.DesktopOpacity, .5, "不透明度 50% 的桌面混合比例错误");
+        CheckNear(ReadPlanFloat(
+                clearHalf,
+                "SurfaceOpacity",
+                "主题合成计划缺少最终整层不透明度 SurfaceOpacity。"),
+            .5,
+            "不透明度 50% 的最终整层输出错误");
+        CheckEndpoint(!ReadPlanBool(
+                clearHalf,
+                "RequiresHostBackdrop",
+                "主题合成计划缺少精确的 HostBackdrop 门槛 RequiresHostBackdrop。") &&
+              !clearHalf.UsesGaussianBlur &&
+              clearHalf.BlurAmount == 0 &&
+              clearHalf.Saturation == 1 &&
+              clearHalf.LuminosityOpacity == 0 &&
+              clearHalf.HighlightOpacity == 0 &&
+              ThemePalette.WithOpacity(clearHalf.TintColor, clearHalf.TintOpacity).A == 128,
+            "模糊 0% 仍创建光学处理，或半透明清晰主题色 alpha 不正确。 ");
+
+        ThemeCompositionPlan glassMaximum = ThemePalette.BuildCompositionPlan(
+            new ThemeValues(endpointColor, GlobalSettings.MaximumThemeTransparency, 1), useEffects: true);
+        CheckNear(glassMaximum.TintOpacity, .99, "玻璃模式最大不透明度未限制为 99%");
+        CheckNear(glassMaximum.DesktopOpacity, .01, "玻璃模式最大不透明度的桌面比例错误");
+        ThemeCompositionPlan solidEndpoint = ThemePalette.BuildCompositionPlan(
+            new ThemeValues(endpointColor, .35, 1, SolidColorMode: true), useEffects: true);
+        CheckNear(solidEndpoint.TintOpacity, 1, "纯色模式的主题色比例错误");
+        CheckNear(solidEndpoint.DesktopOpacity, 0, "纯色模式的桌面比例未归零");
+        CheckNear(ReadPlanFloat(
+                solidEndpoint,
+                "SurfaceOpacity",
+                "主题合成计划缺少最终整层不透明度 SurfaceOpacity。"),
+            1,
+            "纯色模式的最终整层输出错误");
+        CheckEndpoint(!ReadPlanBool(
+                solidEndpoint,
+                "RequiresHostBackdrop",
+                "主题合成计划缺少精确的 HostBackdrop 门槛 RequiresHostBackdrop。") &&
+              !solidEndpoint.UsesGaussianBlur &&
+              solidEndpoint.HighlightOpacity == 0,
+            "纯色模式仍请求 HostBackdrop、Gaussian 或高光。 ");
+
+        ThemeCompositionPlan glass = ThemePalette.BuildCompositionPlan(
+            new ThemeValues(endpointColor, .5, 1), useEffects: true);
+        CheckEndpoint(ReadPlanBool(
+                glass,
+                "RequiresHostBackdrop",
+                "主题合成计划缺少精确的 HostBackdrop 门槛 RequiresHostBackdrop。") &&
+              glass.UsesGaussianBlur,
+            "中间不透明度且非零模糊没有进入唯一玻璃分支。 ");
+        CheckNear(ReadPlanFloat(
+                glass,
+                "SurfaceOpacity",
+                "主题合成计划缺少最终整层不透明度 SurfaceOpacity。"),
+            .5,
+            "玻璃分支没有按不透明度控制最终整层输出");
+        CheckNear(glass.TintOpacity, .5, "玻璃分支没有按不透明度混合主题色");
+        CheckNear(glass.DesktopOpacity, .5, "玻璃分支的桌面混合比例错误");
+        CheckNear(glass.BlurAmount, 10, "模糊 100% 没有产生 10px GaussianBlur");
+        CheckNear(glass.Saturation, 2, "模糊 100% 的饱和度错误");
+        CheckNear(glass.LuminosityOpacity, .06, "模糊 100% 的明度错误");
+        CheckNear(glass.HighlightOpacity, 1, "内部高光没有使用 4×o×(1-o)×min(b,1)");
+
+        ThemeCompositionPlan endpointFallback = ThemePalette.BuildCompositionPlan(
+            new ThemeValues(endpointColor, .5, 1), useEffects: false);
+        CheckEndpoint(!ReadPlanBool(
+                endpointFallback,
+                "RequiresHostBackdrop",
+                "主题合成计划缺少精确的 HostBackdrop 门槛 RequiresHostBackdrop。") &&
+              !endpointFallback.UsesGaussianBlur &&
+              endpointFallback.BlurAmount == 0 &&
+              endpointFallback.Saturation == 1 &&
+              endpointFallback.LuminosityOpacity == 0 &&
+              endpointFallback.HighlightOpacity == 0 &&
+              ThemePalette.WithOpacity(endpointFallback.TintColor, endpointFallback.TintOpacity).A == 128,
+            "高级效果关闭时没有降级为 alpha=o 的清晰主题色。 ");
+
+        string endpointSourceRoot = Path.Combine(Environment.CurrentDirectory, "src", "TuckPane");
+        string endpointServicesRoot = Path.Combine(endpointSourceRoot, "Services");
+        string endpointBackdrop = Read(endpointServicesRoot, "ThemeBackdrop.cs");
+        int endpointBuildStart = endpointBackdrop.IndexOf("private Wuc.CompositionBrush BuildBrush", StringComparison.Ordinal);
+        int endpointHostCall = endpointBackdrop.IndexOf("CreateHostBackdropBrush()", endpointBuildStart, StringComparison.Ordinal);
+        int endpointFallbackStart = endpointBackdrop.IndexOf("private Wuc.CompositionBrush BuildColorFallbackBrush", endpointBuildStart, StringComparison.Ordinal);
+        string endpointBeforeHost = endpointBuildStart >= 0 && endpointHostCall > endpointBuildStart
+            ? endpointBackdrop[endpointBuildStart..endpointHostCall]
+            : string.Empty;
+        string endpointFallbackBody = endpointFallbackStart >= 0 ? endpointBackdrop[endpointFallbackStart..] : string.Empty;
+        CheckEndpoint(endpointBuildStart >= 0 && endpointHostCall > endpointBuildStart &&
+              endpointBeforeHost.Contains("RequiresHostBackdrop", StringComparison.Ordinal) &&
+              endpointBeforeHost.Contains("BuildColorFallbackBrush", StringComparison.Ordinal) &&
+              Count(endpointBackdrop, "CreateHostBackdropBrush()") == 1 &&
+              Count(endpointBackdrop, "new GaussianBlurEffect") == 1,
+            "ThemeBackdrop 没有在 HostBackdrop/Gaussian 创建前应用唯一玻璃门槛。 ");
+        CheckEndpoint(endpointBackdrop.Contains("_plan.SurfaceOpacity", StringComparison.Ordinal) &&
+              endpointBackdrop.Contains("new OpacityEffect", StringComparison.Ordinal),
+            "玻璃分支没有按 SurfaceOpacity 控制最终整层输出。 ");
+        CheckEndpoint(endpointFallbackBody.Contains("ThemePalette.WithOpacity", StringComparison.Ordinal) &&
+              endpointFallbackBody.Contains("_plan.TintOpacity", StringComparison.Ordinal) &&
+              !endpointFallbackBody.Contains("GaussianBlurEffect", StringComparison.Ordinal),
+            "主题色 fallback 没有使用 alpha=o，或重新引入了模糊。 ");
+        CheckEndpoint(endpointBackdrop.Contains("BorderMode = EffectBorderMode.Hard", StringComparison.Ordinal),
+            "GaussianBlur 不再保留 Hard 边界模式。 ");
+
+        object? outerThickness = ReadStaticMember(
+            typeof(ThemePalette), "OrganizerGlassOuterEdgeThicknessDip");
+        object? innerThickness = ReadStaticMember(
+            typeof(ThemePalette), "OrganizerGlassInnerEdgeThicknessDip");
+        object? innerInset = ReadStaticMember(
+            typeof(ThemePalette), "OrganizerGlassInnerEdgeInsetDip");
+        CheckEndpoint(outerThickness is float outerThicknessValue &&
+              Math.Abs(outerThicknessValue - 1.25f) < .0001f &&
+              innerThickness is float innerThicknessValue &&
+              Math.Abs(innerThicknessValue - .75f) < .0001f &&
+              innerInset is float innerInsetValue &&
+              Math.Abs(innerInsetValue - 1.5f) < .0001f,
+            "收纳窗永久玻璃边缘缺少固定的 1.25/0.75/1.5 DIP 参数。 ");
+
+        var outerEdgeStops = ReadStaticMember(
+            typeof(ThemePalette), "OrganizerGlassOuterEdgeStops") as
+            IReadOnlyList<(float Offset, Windows.UI.Color Color)>;
+        var innerEdgeStops = ReadStaticMember(
+            typeof(ThemePalette), "OrganizerGlassInnerEdgeStops") as
+            IReadOnlyList<(float Offset, Windows.UI.Color Color)>;
+        CheckEndpoint(outerEdgeStops is { Count: >= 3 } &&
+              outerEdgeStops.First().Color == Windows.UI.Color.FromArgb(112, 255, 255, 255) &&
+              outerEdgeStops.Any(stop =>
+                  stop.Color == Windows.UI.Color.FromArgb(16, 255, 255, 255)) &&
+              outerEdgeStops.Last().Color == Windows.UI.Color.FromArgb(44, 0, 0, 0),
+            "收纳窗外缘没有使用固定的左上白色 112→16、右下黑色 44 渐变。 ");
+        CheckEndpoint(innerEdgeStops is { Count: >= 3 } &&
+              innerEdgeStops.First().Color == Windows.UI.Color.FromArgb(64, 255, 255, 255) &&
+              innerEdgeStops.Any(stop =>
+                  stop.Color == Windows.UI.Color.FromArgb(8, 255, 255, 255)) &&
+              innerEdgeStops.Last().Color == Windows.UI.Color.FromArgb(32, 0, 0, 0),
+            "收纳窗内缘没有使用固定的左上白色 64→8、右下黑色 32 渐变。 ");
+
+        string endpointSurface = Read(endpointServicesRoot, "ThemeSurface.cs");
+        int endpointSetThemeStart = endpointSurface.IndexOf(
+            "internal void SetTheme", StringComparison.Ordinal);
+        int endpointSetCornerRadiusStart = endpointSurface.IndexOf(
+            "internal void SetCornerRadius", endpointSetThemeStart, StringComparison.Ordinal);
+        string endpointSetThemeBody = endpointSetThemeStart >= 0 &&
+            endpointSetCornerRadiusStart > endpointSetThemeStart
+                ? endpointSurface[endpointSetThemeStart..endpointSetCornerRadiusStart]
+                : string.Empty;
+        CheckEndpoint(endpointSurface.Contains("bool showPersistentGlassEdge = false", StringComparison.Ordinal) &&
+              endpointSurface.Contains("CreateShapeVisual", StringComparison.Ordinal) &&
+              Count(endpointSurface, "CreateRoundedRectangleGeometry()") >= 2 &&
+              Count(endpointSurface, "CreateSpriteShape(") >= 2 &&
+              Count(endpointSurface, "StrokeBrush =") >= 2 &&
+              Count(endpointSurface, "StrokeThickness =") >= 2,
+            "ThemeSurface 缺少默认关闭的永久双层圆角玻璃描边。 ");
+        CheckEndpoint(Count(endpointSurface, "BorderMode = CompositionBorderMode.Soft") >= 3,
+            "ThemeSurface 根视觉、高光视觉或边缘视觉没有显式使用 Soft 抗锯齿。 ");
+        CheckEndpoint(!endpointSetThemeBody.Contains("OrganizerGlassOuterEdge", StringComparison.Ordinal) &&
+              !endpointSetThemeBody.Contains("OrganizerGlassInnerEdge", StringComparison.Ordinal) &&
+              !endpointSetThemeBody.Contains("StrokeBrush", StringComparison.Ordinal),
+            "SetTheme 仍会根据主题端点重建或关闭永久玻璃边缘。 ");
+
+        string transparentHost = Read(endpointServicesRoot, "TransparentWindowBackdrop.cs");
+        CheckEndpoint(transparentHost.Contains("DwmBlurBehindBlurRegion", StringComparison.Ordinal) &&
+              transparentHost.Contains("Enable = true", StringComparison.Ordinal) &&
+              transparentHost.Contains("CreateRectRgn(", StringComparison.Ordinal) &&
+              transparentHost.Contains("Region =", StringComparison.Ordinal) &&
+              transparentHost.Contains("DwmEnableBlurBehindWindow", StringComparison.Ordinal),
+            "透明宿主没有启用带空区域的 DWM alpha 合成初始化。 ");
+        CheckEndpoint(transparentHost.Contains("WM_ERASEBKGND", StringComparison.Ordinal) &&
+              transparentHost.Contains("GetDC(", StringComparison.Ordinal) &&
+              transparentHost.Contains("CreateSolidBrush(0", StringComparison.Ordinal) &&
+              transparentHost.Contains("FillRect(", StringComparison.Ordinal) &&
+              transparentHost.Contains("ReleaseDC(", StringComparison.Ordinal) &&
+              Count(transparentHost, "DeleteObject(") >= 3,
+            "透明宿主没有用黑色清底，或未完整释放 HDC、HRGN、HBRUSH。 ");
+        CheckEndpoint(transparentHost.Contains("DwmExtendFrameIntoClientArea", StringComparison.Ordinal) &&
+              transparentHost.Contains("new DwmMargins()", StringComparison.Ordinal),
+            "透明宿主没有维持零 frame margin。 ");
+        int messageHandlerStart = transparentHost.IndexOf(
+            "private void MessageMonitor_WindowMessageReceived", StringComparison.Ordinal);
+        int configureStart = transparentHost.IndexOf("private static void Configure", messageHandlerStart, StringComparison.Ordinal);
+        string messageHandler = messageHandlerStart >= 0 && configureStart > messageHandlerStart
+            ? transparentHost[messageHandlerStart..configureStart]
+            : string.Empty;
+        int compositionChangedStart = messageHandler.IndexOf("WM_DWMCOMPOSITIONCHANGED", StringComparison.Ordinal);
+        string compositionChangedBranch = compositionChangedStart >= 0
+            ? messageHandler[compositionChangedStart..]
+            : string.Empty;
+        CheckEndpoint(compositionChangedBranch.Contains("Configure(e.Message.Hwnd)", StringComparison.Ordinal) &&
+              !compositionChangedBranch.Contains("e.Handled = true", StringComparison.Ordinal),
+            "DWM 重建后没有重应用透明宿主，或错误截断了其他 HWND subclass 消息链。 ");
+
+        string mainXaml = Read(endpointSourceRoot, "MainWindow.xaml");
+        string mainCode = Read(endpointSourceRoot, "MainWindow.xaml.cs");
+        CheckEndpoint(mainXaml.Contains("x:Name=\"WindowRoot\"", StringComparison.Ordinal) &&
+              mainXaml.Contains("Background=\"Transparent\"", StringComparison.Ordinal) &&
+              mainXaml.Contains("x:Name=\"CompactSurfaceHost\"", StringComparison.Ordinal) &&
+              mainXaml.Contains("x:Name=\"ExpandedSurfaceHost\"", StringComparison.Ordinal) &&
+              mainCode.Contains("CompactSurfaceHost.CornerRadius", StringComparison.Ordinal) &&
+              mainCode.Contains("ExpandedSurfaceHost.CornerRadius", StringComparison.Ordinal),
+            "收纳根节点未透明，或局部主题背景未受圆角约束。 ");
+        CheckEndpoint(mainCode.Contains(
+                  "new ThemeSurface(CompactSurfaceHost, showPersistentGlassEdge: true)",
+                  StringComparison.Ordinal) &&
+              mainCode.Contains(
+                  "new ThemeSurface(ExpandedSurfaceHost, showPersistentGlassEdge: true)",
+                  StringComparison.Ordinal) &&
+              Count(mainCode, "showPersistentGlassEdge: true") == 2,
+            "MainWindow 没有仅为 compact/expanded 两个收纳表面启用永久玻璃边缘。 ");
+        CheckEndpoint(mainCode.Contains("GetElementVisual(CompactSurfaceHost)", StringComparison.Ordinal) &&
+              mainCode.Contains("GetElementVisual(ExpandedSurfaceHost)", StringComparison.Ordinal) &&
+              mainCode.Contains("GetElementVisual(CompactIconPresenter)", StringComparison.Ordinal) &&
+              mainCode.Contains("GetElementVisual(ExpandedContentLayer)", StringComparison.Ordinal) &&
+              Count(mainCode, "BorderMode = CompositionBorderMode.Soft") >= 4,
+            "MainWindow 的两个背景宿主或两个内容裁剪 Visual 没有显式使用 Soft 抗锯齿。 ");
+        string endpointConsoleCode = Read(endpointSourceRoot, "ConsoleWindow.xaml.cs");
+        string endpointOwnedDialog = Read(endpointServicesRoot, "OwnedDialogWindow.cs");
+        CheckEndpoint(endpointConsoleCode.Contains(
+                  "new ThemeSurface(ConsoleSurfaceHost)", StringComparison.Ordinal) &&
+              !endpointConsoleCode.Contains("showPersistentGlassEdge", StringComparison.Ordinal) &&
+              endpointOwnedDialog.Contains("new ThemeSurface(surfaceHost)", StringComparison.Ordinal) &&
+              !endpointOwnedDialog.Contains("showPersistentGlassEdge", StringComparison.Ordinal),
+            "设置窗口或 OwnedDialog 错误启用了收纳窗专属永久玻璃边缘。 ");
+        string endpointDesktopLayer = Read(endpointServicesRoot, "DesktopLayerService.cs");
+        CheckEndpoint(endpointDesktopLayer.Contains("DWMWCP_DONOTROUND", StringComparison.Ordinal) &&
+              endpointDesktopLayer.Contains("DWMWA_WINDOW_CORNER_PREFERENCE", StringComparison.Ordinal) &&
+              endpointDesktopLayer.Contains("DWMWA_BORDER_COLOR", StringComparison.Ordinal) &&
+              endpointDesktopLayer.Contains("DWMWA_COLOR_NONE", StringComparison.Ordinal) &&
+              endpointDesktopLayer.Contains("WM_DWMCOMPOSITIONCHANGED", StringComparison.Ordinal) &&
+              Count(endpointDesktopLayer, "ApplyTransparentChrome();") == 2,
+            "DWM 禁用圆角/系统边框没有覆盖初始应用与 DWM 重建生命周期。 ");
+
+        if (failures.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "theme visual zero endpoints failed:\n - " + string.Join("\n - ", failures));
+        }
+
+        Console.WriteLine("PASS: theme visual zero endpoints");
+        return;
+    }
+
+    Require(GlobalSettings.NormalizeThemeTransparency(-1) == 0 &&
+            GlobalSettings.NormalizeThemeTransparency(.5) == .5 &&
+            GlobalSettings.NormalizeThemeTransparency(1) == .99 &&
+            GlobalSettings.NormalizeThemeTransparency(2) == .99 &&
+            GlobalSettings.NormalizeThemeTransparency(double.NaN) == GlobalSettings.DefaultThemeTransparency,
+        "透明度未按 0..1 归一化。");
+    Require(GlobalSettings.NormalizeThemeBlurStrength(-1) == 0 &&
+            GlobalSettings.NormalizeThemeBlurStrength(.83) == .83 &&
+            GlobalSettings.NormalizeThemeBlurStrength(2) == 2 &&
+            GlobalSettings.NormalizeThemeBlurStrength(double.NaN) == 1,
+        "模糊强度未按 0..1.5 归一化。");
+
+    const uint color = 0xFF1A80E3;
+    ThemeEffectParameters glassEffect = ThemePalette.Effect();
+    Require(glassEffect == new ThemeEffectParameters(10, 2, .06f),
+        "唯一 Glass 参数不是基础模糊 10、饱和度 2、明度 0.06。");
+
+    ThemeCompositionPlan transparent = ThemePalette.BuildCompositionPlan(
+        new ThemeValues(color, 0, 1), useEffects: true);
+    ThemeCompositionPlan half = ThemePalette.BuildCompositionPlan(
+        new ThemeValues(color, .5, 1), useEffects: true);
+    ThemeCompositionPlan opaque = ThemePalette.BuildCompositionPlan(
+        new ThemeValues(color, .35, 1, SolidColorMode: true), useEffects: true);
+    Near(transparent.TintOpacity, 0, "不透明度 0% 主题比例错误");
+    Near(transparent.DesktopOpacity, 1, "不透明度 0% 桌面混合比例错误");
+    Near(transparent.SurfaceOpacity, 0, "不透明度 0% 最终输出未透明");
+    Require(!transparent.RequiresHostBackdrop && !transparent.UsesGaussianBlur,
+        "不透明度 0% 仍创建 HostBackdrop 或 GaussianBlur。");
+    Near(half.TintOpacity, .5, "不透明度 50% 主题比例错误");
+    Near(half.DesktopOpacity, .5, "不透明度 50% 桌面混合比例错误");
+    Near(half.SurfaceOpacity, .5, "不透明度 50% 最终输出比例错误");
+    Require(half.RequiresHostBackdrop, "中间不透明度与非零模糊未创建玻璃分支。");
+    Near(opaque.TintOpacity, 1, "纯色模式主题比例错误");
+    Near(opaque.DesktopOpacity, 0, "纯色模式桌面比例错误");
+    Near(opaque.SurfaceOpacity, 1, "纯色模式最终输出错误");
+    Require(!opaque.RequiresHostBackdrop && !opaque.UsesGaussianBlur,
+        "纯色模式仍创建 HostBackdrop 或 GaussianBlur。");
+    Require(opaque.TintColor.R == 0x1A &&
+            opaque.TintColor.G == 0x80 &&
+            opaque.TintColor.B == 0xE3,
+        "唯一 Glass 管线覆盖了用户选色。");
+
+    ThemeCompositionPlan zeroBlur = ThemePalette.BuildCompositionPlan(
+        new ThemeValues(color, .35, 0), useEffects: true);
+    Near(zeroBlur.BlurAmount, 0, "模糊 0% 未归零");
+    Require(!zeroBlur.RequiresHostBackdrop &&
+            !zeroBlur.UsesGaussianBlur &&
+            Math.Abs(zeroBlur.Saturation - 1) < .0001 &&
+            Math.Abs(zeroBlur.LuminosityOpacity) < .0001 &&
+            Math.Abs(zeroBlur.HighlightOpacity) < .0001,
+        "模糊 0% 仍保留 HostBackdrop、Gaussian、色调处理或高光。");
+
+    ThemeCompositionPlan halfBlur = ThemePalette.BuildCompositionPlan(
+        new ThemeValues(color, .35, .5), useEffects: true);
+    Near(halfBlur.BlurAmount, 5, "模糊 50% 空间强度错误");
+    Near(halfBlur.Saturation, 1.5, "模糊 50% 饱和度没有平滑过渡");
+    Near(halfBlur.LuminosityOpacity, .03, "模糊 50% 明度没有平滑过渡");
+    Near(halfBlur.HighlightOpacity, .455, "模糊 50% 高光公式错误");
+
+    ThemeCompositionPlan normalBlur = ThemePalette.BuildCompositionPlan(
+        new ThemeValues(color, .35, 1), useEffects: true);
+    Near(normalBlur.BlurAmount, glassEffect.BlurAmount, "模糊 100% 未使用 Glass 基础强度");
+    Near(normalBlur.Saturation, glassEffect.Saturation, "模糊 100% 饱和度错误");
+    Near(normalBlur.LuminosityOpacity, glassEffect.LuminosityOpacity, "模糊 100% 明度错误");
+    Near(normalBlur.HighlightOpacity, .91, "模糊 100% 高光公式错误");
+    Require(normalBlur.UsesGaussianBlur, "非零模糊未创建 GaussianBlur");
+
+        ThemeCompositionPlan maxBlur = ThemePalette.BuildCompositionPlan(
+            new ThemeValues(color, .35, 2), useEffects: true);
+        Near(maxBlur.BlurAmount, glassEffect.BlurAmount * 2, "模糊 200% 未按比例放大");
+    Near(maxBlur.Saturation, glassEffect.Saturation, "模糊 150% 饱和度没有在 100% 封顶");
+    Near(maxBlur.LuminosityOpacity, glassEffect.LuminosityOpacity, "模糊 150% 明度没有在 100% 封顶");
+    Near(maxBlur.HighlightOpacity, .91, "模糊 150% 高光没有在 100% 封顶");
+
+    Near(ThemePalette.HighlightOpacity(new ThemeValues(color, 1, 0)), 0,
+        "完全实色且 0% 模糊时高光仍可见");
+    Near(ThemePalette.HighlightOpacity(new ThemeValues(color, 1, .5)), 0,
+        "完全实色端点仍显示高光");
+    Near(ThemePalette.HighlightOpacity(new ThemeValues(color, .5, 0)), 0,
+        "零模糊背景仍显示高光");
+    Near(ThemePalette.HighlightOpacity(new ThemeValues(color, 0, 0)), 0,
+        "完全透明端点仍显示高光");
+    Near(ThemePalette.HighlightOpacity(new ThemeValues(color, 0, 1)), 0,
+        "完全透明且非零模糊时仍显示高光");
+    Near(ThemePalette.HighlightOpacity(new ThemeValues(color, .5, 1)), 1,
+        "中间不透明度的内部高光没有使用端点衰减公式");
+    Near(ThemePalette.HighlightOpacity(new ThemeValues(color, .5, 1.5)), 1,
+        "150% 模糊的内部高光没有在 100% 封顶");
+    Require(ThemePalette.GlassHighlightStops.First().Color.A == 0 &&
+            ThemePalette.GlassHighlightStops.Last().Color.A == 0 &&
+            ThemePalette.GlassHighlightStops.Skip(1).SkipLast(1).Any(stop => stop.Color.A > 0) &&
+            ThemePalette.GlassHighlightStops.Max(stop => stop.Color.A) <= 64,
+        "Glass 内部高光缺失、触及边缘或强度不再保持淡化。 ");
+
+    ThemeCompositionPlan fallback = ThemePalette.BuildCompositionPlan(
+        new ThemeValues(color, .5, 1), useEffects: false);
+    Require(fallback.TintOpacity == .5f && fallback.DesktopOpacity == .5f &&
+            fallback.SurfaceOpacity == .5f && !fallback.RequiresHostBackdrop &&
+            fallback.BlurAmount == 0 && !fallback.UsesGaussianBlur &&
+            fallback.Saturation == 1 && fallback.LuminosityOpacity == 0 &&
+            fallback.HighlightOpacity == 0 && !fallback.UseEffects &&
+            ThemePalette.WithOpacity(fallback.TintColor, 0).A == 0 &&
+            ThemePalette.WithOpacity(fallback.TintColor, .5f).A == 128 &&
+            ThemePalette.WithOpacity(fallback.TintColor, 1).A == 255,
+        "高级效果 fallback 未保持透明度比例或伪造模糊/高光。");
+
+    string sourceRoot = Path.Combine(Environment.CurrentDirectory, "src", "TuckPane");
+    string servicesRoot = Path.Combine(sourceRoot, "Services");
+    string palette = Read(servicesRoot, "ThemePalette.cs");
+    int tintStart = palette.IndexOf("internal static Color TintColor", StringComparison.Ordinal);
+    int foregroundStart = palette.IndexOf("internal static Color ForegroundColor", tintStart, StringComparison.Ordinal);
+    Require(tintStart >= 0 && foregroundStart > tintStart &&
+            !palette.Contains("ThemeMaterial", StringComparison.Ordinal),
+        "ThemePalette 仍包含可选材质参数。");
+
+    string backdrop = Read(servicesRoot, "ThemeBackdrop.cs");
+    int buildStart = backdrop.IndexOf("private Wuc.CompositionBrush BuildBrush", StringComparison.Ordinal);
+    int hostCall = backdrop.IndexOf("CreateHostBackdropBrush()", buildStart, StringComparison.Ordinal);
+    int fallbackStart = backdrop.IndexOf("private Wuc.CompositionBrush BuildColorFallbackBrush", buildStart, StringComparison.Ordinal);
+    Require(backdrop.Contains("BuildCompositionPlan", StringComparison.Ordinal) &&
+            backdrop.Contains("if (_plan.UsesGaussianBlur)", StringComparison.Ordinal) &&
+            Count(backdrop, "new GaussianBlurEffect") == 1 &&
+            !backdrop.Contains("ThemeMaterial", StringComparison.Ordinal) &&
+            !backdrop.Contains("Noise", StringComparison.Ordinal) &&
+            buildStart >= 0 && hostCall > buildStart && fallbackStart > hostCall,
+        "ThemeBackdrop 缺少单一 Glass 桌面/主题分支，或仍保留材质噪点。");
+    string beforeHost = backdrop[buildStart..hostCall];
+    Require(beforeHost.Contains("if (!_plan.RequiresHostBackdrop)", StringComparison.Ordinal) &&
+            beforeHost.Contains("_hostBackdropCapabilityAvailable", StringComparison.Ordinal) &&
+            beforeHost.Contains("BuildColorFallbackBrush", StringComparison.Ordinal),
+        "HostBackdrop 未受唯一玻璃门槛和能力 fallback 守卫。");
+    string fallbackBody = backdrop[fallbackStart..];
+    Require(fallbackBody.Contains("ThemePalette.WithOpacity", StringComparison.Ordinal) &&
+            !fallbackBody.Contains("GaussianBlurEffect", StringComparison.Ordinal),
+        "主题色 fallback 重新引入了空间模糊。");
+    Require(backdrop.Contains("bool shouldEnable = _plan.RequiresHostBackdrop", StringComparison.Ordinal) &&
+            backdrop.Contains("bool applied = NativeMethods.SetHostBackdropBrushEnabled", StringComparison.Ordinal),
+        "HostBackdrop 能力更新未检查唯一玻璃门槛和 DWM opt-in 结果。");
+
+    string surface = Read(servicesRoot, "ThemeSurface.cs");
+    Require(surface.Contains("CreateHighlightBrush", StringComparison.Ordinal) &&
+            surface.Contains("HighlightOpacity", StringComparison.Ordinal) &&
+            !surface.Contains("CreateHostBackdropBrush()", StringComparison.Ordinal) &&
+            !surface.Contains("CreateBackdropBrush()", StringComparison.Ordinal) &&
+            !surface.Contains("GaussianBlurEffect", StringComparison.Ordinal) &&
+            !surface.Contains("CreateColorBrush(", StringComparison.Ordinal),
+        "ThemeSurface 仍负责主背景或模糊。");
+
+    string desktopLayer = Read(servicesRoot, "DesktopLayerService.cs");
+    int desktopConstructor = desktopLayer.IndexOf("public DesktopLayerService(", StringComparison.Ordinal);
+    int reattachMethod = desktopConstructor >= 0
+        ? desktopLayer.IndexOf("public void Reattach()", desktopConstructor, StringComparison.Ordinal)
+        : -1;
+    int activationGuard = desktopLayer.IndexOf("private IntPtr ActivationGuard(", StringComparison.Ordinal);
+    int findDesktop = activationGuard >= 0
+        ? desktopLayer.IndexOf("internal static IntPtr FindDesktopIconView()", activationGuard, StringComparison.Ordinal)
+        : -1;
+    Require(desktopConstructor >= 0 && reattachMethod > desktopConstructor &&
+            activationGuard >= 0 && findDesktop > activationGuard &&
+            Count(desktopLayer, "ApplyTransparentChrome();") == 2 &&
+            desktopLayer[desktopConstructor..reattachMethod].Contains("ApplyTransparentChrome();", StringComparison.Ordinal) &&
+            desktopLayer[activationGuard..findDesktop].Contains("ApplyTransparentChrome();", StringComparison.Ordinal) &&
+            desktopLayer.Contains("DWMWA_BORDER_COLOR", StringComparison.Ordinal) &&
+            desktopLayer.Contains("DWMWA_COLOR_NONE", StringComparison.Ordinal) &&
+            desktopLayer[activationGuard..findDesktop].Contains("WM_THEMECHANGED", StringComparison.Ordinal) &&
+            desktopLayer[activationGuard..findDesktop].Contains("WM_DWMCOMPOSITIONCHANGED", StringComparison.Ordinal) &&
+            desktopLayer[activationGuard..findDesktop].Contains("WM_SETTINGCHANGE", StringComparison.Ordinal),
+        "收纳窗 DWM 无边框属性没有覆盖系统主题、设置和合成重建生命周期。");
+
+    string transparentBackdropSource = Read(servicesRoot, "TransparentWindowBackdrop.cs");
+    Require(transparentBackdropSource.Contains("WM_ERASEBKGND", StringComparison.Ordinal) &&
+            transparentBackdropSource.Contains("e.Result = 1", StringComparison.Ordinal) &&
+            transparentBackdropSource.Contains("e.Handled = true", StringComparison.Ordinal) &&
+            transparentBackdropSource.Contains("DwmExtendFrameIntoClientArea", StringComparison.Ordinal) &&
+            transparentBackdropSource.Contains("DwmBlurBehindBlurRegion", StringComparison.Ordinal) &&
+            transparentBackdropSource.Contains("Enable = true", StringComparison.Ordinal) &&
+            transparentBackdropSource.Contains("CreateRectRgn(", StringComparison.Ordinal) &&
+            transparentBackdropSource.Contains("CreateSolidBrush(0", StringComparison.Ordinal) &&
+            transparentBackdropSource.Contains("FillRect(", StringComparison.Ordinal) &&
+            transparentBackdropSource.Contains("GetDC(", StringComparison.Ordinal) &&
+            transparentBackdropSource.Contains("ReleaseDC(", StringComparison.Ordinal) &&
+            Count(transparentBackdropSource, "DeleteObject(") >= 3 &&
+            Count(transparentBackdropSource, "DwmEnableBlurBehindWindow(") == 2,
+        "透明承载缺少 DWM alpha 初始化、黑色清底或 GDI 资源释放。");
+    string[] blurSources = Directory.GetFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
+        .Where(path => File.ReadAllText(path).Contains("DwmEnableBlurBehindWindow(", StringComparison.Ordinal))
+        .ToArray();
+    Require(blurSources.Length == 1 &&
+            Path.GetFileName(blurSources[0]).Equals("TransparentWindowBackdrop.cs", StringComparison.Ordinal),
+        "窗口级 DWM blur 出现在透明承载之外。");
+
+    string[] targets =
+    [
+        Read(sourceRoot, "ConsoleWindow.xaml.cs"),
+        Read(sourceRoot, "MainWindow.xaml.cs"),
+        Read(servicesRoot, "OwnedDialogWindow.cs")
+    ];
+    Require(targets.All(text => text.Contains("TransparentWindowBackdrop", StringComparison.Ordinal) &&
+                                !text.Contains("TransparentTintBackdrop", StringComparison.Ordinal) &&
+                                !text.Contains("DwmEnableBlurBehindWindow", StringComparison.Ordinal) &&
+                                text.Contains("ThemeSurface", StringComparison.Ordinal)),
+        "目标窗口接线仍使用旧透明 tint 或缺少 ThemeSurface。");
+    string consoleXaml = Read(sourceRoot, "ConsoleWindow.xaml");
+    string consoleCode = Read(sourceRoot, "ConsoleWindow.xaml.cs");
+    string modelCode = Read(sourceRoot, "Models", "AppState.cs");
+    Require(consoleXaml.Contains("<SystemBackdropElement", StringComparison.Ordinal) &&
+            Read(sourceRoot, "MainWindow.xaml").Contains("CompactSurfaceHost", StringComparison.Ordinal) &&
+            Read(sourceRoot, "MainWindow.xaml").Contains("ExpandedSurfaceHost", StringComparison.Ordinal) &&
+            Read(servicesRoot, "OwnedDialogWindow.cs").Contains("new SystemBackdropElement", StringComparison.Ordinal),
+        "设置、收纳或 OwnedDialog 未使用局部 SystemBackdropElement。");
+    Require(!consoleXaml.Contains("ThemeMaterial", StringComparison.Ordinal) &&
+            !consoleCode.Contains("ThemeMaterial", StringComparison.Ordinal) &&
+            !modelCode.Contains("ThemeMaterial", StringComparison.Ordinal) &&
+            !modelCode.Contains("SettingsThemeMaterial", StringComparison.Ordinal),
+        "材质选择 UI、事件或持久化类型仍然存在。");
+    string[] themeProductionSources = Directory.GetFiles(sourceRoot, "*", SearchOption.AllDirectories)
+        .Where(path => Path.GetExtension(path) is ".cs" or ".xaml" or ".resw")
+        .Where(path => !path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(segment => segment is "bin" or "obj"))
+        .ToArray();
+    string[] removedMaterialTokens =
+    [
+        "ThemeMaterial",
+        "SettingsThemeMaterial",
+        "AcrylicMaterial",
+        "GlassMaterial",
+        "MatteMaterial"
+    ];
+    Require(themeProductionSources.All(path => removedMaterialTokens.All(token =>
+            !File.ReadAllText(path).Contains(token, StringComparison.Ordinal))),
+        "生产代码、XAML 或资源中仍有已删除的可选材质符号。");
+    string[] resourceCultures = ["zh-CN", "en-US", "ja-JP"];
+    Require(resourceCultures.All(culture =>
+            !Read(sourceRoot, "Strings", culture, "Resources.resw")
+                .Contains("ThemeMaterial", StringComparison.Ordinal)),
+        "中英日资源仍包含已删除的材质入口文案。");
+
+    string tempRoot = Path.Combine(Path.GetTempPath(), $"TuckPane-theme-depth-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(tempRoot);
+    try
+    {
+        var settings = new GlobalSettings();
+        settings.SetTheme(ThemeTarget.Organizer, new ThemeValues(0xFF123456, .5, .25));
+        settings.SetTheme(ThemeTarget.Settings, new ThemeValues(0xFFABCDEF, .25, 1.35));
+        string statePath = Path.Combine(tempRoot, "state.json");
+        var store = new StateStore(statePath);
+        await store.SaveAsync(new AppStateV2 { GlobalSettings = settings });
+        AppStateV2 roundTrip = await store.LoadAsync();
+        Require(roundTrip.SchemaVersion == 13 &&
+                roundTrip.GlobalSettings.GetTheme(ThemeTarget.Organizer) ==
+                    new ThemeValues(0xFF123456, .5, .25) &&
+                roundTrip.GlobalSettings.GetTheme(ThemeTarget.Settings) ==
+                    new ThemeValues(0xFFABCDEF, .25, 1.35),
+            "设置与收纳主题没有独立保存/重载。");
+
+        string legacyPath = Path.Combine(tempRoot, "schema-12.json");
+        await File.WriteAllTextAsync(legacyPath, JsonSerializer.Serialize(new
+        {
+            SchemaVersion = 12,
+            GlobalSettings = new
+            {
+                ThemeColorArgb = 0xFF102030u,
+                Material = 0,
+                ThemeTransparency = .82,
+                ThemeBlurStrength = .25,
+                SettingsThemeColorArgb = 0xFF405060u,
+                SettingsThemeMaterial = 3,
+                SettingsThemeTransparency = .18,
+                SettingsThemeBlurStrength = 1.35,
+                NoteTheme = NoteTheme.RainBlue
+            },
+            Organizers = Array.Empty<object>()
+        }));
+        var legacyStore = new StateStore(legacyPath);
+        AppStateV2 migrated = await legacyStore.LoadAsync();
+        Require(migrated.SchemaVersion == 13 &&
+                migrated.GlobalSettings.ThemeTransparency == .82 &&
+                migrated.GlobalSettings.SettingsThemeTransparency == .18 &&
+                migrated.GlobalSettings.ThemeColorArgb == 0xFF102030u &&
+                migrated.GlobalSettings.ThemeBlurStrength == .25 &&
+                migrated.GlobalSettings.SettingsThemeColorArgb == 0xFF405060u &&
+                migrated.GlobalSettings.SettingsThemeBlurStrength == 1.35 &&
+                migrated.GlobalSettings.NoteTheme == NoteTheme.RainBlue,
+            "Schema 12 迁移没有保留双目标颜色、透明度与模糊强度。");
+        using (JsonDocument migratedJson = JsonDocument.Parse(await File.ReadAllTextAsync(legacyPath)))
+        {
+            JsonElement global = migratedJson.RootElement.GetProperty("GlobalSettings");
+            Require(!global.TryGetProperty("Material", out _) &&
+                    !global.TryGetProperty("SettingsThemeMaterial", out _),
+                "Schema 13 写回仍包含已删除的材质字段。");
+        }
+        migrated.GlobalSettings.ThemeTransparency = .12;
+        migrated.GlobalSettings.SettingsThemeTransparency = .87;
+        await legacyStore.SaveAsync(migrated);
+        AppStateV2 loadedAgain = await legacyStore.LoadAsync();
+        Require(loadedAgain.GlobalSettings.ThemeTransparency == .12 &&
+                loadedAgain.GlobalSettings.SettingsThemeTransparency == .87,
+            "Schema 13 后续加载重复重置透明度。");
+    }
+    finally
+    {
+        try { Directory.Delete(tempRoot, recursive: true); }
+        catch { }
     }
 
     Console.WriteLine("PASS: theme material depth");
     return;
 }
-
 if (args is ["--theme-targets"])
 {
     static void Require(bool condition, string message)
@@ -2387,7 +4185,7 @@ if (args is ["--theme-targets"])
     Directory.CreateDirectory(root);
     try
     {
-        ThemeValues legacyTheme = new(0xFF123456, ThemeMaterial.Matte, .42);
+        ThemeValues legacyTheme = new(0xFF123456, .42);
         string legacyPath = Path.Combine(root, "schema-7.json");
         await File.WriteAllTextAsync(legacyPath, JsonSerializer.Serialize(new
         {
@@ -2395,20 +4193,24 @@ if (args is ["--theme-targets"])
             GlobalSettings = new
             {
                 ThemeColorArgb = legacyTheme.ColorArgb,
-                Material = legacyTheme.Material,
+                Material = 3,
                 ThemeTransparency = legacyTheme.Transparency
             },
             Organizers = Array.Empty<object>()
         }));
         AppStateV2 migrated = await new StateStore(legacyPath).LoadAsync();
-        Require(migrated.SchemaVersion == 8 &&
-                migrated.GlobalSettings.GetTheme(ThemeTarget.Organizer) == legacyTheme &&
-                migrated.GlobalSettings.GetTheme(ThemeTarget.Settings) == legacyTheme,
+        ThemeValues migratedLegacyTheme = new(
+            legacyTheme.ColorArgb,
+            GlobalSettings.DefaultThemeTransparency,
+            GlobalSettings.DefaultThemeBlurStrength);
+        Require(migrated.SchemaVersion == 13 &&
+                migrated.GlobalSettings.GetTheme(ThemeTarget.Organizer) == migratedLegacyTheme &&
+                migrated.GlobalSettings.GetTheme(ThemeTarget.Settings) == migratedLegacyTheme,
             "Schema 7 主题没有同时迁移到设置界面和收纳窗。");
 
         var settings = new GlobalSettings();
-        ThemeValues organizerTheme = new(0xFF203040, ThemeMaterial.Glass, .2);
-        ThemeValues settingsTheme = new(0xFF506070, ThemeMaterial.Matte, .6);
+        ThemeValues organizerTheme = new(0xFF203040, .2);
+        ThemeValues settingsTheme = new(0xFF506070, .6);
         settings.SetTheme(ThemeTarget.Organizer, organizerTheme);
         settings.SetTheme(ThemeTarget.Settings, settingsTheme);
         Require(settings.GetTheme(ThemeTarget.Organizer) == organizerTheme &&
@@ -2428,17 +4230,15 @@ if (args is ["--theme-targets"])
             GlobalSettings = new GlobalSettings
             {
                 ThemeColorArgb = 0x00112233,
-                Material = (ThemeMaterial)99,
                 ThemeTransparency = double.NaN,
                 SettingsThemeColorArgb = 0x00445566,
-                SettingsThemeMaterial = (ThemeMaterial)(-1),
                 SettingsThemeTransparency = 2
             }
         });
         Require(normalized.GlobalSettings.GetTheme(ThemeTarget.Organizer) ==
-                    new ThemeValues(0xFF112233, ThemeMaterial.Acrylic, GlobalSettings.DefaultThemeTransparency) &&
+                    new ThemeValues(0xFF112233, GlobalSettings.DefaultThemeTransparency) &&
                 normalized.GlobalSettings.GetTheme(ThemeTarget.Settings) ==
-                    new ThemeValues(0xFF445566, ThemeMaterial.Acrylic, GlobalSettings.MaximumThemeTransparency),
+                    new ThemeValues(0xFF445566, GlobalSettings.MaximumThemeTransparency),
             "两套主题的非法值没有分别归一化。");
 
         var work = new NativeMethods.RECT { Left = 0, Top = 0, Right = 2000, Bottom = 1500 };
@@ -2507,16 +4307,15 @@ if (args is ["--unified-theme"])
     try
     {
         var defaults = new GlobalSettings();
-        Require(defaults.ThemeColorArgb == 0xFFE2E5E9 && defaults.Material == ThemeMaterial.Acrylic &&
-                defaults.ThemeTransparency == .35,
+        Require(defaults.ThemeColorArgb == 0xFFE2E5E9 && defaults.ThemeTransparency == .35,
             "统一主题默认值错误。");
 
         string legacyPath = Path.Combine(root, "legacy.json");
         await File.WriteAllTextAsync(legacyPath,
             """{"SchemaVersion":6,"GlobalSettings":{"Theme":5,"NoteTheme":2},"Organizers":[{"Name":"A","ThemeOverride":3},{"Name":"B","ThemeOverride":4}]}""");
         AppStateV2 migrated = await new StateStore(legacyPath).LoadAsync();
-        Require(migrated.SchemaVersion == 8 && migrated.GlobalSettings.ThemeColorArgb == 0xFFE2E5E9 &&
-                migrated.GlobalSettings.Material == ThemeMaterial.Acrylic && migrated.GlobalSettings.ThemeTransparency == .35 &&
+        Require(migrated.SchemaVersion == 13 && migrated.GlobalSettings.ThemeColorArgb == 0xFFE2E5E9 &&
+                migrated.GlobalSettings.ThemeTransparency == .35 &&
                 migrated.GlobalSettings.NoteTheme == NoteTheme.SunYellow,
             "旧状态没有重置为 Schema 7 默认统一主题，或错误改变便签主题。");
         using (JsonDocument savedLegacy = JsonDocument.Parse(await File.ReadAllTextAsync(legacyPath)))
@@ -2534,8 +4333,7 @@ if (args is ["--unified-theme"])
         {
             GlobalSettings = new GlobalSettings
             {
-                ThemeColorArgb = 0xFF112233,
-                Material = ThemeMaterial.Matte
+                ThemeColorArgb = 0xFF112233
             }
         };
         foreach (double transparency in new[] { 0d, .35d, .9d })
@@ -2543,8 +4341,8 @@ if (args is ["--unified-theme"])
             state.GlobalSettings.ThemeTransparency = transparency;
             await store.SaveAsync(state);
             AppStateV2 reloaded = await store.LoadAsync();
-            Require(reloaded.SchemaVersion == 8 && reloaded.GlobalSettings.ThemeColorArgb == 0xFF112233 &&
-                    reloaded.GlobalSettings.Material == ThemeMaterial.Matte && reloaded.GlobalSettings.ThemeTransparency == transparency,
+            Require(reloaded.SchemaVersion == 13 && reloaded.GlobalSettings.ThemeColorArgb == 0xFF112233 &&
+                    reloaded.GlobalSettings.ThemeTransparency == transparency,
                 $"统一主题保存重载失败：{transparency}。");
         }
 
@@ -2553,12 +4351,11 @@ if (args is ["--unified-theme"])
             GlobalSettings = new GlobalSettings
             {
                 ThemeColorArgb = 0x00112233,
-                Material = (ThemeMaterial)99,
                 ThemeTransparency = double.NaN
             }
         });
         Require(invalid.GlobalSettings.ThemeColorArgb == 0xFF112233 &&
-                invalid.GlobalSettings.Material == ThemeMaterial.Acrylic && invalid.GlobalSettings.ThemeTransparency == .35,
+                invalid.GlobalSettings.ThemeTransparency == .35,
             "统一主题非法值回退错误。");
         Require(StateStore.Normalize(new AppStateV2
             {
@@ -2567,15 +4364,15 @@ if (args is ["--unified-theme"])
             StateStore.Normalize(new AppStateV2
             {
                 GlobalSettings = new GlobalSettings { ThemeTransparency = 2 }
-            }).GlobalSettings.ThemeTransparency == .9,
-            "统一主题透明度边界没有限制在 0–90%。");
+            }).GlobalSettings.ThemeTransparency == 1,
+            "统一主题透明度边界没有限制在 0–100%。");
 
-        Require(ThemePalette.TintOpacity(new ThemeValues(0, default, 0)) == 1 &&
-                Math.Abs(ThemePalette.TintOpacity(new ThemeValues(0, default, .35)) - .65f) < .0001f &&
-                Math.Abs(ThemePalette.TintOpacity(new ThemeValues(0, default, .9)) - .1f) < .0001f,
+        Require(ThemePalette.TintOpacity(new ThemeValues(0, 0)) == 1 &&
+                Math.Abs(ThemePalette.TintOpacity(new ThemeValues(0, .35)) - .65f) < .0001f &&
+                Math.Abs(ThemePalette.TintOpacity(new ThemeValues(0, .9)) - .1f) < .0001f,
             "背景色层不透明度没有使用 1 - 主题透明度。");
-        Require(ThemePalette.ForegroundColor(new ThemeValues(0xFFF5F6F8, default, 0)).R < 128 &&
-                ThemePalette.ForegroundColor(new ThemeValues(0xFF2F2D2D, default, 0)).R > 128,
+        Require(ThemePalette.ForegroundColor(new ThemeValues(0xFFF5F6F8, 0)).R < 128 &&
+                ThemePalette.ForegroundColor(new ThemeValues(0xFF2F2D2D, 0)).R > 128,
             "浅色/深色背景没有选择可读前景。");
         Require(typeof(OrganizerDefinition).GetProperty("ThemeOverride") is null,
             "OrganizerDefinition 仍暴露单窗主题覆盖。");

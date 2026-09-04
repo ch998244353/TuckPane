@@ -37,8 +37,9 @@ public sealed class StorageService
     {
         DropValidationResult validation = await Task.Run(() =>
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Directory.CreateDirectory(_itemsRoot);
-            return DropValidator.ValidateBatch(sourcePaths, _itemsRoot);
+            return DropValidator.ValidateBatch(sourcePaths, _itemsRoot, cancellationToken);
         }, cancellationToken);
         if (!validation.IsValid) throw new InvalidOperationException(string.Join(Environment.NewLine, validation.Errors));
 
@@ -62,8 +63,9 @@ public sealed class StorageService
     {
         DropValidationResult validation = await Task.Run(() =>
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Directory.CreateDirectory(_itemsRoot);
-            return DropValidator.ValidateBatch(sourcePaths, _itemsRoot);
+            return DropValidator.ValidateBatch(sourcePaths, _itemsRoot, cancellationToken);
         }, cancellationToken);
         if (!validation.IsValid) throw new InvalidOperationException(string.Join(Environment.NewLine, validation.Errors));
 
@@ -144,6 +146,7 @@ public sealed class StorageService
         {
             if (SameVolume(_itemsRoot, destination))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 Directory.Move(_itemsRoot, destination);
                 DeleteEmptyParent();
                 return new(_itemsRoot, destination, TransferStatus.Moved, AppStrings.Get("ExportedDesktop"));
@@ -152,17 +155,19 @@ public sealed class StorageService
             string staging = Path.Combine(desktop, $".glassfolder-staging-{Guid.NewGuid():N}");
             try
             {
-                DirectoryManifest manifest = BuildManifest(_itemsRoot);
+                DirectoryManifest manifest = BuildManifest(_itemsRoot, cancellationToken);
                 long copied = 0;
                 await CopyDirectoryAsync(_itemsRoot, staging, bytes =>
                 {
                     copied += bytes;
                     progress?.Report(new TransferProgress(windowName, copied, manifest.TotalBytes));
                 }, cancellationToken);
-                VerifyEquivalent(_itemsRoot, staging);
+                VerifyEquivalent(_itemsRoot, staging, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
                 Directory.Move(staging, destination);
                 try
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     Directory.Delete(_itemsRoot, recursive: true);
                     DeleteEmptyParent();
                 }
@@ -294,7 +299,7 @@ public sealed class StorageService
         string itemName = Path.GetFileName(source);
         try
         {
-            long totalBytes = isDirectory ? BuildManifest(source).TotalBytes : new FileInfo(source).Length;
+            long totalBytes = isDirectory ? BuildManifest(source, cancellationToken).TotalBytes : new FileInfo(source).Length;
             long copiedBytes = 0;
             Action<int> report = bytes =>
             {
@@ -304,7 +309,7 @@ public sealed class StorageService
             if (isDirectory)
             {
                 await CopyDirectoryAsync(source, staging, report, cancellationToken);
-                VerifyEquivalent(source, staging);
+                VerifyEquivalent(source, staging, cancellationToken);
                 Directory.Move(staging, destination);
             }
             else
@@ -343,6 +348,7 @@ public sealed class StorageService
             {
                 try
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (isDirectory) Directory.Move(source, destination);
                     else File.Move(source, destination);
                     progress?.Report(new TransferProgress(itemName, 1, 1));
@@ -361,7 +367,7 @@ public sealed class StorageService
             string staging = Path.Combine(destinationRoot, $".glassfolder-staging-{Guid.NewGuid():N}");
             try
             {
-                long totalBytes = isDirectory ? BuildManifest(source).TotalBytes : new FileInfo(source).Length;
+                long totalBytes = isDirectory ? BuildManifest(source, cancellationToken).TotalBytes : new FileInfo(source).Length;
                 long copiedBytes = 0;
                 if (isDirectory)
                 {
@@ -370,7 +376,8 @@ public sealed class StorageService
                         copiedBytes += bytes;
                         progress?.Report(new TransferProgress(itemName, copiedBytes, totalBytes));
                     }, cancellationToken);
-                    VerifyEquivalent(source, staging);
+                    VerifyEquivalent(source, staging, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
                     Directory.Move(staging, destination);
                 }
                 else
@@ -397,6 +404,7 @@ public sealed class StorageService
 
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (isDirectory) Directory.Delete(source, recursive: true);
                 else File.Delete(source);
                 return new(source, destination, TransferStatus.Moved, AppStrings.Get("CrossVolumeMoved"));
@@ -513,10 +521,10 @@ public sealed class StorageService
         File.SetLastWriteTimeUtc(destination, File.GetLastWriteTimeUtc(source));
     }
 
-    private static void VerifyEquivalent(string source, string destination)
+    private static void VerifyEquivalent(string source, string destination, CancellationToken cancellationToken)
     {
-        DirectoryManifest sourceManifest = BuildManifest(source);
-        DirectoryManifest destinationManifest = BuildManifest(destination);
+        DirectoryManifest sourceManifest = BuildManifest(source, cancellationToken);
+        DirectoryManifest destinationManifest = BuildManifest(destination, cancellationToken);
         if (sourceManifest.TotalBytes != destinationManifest.TotalBytes ||
             !sourceManifest.Entries.SequenceEqual(destinationManifest.Entries, StringComparer.OrdinalIgnoreCase))
         {
@@ -524,17 +532,19 @@ public sealed class StorageService
         }
     }
 
-    private static DirectoryManifest BuildManifest(string root)
+    private static DirectoryManifest BuildManifest(string root, CancellationToken cancellationToken = default)
     {
         var entries = new List<string>();
         long totalBytes = 0;
         foreach (string directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) throw new IOException(AppStrings.Format("UnsupportedReparsePathFormat", directory));
             entries.Add($"D|{Path.GetRelativePath(root, directory)}");
         }
         foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new IOException(AppStrings.Format("UnsupportedReparsePathFormat", file));
             long length = new FileInfo(file).Length;
             totalBytes += length;
