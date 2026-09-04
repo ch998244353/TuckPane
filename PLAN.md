@@ -87,6 +87,6 @@
 - [x] 本地 3.0.2 Release 构建（脚本成功生成 setup、portable ZIP、SHA256SUMS）
 - [x] 发布产物专项验收（文件清单、setup 元数据、ZIP 条目与 SHA-256 均通过）
 - [x] 桌面三件套复制与哈希复核（已复制到 `C:\Users\ch\Desktop`，逐项哈希一致）
-- [ ] 提交、推送 main、创建并推送 v3.0.2
-- [ ] GitHub Actions Release 验证
-- [ ] 最终计划回读与交付
+- [x] 提交、推送 main、创建并推送 v3.0.2（发布提交 `6888552`，标签已推送）
+- [x] GitHub Actions Release 验证（运行 `33860994997` 成功，三件资产已上传）
+- [x] 最终计划回读与交付（桌面、远端 Release、标签与哈希均已核对）
