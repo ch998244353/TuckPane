@@ -49,7 +49,7 @@
 - [x] 实现及独立审查：异常规则统一；隐私/容量审查完成；修复读取权限故障误判为无日志的问题。
 - [x] 验证前检查及 diagnostics-limits 定向检查：一次运行 PASS，含必要 Release x64 编译。
 - [x] 发布前检查：已重读计划；版本 4.1.0/4.1.0.0 一致，四组定向检查通过，无阻断审查项。
-- [ ] GitHub 发布与资产核验。
+- [x] GitHub 发布与资产核验：正式 latest v4.1.0，三项资产与 543 个便携程序文件校验通过。
 - [ ] 用户实际更新及界面手测（待用户执行）。
 
 ### 验证前检查
@@ -63,3 +63,16 @@
 - 此定向入口只执行一次；本轮未启动 TuckPane、未采集真实 Windows 事件、未执行旧测试或 GUI 测试。
 - 版本/资源 sub-agent 完成六份 XML 静态解析与限定 diff 检查。
 - 远端发布使用现有 tag 工作流；流程只进行打包与发布，不额外执行旧测试。
+
+### 发布结果
+- 发布代码提交：`c7ff08a5fc54da7863d1facdba8e9e0abd9122bc`，标签 `v4.1.0` 已推送。
+- GitHub Actions：<https://github.com/ch998244353/TuckPane/actions/runs/34630996717>，成功，release job 用时 3m53s。
+- Release：<https://github.com/ch998244353/TuckPane/releases/tag/v4.1.0>；`/releases/latest` 确认正式版 v4.1.0，非 draft/prerelease。
+- 三项下载资产大小、SHA256SUMS 与 GitHub SHA-256 digest 全部一致：
+  - `TuckPane-4.1.0-win-x64-setup.exe`：301106048 字节；SHA256 `271248b636abcd5ec9cfb32fa6dfff85591a0a198e0ab9115d1416211ffdda4f`。
+  - `TuckPane-4.1.0-win-x64-portable.zip`：129776757 字节；SHA256 `fd68b1ddb0476882ddfccbd2a7db029c34179d80ff071e87fc88eea263c82e4d`。
+  - `SHA256SUMS.txt`：203 字节；SHA256 `21a477e14cd294574dcfc66101a76c885fe9d37813ba723c912b3a456e9fb11f`。
+- 便携 `update-files.json` 版本 4.1.0，543 个程序文件逐项 SHA256 匹配；主程序与辅助程序文件版本均为 4.1.0.0；只读取元数据，没有执行程序。
+- 本地核验输出：`artifacts/verified-v4.1.0/verification.json`。GitHub CLI 大文件下载停滞后改公开链接；安装包连接重置后续传成功，完整哈希最终通过。未因此重跑功能测试或构建。
+- 发布后重读本计划，全部自动门槛完成。app/current 仍为 3.1.0，EXE 哈希与实施前一致；未部署、安装、重启或操控软件。
+- 剩余用户验收：旧客户端手动检查并升级到 4.1.0，确认数据保留、诊断导出和取消；真实更新/界面体验不标记为自动验证通过。
