@@ -2408,7 +2408,7 @@ public sealed partial class AppHost : IDisposable
         }
         if (!await attempt.WaitForTransfersAsync(TimeSpan.FromSeconds(5)))
         {
-            AppLogger.Lifecycle("exit-cancelled", "reason=transfer-timeout");
+            AppLogger.Record(DiagnosticArea.Lifecycle, DiagnosticStage.Failed, exception: new TimeoutException());
             Console.ShowExitPending();
             return false;
         }

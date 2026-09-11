@@ -396,7 +396,7 @@
   <data name="NavMenus" xml:space="preserve"><value>右键菜单</value></data>
   <data name="HideCollapseIndicatorTitle" xml:space="preserve"><value>隐藏右上角收缩标志</value></data>
   <data name="CreateInCategory" xml:space="preserve"><value>新建当前类别的窗口</value></data>
-  <data name="DiagnosticsDescription" xml:space="preserve"><value>导出脱敏运行记录以帮助排查问题。不包含文件正文，不会自动上传。</value></data>
+  <data name="DiagnosticsDescription" xml:space="preserve"><value>仅记录带 UTC 时间的失败、超时和意外中断。诊断包最多 5 MiB，本地日志最多 20 MiB。不含文件正文；由你主动分享，不会自动上传。</value></data>
   <data name="DiagnosticsExport" xml:space="preserve"><value>导出诊断包</value></data>
   <data name="DiagnosticsExported" xml:space="preserve"><value>诊断包已保存。请自行选择是否分享给开发者。</value></data>
   <data name="DiagnosticsTitle" xml:space="preserve"><value>本地诊断</value></data>

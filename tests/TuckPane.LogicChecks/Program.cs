@@ -10,7 +10,7 @@ using System.Xml.Linq;
 if (args.Any(argument => argument.StartsWith("--stability", StringComparison.Ordinal)))
 {
     if (args is not ["--stability", string stabilityArea])
-        throw new ArgumentException("Expected --stability <storage|queue|lifecycle|drop|launch|watcher|diagnostics>.");
+        throw new ArgumentException("Expected --stability <storage|queue|lifecycle|drop|launch|watcher|diagnostics|diagnostics-limits>.");
     await StabilityChecks.RunAsync(stabilityArea);
     return;
 }

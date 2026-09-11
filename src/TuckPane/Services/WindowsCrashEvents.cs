@@ -7,22 +7,28 @@ using System.Xml.Linq;
 namespace TuckPane.Services;
 
 internal sealed record WindowsCrashEvent(int EventId, DateTimeOffset Timestamp, string Provider, string? ExceptionCode);
+internal enum CrashCollectionStatus { Available, Unavailable, TimedOut }
+internal sealed record WindowsCrashCollection(IReadOnlyList<WindowsCrashEvent> Events, CrashCollectionStatus Status);
 
 internal static class WindowsCrashEvents
 {
     private const int MaximumBytes = 256 * 1024;
     private static readonly XNamespace EventNamespace = "http://schemas.microsoft.com/win/2004/08/events/event";
 
-    internal static async Task<IReadOnlyList<WindowsCrashEvent>> ReadAsync(CancellationToken cancellationToken)
+    internal static async Task<IReadOnlyList<WindowsCrashEvent>> ReadAsync(CancellationToken cancellationToken) =>
+        (await CollectAsync(cancellationToken)).Events;
+
+    internal static async Task<WindowsCrashCollection> CollectAsync(CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsWindows() || cancellationToken.IsCancellationRequested) return [];
+        if (!OperatingSystem.IsWindows()) return new([], CrashCollectionStatus.Unavailable);
+        cancellationToken.ThrowIfCancellationRequested();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(2));
         using var process = new Process();
         try
         {
             string executable = Path.Combine(Environment.SystemDirectory, "wevtutil.exe");
-            if (!File.Exists(executable)) return [];
+            if (!File.Exists(executable)) return new([], CrashCollectionStatus.Unavailable);
             process.StartInfo = new ProcessStartInfo(executable)
             {
                 UseShellExecute = false,
@@ -35,20 +41,21 @@ internal static class WindowsCrashEvents
                 "qe", "Application", "/f:xml", "/e:Events", "/uni:true", "/rd:true", "/c:32",
                 "/q:*[System[(EventID=1000 or EventID=1001) and TimeCreated[timediff(@SystemTime) <= 604800000]]]"
             }) process.StartInfo.ArgumentList.Add(argument);
-            if (!process.Start()) return [];
+            if (!process.Start()) return new([], CrashCollectionStatus.Unavailable);
 
             Task<byte[]> output = ReadBoundedAsync(process.StandardOutput.BaseStream, MaximumBytes, deadline.Token);
             Task<byte[]> errors = ReadBoundedAsync(process.StandardError.BaseStream, 16 * 1024, deadline.Token);
             await Task.WhenAll(output, errors, process.WaitForExitAsync(deadline.Token)).WaitAsync(deadline.Token);
-            if (process.ExitCode != 0) return [];
+            if (process.ExitCode != 0) return new([], CrashCollectionStatus.Unavailable);
             using var bytes = new MemoryStream(await output, writable: false);
             using var reader = new StreamReader(bytes, Encoding.Unicode, detectEncodingFromByteOrderMarks: true);
-            return Parse(await reader.ReadToEndAsync(deadline.Token));
+            return ParseCollection(await reader.ReadToEndAsync(deadline.Token));
         }
+        catch (OperationCanceledException) { return new([], CrashCollectionStatus.TimedOut); }
         catch (Exception)
         {
             // Optional evidence only. Never log event payloads, paths or process error text.
-            return [];
+            return new([], CrashCollectionStatus.Unavailable);
         }
         finally
         {
@@ -58,9 +65,11 @@ internal static class WindowsCrashEvents
         }
     }
 
-    internal static IReadOnlyList<WindowsCrashEvent> Parse(string xml)
+    internal static IReadOnlyList<WindowsCrashEvent> Parse(string xml) => ParseCollection(xml).Events;
+
+    private static WindowsCrashCollection ParseCollection(string xml)
     {
-        if (string.IsNullOrWhiteSpace(xml) || xml.Length > MaximumBytes) return [];
+        if (string.IsNullOrWhiteSpace(xml) || xml.Length > MaximumBytes) return new([], CrashCollectionStatus.Unavailable);
         try
         {
             using var input = new StringReader(xml);
@@ -91,12 +100,24 @@ internal static class WindowsCrashEvents
                     .Select(field => field.Value.Trim()).FirstOrDefault(IsExceptionCode);
                 result.Add(new(eventId, timestamp, provider, exceptionCode));
             }
-            return result;
+            return new(result, CrashCollectionStatus.Available);
         }
         catch (Exception)
         {
-            return [];
+            return new([], CrashCollectionStatus.Unavailable);
         }
+    }
+
+    internal static WindowsCrashEvent? Sanitize(WindowsCrashEvent value, DateTimeOffset now)
+    {
+        string? provider = CanonicalProvider(value.Provider);
+        if (value.EventId is not (1000 or 1001) || provider is null ||
+            value.Timestamp < now.AddDays(-7) || value.Timestamp > now) return null;
+        return value with
+        {
+            Timestamp = value.Timestamp.ToUniversalTime(), Provider = provider,
+            ExceptionCode = value.ExceptionCode is { } code && IsExceptionCode(code) ? code : null
+        };
     }
 
     private static async Task<byte[]> ReadBoundedAsync(Stream stream, int maximum, CancellationToken cancellationToken)

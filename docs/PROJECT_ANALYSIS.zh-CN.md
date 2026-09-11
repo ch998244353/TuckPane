@@ -38,7 +38,9 @@ D:\app\功能\TuckPane\
 
 外部 Drop 通过 `IncomingDropOperation` 保持 deferral 和交互保护至终态，并按实际传输结果报告操作。外部项目打开由应用级 `ShellLaunchService` 单 STA、最多 16 个待完成请求处理，按路径合并；关闭不等待可能挂住的 Shell 调用。目录监听在启用前订阅，`WatcherRecovery` 对错误合并扫描并至多退避重建四次；有效变更重置错误预算，关闭令后续回调失效。
 
-`AppLogger` 兼容原调用接口，但不持久化自由文本 message/details；新记录经 `DiagnosticRecord` 白名单进入 `DiagnosticLogWriter` 的有界后台队列及四个轮转文件。`DiagnosticsExporter` 重新校验记录并生成本地 ZIP，系统页提供用户主动导出入口。旧文本日志不导出；异常记录不等于恢复成功，详情见 `LIFECYCLE_DIAGNOSTICS.zh-CN.md`。
+`AppLogger` 兼容原调用接口，但不持久化自由文本 message/details。4.1.0 在入队前仅保留失败、超时和意外中断，排除正常操作、成功、主动取消及正常退出；新记录经 `DiagnosticRecord` 白名单进入 `DiagnosticLogWriter` 的有界后台队列和最多四个 5 MiB 轮转文件，总计 20 MiB。记录保留 UTC、会话/操作、版本/构建、模块、耗时和错误码；受控内部代码位置与异常类型的未知值省略，不保存用户正文、文件名、完整路径、用户名、启动参数、原始异常消息或堆栈。
+
+`DiagnosticsExporter` 对兼容旧格式的历史记录重新执行相同白名单和异常过滤，保留最新完整异常并按时间输出；`runtime.jsonl` 内容预算 4 MiB，辅助文件合计 256 KiB，关闭归档后验证 ZIP 不超过 5 MiB。三个包内文件说明导出时间、保留范围、条数、容量省略和采集状态；Windows 崩溃摘要仍限相关应用最近七天的有限条目，并受超时和脱敏约束。临时归档验证通过才替换目标，失败或取消保留原文件。系统页由用户主动导出和分享，应用不自动上传。历史 JSON 日志自然轮转，旧自由文本日志不导出；没有异常记录不能证明程序正常，详情见 `LIFECYCLE_DIAGNOSTICS.zh-CN.md`。
 
 2026-09-08 本轮入口与状态更新：`Program` 在 XAML 初始化前订阅激活并放入 `ActivationInbox`，`AppHost` 就绪后串行排空；已启用且归属当前副本的文件夹图标右键菜单会在启动时修复缺失注册。`FolderOrganizerCreation.BindExistingStorage` 直接绑定所选原目录，不移动文件。
 
@@ -330,7 +332,7 @@ Ctrl+滚轮保留事件修饰键，并补充 GetAsyncKeyState 的当前 Ctrl 按
 
 便签在一次普通点击正文末尾以下时，按末尾实际行框/文字矩形与滚动位置补齐所需段落；图片占用高度作为下界，不按全局横线网格推断末行。原生段落编辑命令保留编辑器的撤销链；保存继续使用现有 HTML 清理和串行保存。不创建自由文本块。待办仅将任务正文恢复为输入框所用的系统字体、正常字宽和零附加字距。
 
-`TrayIconService` 在现有宿主窗口消息链记录电源、会话结束和宿主关闭事件并继续转发；`AppHost.ExitAsync` 记录来源与保存/取消/关闭阶段。`AppLogger.Lifecycle` 以共享文件锁直接落盘，避免生命周期关键记录停留在普通日志队列。该变更是他机取证能力，不代表已修复休眠退出。手动收集方法见 [退出诊断说明](LIFECYCLE_DIAGNOSTICS.zh-CN.md)。状态格式不变。
+`TrayIconService` 继续转发现有电源、会话结束和宿主关闭消息；4.1.0 的异常过滤不再持久化这些正常生命周期通知，也不保留正常退出的开始/完成轨迹。退出等待传输超时与主动取消使用不同诊断语义，实际退出行为和状态格式不变。异常经过统一白名单和有界后台队列，不能据记录缺失推断正常退出，也不代表已修复休眠退出。收集方式见 [本地异常诊断说明](LIFECYCLE_DIAGNOSTICS.zh-CN.md)。
 
 本轮仅执行 `--sep09-fixes grid|shortcut|lifecycle`、便签新增纯逻辑/脚本语法和局部静态检查；Release 构建不启动应用。DOM 测量、真实光标/输入法/撤销、原生选择器、菜单视觉和实际电源恢复均留给用户手测。执行状态与证据见 [PLAN.md](../PLAN.md)。
 

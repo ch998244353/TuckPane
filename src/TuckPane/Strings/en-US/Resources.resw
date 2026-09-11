@@ -396,7 +396,7 @@ Storage path: {2}</value></data>
   <data name="NavMenus" xml:space="preserve"><value>Context menu</value></data>
   <data name="HideCollapseIndicatorTitle" xml:space="preserve"><value>Hide collapse indicator</value></data>
   <data name="CreateInCategory" xml:space="preserve"><value>Create a window in this category</value></data>
-  <data name="DiagnosticsDescription" xml:space="preserve"><value>Export redacted runtime records to help diagnose problems. File contents are excluded. Nothing is uploaded automatically.</value></data>
+  <data name="DiagnosticsDescription" xml:space="preserve"><value>Only failures, timeouts and unexpected interruptions are logged, with UTC times. ZIP: up to 5 MiB; local logs: up to 20 MiB. No file contents. Share only if you choose; nothing is uploaded automatically.</value></data>
   <data name="DiagnosticsExport" xml:space="preserve"><value>Export diagnostics</value></data>
   <data name="DiagnosticsExported" xml:space="preserve"><value>Diagnostics saved. You can choose whether to share the archive with the developer.</value></data>
   <data name="DiagnosticsTitle" xml:space="preserve"><value>Local diagnostics</value></data>

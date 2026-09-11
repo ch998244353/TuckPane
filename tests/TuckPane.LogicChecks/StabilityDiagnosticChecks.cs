@@ -16,7 +16,7 @@ internal static class StabilityDiagnosticChecks
     }
 
     private static DiagnosticRecord Record(int count = 0) => DiagnosticRecord.Create(
-        DiagnosticArea.Transfer, DiagnosticStage.Completed, count: count, origin: "diagnostic-test");
+        DiagnosticArea.Transfer, DiagnosticStage.Failed, count: count, origin: "diagnostic-test");
 
     private static async Task BoundedQueueAndFlushAsync(string root)
     {

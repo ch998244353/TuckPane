@@ -34,6 +34,9 @@ internal static class StabilityChecks
                 case "diagnostics":
                     await StabilityDiagnosticChecks.RunAsync(root);
                     break;
+                case "diagnostics-limits":
+                    await StabilityDiagnosticLimitChecks.RunAsync(root);
+                    break;
                 default:
                     throw new ArgumentException($"Unknown stability area: {area}.");
             }

@@ -7,37 +7,106 @@ namespace TuckPane.Services;
 
 internal static class DiagnosticsExporter
 {
+    internal const int MaximumArchiveBytes = 5 * 1024 * 1024;
+    internal const int MaximumRuntimeBytes = 4 * 1024 * 1024;
+    internal const int MaximumAuxiliaryBytes = 256 * 1024;
+    // Smaller budgets are an internal test seam; production callers use the constants above.
+    internal sealed record Limits(int ArchiveBytes = MaximumArchiveBytes,
+        int RuntimeBytes = MaximumRuntimeBytes, int AuxiliaryBytes = MaximumAuxiliaryBytes);
     private static readonly object EventGate = new();
-    private static Task<IReadOnlyList<WindowsCrashEvent>>? _eventCollection;
+    private static Task<WindowsCrashCollection>? _eventCollection;
+
     internal static async Task ExportAsync(string destination, CancellationToken cancellationToken = default,
         DiagnosticLogWriter? writer = null,
-        Func<CancellationToken, Task<IReadOnlyList<WindowsCrashEvent>>>? readEvents = null)
+        Func<CancellationToken, Task<IReadOnlyList<WindowsCrashEvent>>>? readEvents = null,
+        Limits? limits = null)
     {
+        limits ??= new();
+        if (limits.ArchiveBytes is < 1 or > MaximumArchiveBytes ||
+            limits.RuntimeBytes is < 0 or > MaximumRuntimeBytes ||
+            limits.AuxiliaryBytes is < 1 or > MaximumAuxiliaryBytes)
+            throw new ArgumentOutOfRangeException(nameof(limits));
+        cancellationToken.ThrowIfCancellationRequested();
         writer ??= AppLogger.Writer;
-        await writer.FlushAsync(TimeSpan.FromSeconds(2));
-        IReadOnlyList<WindowsCrashEvent> events = [];
+        bool flushed = await writer.FlushAsync(TimeSpan.FromSeconds(2));
+        WindowsCrashCollection collection = new([], CrashCollectionStatus.Unavailable);
         using var eventDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         eventDeadline.CancelAfter(TimeSpan.FromSeconds(2));
         CancellationToken eventToken = eventDeadline.Token;
         try
         {
-            // Start the entire collector off the caller's UI thread, including Process.Start.
-            Task<IReadOnlyList<WindowsCrashEvent>> collection;
-            if (readEvents is not null) collection = Task.Run(() => readEvents(eventToken), eventToken);
-            else lock (EventGate)
+            if (readEvents is not null)
             {
-                // A timeout cannot stop a synchronous native start. Do not accumulate collectors.
-                if (_eventCollection is null || _eventCollection.IsCompleted)
-                    _eventCollection = Task.Run(() => WindowsCrashEvents.ReadAsync(eventToken), eventToken);
-                collection = _eventCollection;
+                var events = await Task.Run(() => readEvents(eventToken), eventToken).WaitAsync(eventToken);
+                collection = new(events, CrashCollectionStatus.Available);
             }
-            events = await collection.WaitAsync(eventToken);
+            else
+            {
+                Task<WindowsCrashCollection> pending;
+                lock (EventGate)
+                {
+                    // A timeout cannot stop a synchronous native start. Never accumulate collectors.
+                    if (_eventCollection is null || _eventCollection.IsCompleted)
+                        _eventCollection = Task.Run(() => WindowsCrashEvents.CollectAsync(eventToken), eventToken);
+                    pending = _eventCollection;
+                }
+                collection = await pending.WaitAsync(eventToken);
+            }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        { collection = new([], CrashCollectionStatus.TimedOut); }
         catch (Exception ex) when (ex is not OperationCanceledException) { }
-        IReadOnlyList<DiagnosticRecord> records = await writer.SnapshotAsync(cancellationToken);
+        var snapshot = await writer.SnapshotWithStatusAsync(cancellationToken);
         await Task.Run(async () =>
         {
+            DateTimeOffset exportedAt = DateTimeOffset.UtcNow;
+            var records = snapshot.Records.OrderByDescending(record => record.Timestamp).ToArray();
+            var retained = new List<(DiagnosticRecord Record, string Json)>();
+            int runtimeBytes = 0;
+            foreach (var record in records)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string json = record.ToJson();
+                int bytes = Encoding.UTF8.GetByteCount(json) + 1;
+                // Keep a contiguous newest suffix; never replace a newer record with an older small one.
+                if (bytes > limits.RuntimeBytes - runtimeBytes) break;
+                retained.Add((record, json));
+                runtimeBytes += bytes;
+            }
+            retained.Reverse();
+            var events = collection.Events.Select(value => WindowsCrashEvents.Sanitize(value, exportedAt))
+                .OfType<WindowsCrashEvent>().OrderByDescending(value => value.Timestamp).Take(32).ToArray();
+            int omitted = records.Length - retained.Count;
+            bool incomplete = !flushed || collection.Status != CrashCollectionStatus.Available ||
+                snapshot.UnreadableFiles != 0 || snapshot.InvalidRecords != 0 || writer.Dropped != 0 ||
+                writer.WriteFailures != 0 || records.Any(record => record.Dropped != 0 || record.WriteFailures != 0);
+            string environment = JsonSerializer.Serialize(new
+            {
+                Format = 2, Version = typeof(AppLogger).Assembly.GetName().Version?.ToString(),
+                Build = typeof(AppLogger).Module.ModuleVersionId, ExportedAtUtc = exportedAt,
+                WindowsVersion = Environment.OSVersion.Version.ToString(),
+                Architecture = RuntimeInformation.ProcessArchitecture.ToString(),
+                DotNetVersion = Environment.Version.ToString(),
+                TimeZone = "UTC", MaximumArchiveBytes = limits.ArchiveBytes,
+                RetainedRecords = retained.Count, OmittedForCapacity = omitted, RuntimeBytes = runtimeBytes,
+                FirstRecordUtc = retained.Count == 0 ? (DateTimeOffset?)null : retained[0].Record.Timestamp,
+                LastRecordUtc = retained.Count == 0 ? (DateTimeOffset?)null : retained[^1].Record.Timestamp,
+                NoExceptionsCollected = records.Length == 0 && events.Length == 0,
+                CollectionIncomplete = incomplete, Truncated = omitted > 0,
+                LogFlushCompleted = flushed, snapshot.UnreadableFiles, snapshot.InvalidRecords,
+                writer.Dropped, writer.WriteFailures, CrashCollection = collection.Status.ToString(), CrashEvents = events
+            });
+            const string readme = "TuckPane local exception diagnostics. ZIP <= 5 MiB; local runtime logs <= 20 MiB.\n" +
+                "Only failures, timeouts, unexpected interruptions and available application crash summaries are collected.\n" +
+                "Timestamps are ISO 8601 UTC; convert to your local time when reporting an incident (UTC+08:00 = UTC plus 8 hours).\n" +
+                "Only approved code identifiers, error types/codes and environment versions are included. No user contents, filenames, paths, usernames, arguments, raw exception messages or stacks.\n" +
+                "environment.json describes retained dates/counts, capacity omissions, collection failures and truncation. Newest complete records are retained. Old logs may have no readable code location.\n" +
+                "NoExceptionsCollected does not mean a clean run. CollectionIncomplete means some evidence could not be collected. Native crashes, forced termination and rotation may leave no record.\n" +
+                "Records describe observed exceptions, not proof of their root cause or successful recovery. Nothing is uploaded automatically.\n" +
+                "诊断包仅含异常白名单信息，时间为 UTC；容量不足保留最新异常。未收集到异常不代表软件没有问题。采集不完整及裁剪情况见 environment.json。仅保存在本地，由用户决定是否分享。";
+            if (Encoding.UTF8.GetByteCount(environment) + Encoding.UTF8.GetByteCount(readme) > limits.AuxiliaryBytes)
+                throw new IOException("Diagnostic metadata budget exceeded.");
+
             string target = Path.GetFullPath(destination);
             string staging = Path.Combine(Path.GetDirectoryName(target)!, $".diagnostic-{Guid.NewGuid():N}.tmp");
             try
@@ -45,23 +114,20 @@ internal static class DiagnosticsExporter
                 using (var stream = new FileStream(staging, FileMode.CreateNew, FileAccess.Write))
                 using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
                 {
-                    await WriteEntryAsync(archive, "runtime.jsonl", string.Join("\n", records.Select(record => record.ToJson())), cancellationToken);
-                    await WriteEntryAsync(archive, "environment.json", JsonSerializer.Serialize(new
+                    using (var output = new StreamWriter(archive.CreateEntry("runtime.jsonl").Open(), new UTF8Encoding(false)))
                     {
-                        Format = 1, Version = typeof(AppLogger).Assembly.GetName().Version?.ToString(),
-                        Build = typeof(AppLogger).Module.ModuleVersionId,
-                        WindowsVersion = Environment.OSVersion.Version.ToString(),
-                        Architecture = RuntimeInformation.ProcessArchitecture.ToString(),
-                        DotNetVersion = Environment.Version.ToString(),
-                        writer.Dropped, writer.WriteFailures,
-                        CrashEvents = events
-                    }), cancellationToken);
-                    await WriteEntryAsync(archive, "README.txt",
-                        "TuckPane local diagnostics. No document contents, file paths, raw exception messages or historical raw logs are included.\n" +
-                        "Missing final records or unavailable Windows events do not prove a clean exit. Native crashes and forced termination may leave no final record.\n" +
-                        "Started without a terminal stage identifies the last observed operation, not a proven cause. A Shell completion means Windows accepted the request, not that a target window opened.\n" +
-                        "记录缺失不能证明正常退出；原生崩溃或强制结束可能不留下最后记录。诊断包仅保存在本地，由用户决定是否分享。", cancellationToken);
+                        foreach (var item in retained)
+                        {
+                            await output.WriteAsync(item.Json.AsMemory(), cancellationToken);
+                            await output.WriteAsync("\n".AsMemory(), cancellationToken);
+                        }
+                    }
+                    await WriteEntryAsync(archive, "environment.json", environment, cancellationToken);
+                    await WriteEntryAsync(archive, "README.txt", readme, cancellationToken);
                 }
+                // Include the central directory and compression overhead, not just entry payloads.
+                if (new FileInfo(staging).Length > limits.ArchiveBytes)
+                    throw new IOException("Diagnostic archive budget exceeded.");
                 cancellationToken.ThrowIfCancellationRequested();
                 File.Move(staging, target, overwrite: true);
             }

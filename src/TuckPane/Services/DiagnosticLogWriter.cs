@@ -5,6 +5,9 @@ namespace TuckPane.Services;
 
 internal sealed class DiagnosticLogWriter : IAsyncDisposable
 {
+    internal const int MaximumFileBytes = 5 * 1024 * 1024;
+    internal const int MaximumFileCount = 4;
+    internal sealed record Snapshot(IReadOnlyList<DiagnosticRecord> Records, int UnreadableFiles, int InvalidRecords);
     private sealed record Entry(DiagnosticRecord? Record, TaskCompletionSource? Barrier);
     private readonly Channel<Entry> _queue;
     private readonly string _directory;
@@ -14,10 +17,11 @@ internal sealed class DiagnosticLogWriter : IAsyncDisposable
     private readonly Task _worker;
     private long _dropped, _writeFailures;
 
-    internal DiagnosticLogWriter(string directory, int capacity = 2048, int maximumBytes = 5 * 1024 * 1024,
-        int fileCount = 4, Action? beforeWrite = null)
+    internal DiagnosticLogWriter(string directory, int capacity = 2048, int maximumBytes = MaximumFileBytes,
+        int fileCount = MaximumFileCount, Action? beforeWrite = null)
     {
-        if (capacity < 1 || maximumBytes < 512 || fileCount is < 1 or > 4) throw new ArgumentOutOfRangeException();
+        if (capacity < 1 || maximumBytes is < 512 or > MaximumFileBytes || fileCount is < 1 or > MaximumFileCount)
+            throw new ArgumentOutOfRangeException();
         _directory = directory;
         _maximumBytes = maximumBytes;
         _fileCount = fileCount;
@@ -33,7 +37,10 @@ internal sealed class DiagnosticLogWriter : IAsyncDisposable
     internal long WriteFailures => Interlocked.Read(ref _writeFailures);
     internal void Write(DiagnosticRecord record)
     {
-        if (!_queue.Writer.TryWrite(new(record, null))) Interlocked.Increment(ref _dropped);
+        DiagnosticRecord? safe = record.Sanitize();
+        if (safe is null) { Interlocked.Increment(ref _dropped); return; }
+        if (!safe.IsAbnormal) return;
+        if (!_queue.Writer.TryWrite(new(safe, null))) Interlocked.Increment(ref _dropped);
     }
 
     internal async Task<bool> FlushAsync(TimeSpan timeout)
@@ -88,9 +95,13 @@ internal sealed class DiagnosticLogWriter : IAsyncDisposable
 
     private string FilePath(int index) => Path.Combine(_directory, $"runtime.{index}.jsonl");
 
-    internal Task<IReadOnlyList<DiagnosticRecord>> SnapshotAsync(CancellationToken cancellationToken = default) => Task.Run<IReadOnlyList<DiagnosticRecord>>(() =>
+    internal async Task<IReadOnlyList<DiagnosticRecord>> SnapshotAsync(CancellationToken cancellationToken = default) =>
+        (await SnapshotWithStatusAsync(cancellationToken)).Records;
+
+    internal Task<Snapshot> SnapshotWithStatusAsync(CancellationToken cancellationToken = default) => Task.Run(() =>
     {
         var records = new List<DiagnosticRecord>();
+        int unreadableFiles = 0, invalidRecords = 0;
         lock (_files)
         {
             for (int index = _fileCount - 1; index >= 0; index--)
@@ -99,17 +110,23 @@ internal sealed class DiagnosticLogWriter : IAsyncDisposable
                 string path = FilePath(index);
                 try
                 {
-                    if (!File.Exists(path) || new FileInfo(path).Length > _maximumBytes) continue;
+                    if (new FileInfo(path).Length > _maximumBytes) { unreadableFiles++; continue; }
                     foreach (string line in File.ReadLines(path))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        if (DiagnosticRecord.ReadSafe(line) is { } record) records.Add(record);
+                        if (DiagnosticRecord.ReadSafe(line) is { } record)
+                        {
+                            if (record.IsAbnormal) records.Add(record);
+                        }
+                        else invalidRecords++;
                     }
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                catch (FileNotFoundException) { }
+                catch (DirectoryNotFoundException) { }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { unreadableFiles++; }
             }
         }
-        return records;
+        return new Snapshot(records, unreadableFiles, invalidRecords);
     }, cancellationToken);
 
     public async ValueTask DisposeAsync()

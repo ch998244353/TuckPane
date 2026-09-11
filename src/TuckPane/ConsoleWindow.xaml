@@ -335,7 +335,7 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Spacing="4">
                                         <TextBlock Tag="loc:DiagnosticsTitle" Text="本地诊断" FontSize="14" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                        <TextBlock Tag="loc:DiagnosticsDescription" Text="导出脱敏运行记录以帮助排查问题。不包含文件正文，不会自动上传。" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        <TextBlock Tag="loc:DiagnosticsDescription" Text="仅记录带 UTC 时间的失败、超时和意外中断。诊断包最多 5 MiB，本地日志最多 20 MiB。不含文件正文；由你主动分享，不会自动上传。" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                     </StackPanel>
                                     <Button x:Name="ExportDiagnosticsButton" Grid.Column="1" VerticalAlignment="Center" Tag="loc:DiagnosticsExport" Content="导出诊断包" Click="ExportDiagnostics_Click" AutomationProperties.AutomationId="ExportDiagnosticsButton"/>
                                 </Grid>

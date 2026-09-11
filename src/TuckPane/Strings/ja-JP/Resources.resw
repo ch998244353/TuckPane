@@ -396,7 +396,7 @@
   <data name="NavMenus" xml:space="preserve"><value>右クリック</value></data>
   <data name="HideCollapseIndicatorTitle" xml:space="preserve"><value>右上の折りたたみマークを隠す</value></data>
   <data name="CreateInCategory" xml:space="preserve"><value>このカテゴリにウィンドウを作成</value></data>
-  <data name="DiagnosticsDescription" xml:space="preserve"><value>問題の調査用に匿名化した実行記録を出力します。ファイルの本文は含まず、自動送信しません。</value></data>
+  <data name="DiagnosticsDescription" xml:space="preserve"><value>失敗、タイムアウト、予期しない中断のみを UTC 時刻付きで記録します。ZIP は最大 5 MiB、ローカルログは最大 20 MiB。ファイルの本文は含みません。共有はご自身で選択でき、自動送信はしません。</value></data>
   <data name="DiagnosticsExport" xml:space="preserve"><value>診断をエクスポート</value></data>
   <data name="DiagnosticsExported" xml:space="preserve"><value>診断を保存しました。開発者と共有するかどうかはご自身で選択してください。</value></data>
   <data name="DiagnosticsTitle" xml:space="preserve"><value>ローカル診断</value></data>
