@@ -26,7 +26,7 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          .\scripts\build-release.ps1 -Version $version
+          .\scripts\build-release.ps1 -Version $version -OutputName "v$version"
 
       - name: Create GitHub release
         shell: pwsh
@@ -35,9 +35,9 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           gh release create $env:GITHUB_REF_NAME `
-            ".\artifacts\release\TuckPane-$version-win-x64-setup.exe" `
-            ".\artifacts\release\TuckPane-$version-win-x64-portable.zip" `
-            ".\artifacts\release\SHA256SUMS.txt" `
+            ".\artifacts\release\v$version\TuckPane-$version-win-x64-setup.exe" `
+            ".\artifacts\release\v$version\TuckPane-$version-win-x64-portable.zip" `
+            ".\artifacts\release\v$version\SHA256SUMS.txt" `
             --verify-tag `
             --title "TuckPane $version" `
             --notes-file .\RELEASE_NOTES.md

@@ -2,6 +2,7 @@ using System.Numerics;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Hosting;
+using TuckPane.Core;
 using TuckPane.Models;
 
 namespace TuckPane.Services;
@@ -14,16 +15,19 @@ namespace TuckPane.Services;
 internal sealed class ThemeSurface : IDisposable
 {
     private readonly FrameworkElement _host;
+    private readonly FrameworkElement _geometryHost;
     private readonly ContainerVisual _root;
     private readonly SpriteVisual _highlightVisual;
     private readonly RectangleClip _highlightClip;
     private CompositionBrush? _highlightBrush;
+    private XamlRoot? _xamlRoot;
     private double _cornerRadius;
     private bool _disposed;
 
-    internal ThemeSurface(FrameworkElement emptyBackgroundHost)
+    internal ThemeSurface(FrameworkElement emptyBackgroundHost, FrameworkElement? geometryHost = null)
     {
         _host = emptyBackgroundHost;
+        _geometryHost = geometryHost ?? emptyBackgroundHost;
         Visual hostVisual = ElementCompositionPreview.GetElementVisual(emptyBackgroundHost);
         Compositor compositor = hostVisual.Compositor;
         _root = compositor.CreateContainerVisual();
@@ -35,8 +39,9 @@ internal sealed class ThemeSurface : IDisposable
         _root.Children.InsertAtTop(_highlightVisual);
 
         ElementCompositionPreview.SetElementChildVisual(emptyBackgroundHost, _root);
-        _host.Loaded += Host_Loaded;
-        _host.SizeChanged += Host_SizeChanged;
+        _geometryHost.Loaded += Host_Loaded;
+        _geometryHost.SizeChanged += Host_SizeChanged;
+        AttachXamlRoot(_geometryHost.XamlRoot);
         UpdateGeometry();
     }
 
@@ -69,12 +74,19 @@ internal sealed class ThemeSurface : IDisposable
         UpdateGeometry();
     }
 
+    internal void SetRoundedGeometry(RoundedSurfaceGeometry geometry)
+    {
+        _cornerRadius = geometry.Radius;
+        ApplyGeometry(geometry);
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        _host.Loaded -= Host_Loaded;
-        _host.SizeChanged -= Host_SizeChanged;
+        _geometryHost.Loaded -= Host_Loaded;
+        _geometryHost.SizeChanged -= Host_SizeChanged;
+        AttachXamlRoot(null);
         ElementCompositionPreview.SetElementChildVisual(_host, null);
         _highlightBrush?.Dispose();
         _highlightClip.Dispose();
@@ -98,27 +110,45 @@ internal sealed class ThemeSurface : IDisposable
         return brush;
     }
 
-    private void Host_Loaded(object sender, RoutedEventArgs e) => UpdateGeometry();
+    private void Host_Loaded(object sender, RoutedEventArgs e)
+    {
+        AttachXamlRoot(_geometryHost.XamlRoot);
+        UpdateGeometry();
+    }
 
     private void Host_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateGeometry();
+
+    private void AttachXamlRoot(XamlRoot? next)
+    {
+        if (ReferenceEquals(_xamlRoot, next)) return;
+        if (_xamlRoot is not null) _xamlRoot.Changed -= XamlRoot_Changed;
+        _xamlRoot = next;
+        if (_xamlRoot is not null) _xamlRoot.Changed += XamlRoot_Changed;
+    }
+
+    private void XamlRoot_Changed(XamlRoot sender, XamlRootChangedEventArgs args) => UpdateGeometry();
 
     private void UpdateGeometry()
     {
         if (_disposed) return;
-        double scale = Math.Max(1, _host.XamlRoot?.RasterizationScale ?? 1);
-        float width = (float)(Math.Round(Math.Max(0, _host.ActualWidth) * scale) / scale);
-        float height = (float)(Math.Round(Math.Max(0, _host.ActualHeight) * scale) / scale);
-        float radius = (float)(Math.Round(_cornerRadius * scale) / scale);
-        radius = Math.Min(radius, Math.Min(width, height) / 2);
+        RoundedSurfaceGeometry surface = RoundedSurfaceGeometry.Create(
+            _geometryHost.ActualWidth, _geometryHost.ActualHeight, _cornerRadius, _geometryHost.XamlRoot?.RasterizationScale ?? 1);
 
-        Vector2 size = new(width, height);
+        ApplyGeometry(surface);
+    }
+
+    private void ApplyGeometry(RoundedSurfaceGeometry surface)
+    {
+        if (_disposed) return;
+
+        Vector2 size = new(surface.Width, surface.Height);
         _root.Size = size;
         _highlightVisual.Size = size;
         _highlightClip.Left = 0;
         _highlightClip.Top = 0;
-        _highlightClip.Right = width;
-        _highlightClip.Bottom = height;
-        Vector2 corner = new(Math.Max(0, radius));
+        _highlightClip.Right = surface.Width;
+        _highlightClip.Bottom = surface.Height;
+        Vector2 corner = new(surface.Radius);
         _highlightClip.TopLeftRadius = corner;
         _highlightClip.TopRightRadius = corner;
         _highlightClip.BottomLeftRadius = corner;

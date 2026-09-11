@@ -26,6 +26,9 @@ internal static class OrganizerInteractionMath
 {
     internal const double WheelScaleStep = .05;
 
+    internal static bool IsControlPressed(bool routedControl, short asynchronousState) =>
+        routedControl || (asynchronousState & 0x8000) != 0;
+
     internal static bool ShouldShowItemFallback(
         bool hasImageSource,
         bool iconLoadPending,
@@ -67,16 +70,19 @@ internal static class OrganizerInteractionMath
         bool enabled,
         bool draggingExpanded,
         OrganizerPlacementMode placementMode,
-        bool overOrganizerDropTarget) =>
+        bool overOrganizerDropTarget,
+        bool permanentlyExpanded = false) =>
         enabled &&
-        !draggingExpanded &&
-        placementMode == OrganizerPlacementMode.Floating &&
+        (draggingExpanded
+            ? permanentlyExpanded && placementMode is OrganizerPlacementMode.Floating or OrganizerPlacementMode.Positioned
+            : placementMode == OrganizerPlacementMode.Floating) &&
         !overOrganizerDropTarget;
 
     internal static bool ShouldRememberExpandedPosition(
         bool enabled,
-        OrganizerPlacementMode placementMode) =>
-        enabled && placementMode != OrganizerPlacementMode.Station;
+        OrganizerPlacementMode placementMode,
+        bool permanentlyExpanded = false) =>
+        (enabled || permanentlyExpanded) && placementMode != OrganizerPlacementMode.Station;
 
     internal static DataPackageOperation SelectDropOperation(DataPackageOperation allowed) =>
         allowed.HasFlag(DataPackageOperation.Move) ? DataPackageOperation.Move :
@@ -116,8 +122,13 @@ internal static class OrganizerInteractionMath
     internal static OrganizerDefinition CopySettings(OrganizerDefinition source, string name) => new()
     {
         Name = name,
+        HideName = source.HideName,
         PlacementMode = source.PlacementMode,
+        ExpansionMode = source.ExpansionMode,
         DockEdge = source.DockEdge,
+        DockOrientation = source.DockOrientation,
+        DockIconSizeDip = source.DockIconSizeDip,
+        DockSpacingFactor = source.DockSpacingFactor,
         Layout = new OrganizerLayout
         {
             Mode = source.Layout.Mode,
@@ -129,6 +140,8 @@ internal static class OrganizerInteractionMath
         ItemScale = source.ItemScale,
         NameScale = source.NameScale,
         CompactListItemScale = source.CompactListItemScale,
+        IconContentScale = source.IconContentScale,
+        CompactListContentScale = source.CompactListContentScale,
         ExpandedContentMode = source.ExpandedContentMode,
         CompactListCanvasWidthDip = source.CompactListCanvasWidthDip,
         CompactListCanvasHeightDip = source.CompactListCanvasHeightDip,
@@ -138,7 +151,7 @@ internal static class OrganizerInteractionMath
 
     internal static bool TryToggleExpandedContentMode(OrganizerDefinition organizer)
     {
-        if (organizer.PlacementMode == OrganizerPlacementMode.Station) return false;
+        if (!OrganizerKinds.IsRegular(organizer.PlacementMode)) return false;
         organizer.ExpandedContentMode = organizer.ExpandedContentMode == OrganizerExpandedContentMode.Icon
             ? OrganizerExpandedContentMode.CompactList
             : OrganizerExpandedContentMode.Icon;
@@ -193,7 +206,7 @@ internal static class OrganizerInteractionMath
     }
 
     internal static bool CanChangePlacementMode(OrganizerPlacementMode current, OrganizerPlacementMode next) =>
-        (current == OrganizerPlacementMode.Station) == (next == OrganizerPlacementMode.Station);
+        OrganizerKinds.CanChange(current, next);
 
     internal static bool ShouldApplyCtrlWheelScale(
         bool expanded,

@@ -1,7 +1,12 @@
-using Microsoft.Graphics.Canvas;
-using Microsoft.Graphics.Canvas.Effects;
+using Microsoft.UI.Composition;
+using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml.Controls;
+using System.Runtime.CompilerServices;
+using TuckPane.Core;
 using TuckPane.Models;
+using Microsoft.UI.Xaml;
 using Windows.Graphics.Effects;
+using WinRT;
 using WinUIEx;
 using WinUIEx.Messaging;
 using Wuc = Windows.UI.Composition;
@@ -10,8 +15,8 @@ namespace TuckPane.Services;
 
 /// <summary>
 /// Owns the complete background pipeline for a window (or a local
-/// SystemBackdropElement): desktop sampling, independent transparency/tint,
-/// the fixed Glass optical treatment, and the optional final blur.
+/// SystemBackdropElement): fixed background balancing, a single colour
+/// opacity contribution, and final blur. Window/target ownership stays local.
 /// </summary>
 internal sealed class ThemeBackdrop : CompositionBrushBackdrop
 {
@@ -25,6 +30,14 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
 
     private ThemeValues _theme;
     private ThemeCompositionPlan _plan;
+    private readonly ThemeTarget _themeTarget;
+    private readonly string _surfaceName;
+    private readonly bool _useRoundedMask;
+    private RoundedSurfaceGeometry _roundedGeometry;
+    private RoundedBackdropMask? _roundedMask;
+    private Wuc.CompositionBrush? _maskedSourceBrush;
+    private string? _lastDiagnostic;
+    private bool _hasTheme;
     private Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop? _target;
     private Wuc.Compositor? _compositor;
     private IntPtr _hwnd;
@@ -33,13 +46,160 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
     private WindowMessageMonitor? _messageMonitor;
     private bool _hostBackdropCapabilityAvailable;
     private IntPtr _registeredHostBackdropHwnd;
+    private SystemBackdropElement? _surfaceHost;
+    private DispatcherQueue? _dispatcher;
+    private BackdropTargetLifetime<ICompositionSupportsSystemBackdrop>? _targets;
+    private int _ownerThread;
+    private bool _detached;
 
     internal bool IsAvailable { get; private set; } = true;
 
+    internal ThemeBackdrop(ThemeTarget themeTarget = ThemeTarget.Organizer, string surfaceName = "local", bool useRoundedMask = false)
+    {
+        _themeTarget = themeTarget;
+        _surfaceName = surfaceName;
+        _useRoundedMask = useRoundedMask;
+    }
+
+    internal void SetRoundedGeometry(RoundedSurfaceGeometry geometry)
+    {
+        _roundedGeometry = geometry;
+        try
+        {
+            _roundedMask?.Update(geometry, _surfaceHost?.XamlRoot?.RasterizationScale ?? 1);
+        }
+        catch (Exception ex)
+        {
+            // Keep the material usable if the mask's device is lost during
+            // a size/DPI update. The SDK's original rounded clip is the fallback.
+            AppLogger.Error("收起背景圆角遮罩更新失败，恢复原生圆角裁剪。", ex);
+            try
+            {
+                if (_maskedSourceBrush is not null && _target is not null)
+                {
+                    _target.SystemBackdrop = _maskedSourceBrush;
+                    Wuc.CompositionBrush? wrapper = _currentBrush;
+                    _currentBrush = _maskedSourceBrush;
+                    _maskedSourceBrush = null;
+                    ReleaseMaskResource(wrapper);
+                }
+                // If replacing the target failed, it still owns the wrapper;
+                // keep its resources alive for the normal disconnect cleanup.
+                if (_maskedSourceBrush is null)
+                {
+                    RoundedBackdropMask? failedMask = _roundedMask;
+                    _roundedMask = null;
+                    ReleaseMaskResource(failedMask);
+                }
+            }
+            catch (Exception recoveryError)
+            {
+                AppLogger.Error("收起背景圆角遮罩降级时目标不可用，保留资源等待断开清理。", recoveryError);
+            }
+            finally
+            {
+                try
+                {
+                    if (_surfaceHost is not null) _surfaceHost.CornerRadius = new CornerRadius(geometry.Radius);
+                }
+                catch (Exception clipError) { AppLogger.Error("恢复原生圆角裁剪失败。", clipError); }
+            }
+            return;
+        }
+        if (_surfaceHost is not null)
+            _surfaceHost.CornerRadius = new CornerRadius(_maskedSourceBrush is null ? geometry.Radius : 0);
+    }
+
+    private static void ReleaseMaskResource(IDisposable? resource)
+    {
+        try { resource?.Dispose(); }
+        catch (Exception ex) { AppLogger.Error("释放圆角遮罩资源失败。", ex); }
+    }
+
+    // This explicit attachment restricts IClosable.Close to our local backdrop
+    // links. Window-level backdrop targets are owned by WinUI and never enter here.
+    internal void Attach(SystemBackdropElement surfaceHost)
+    {
+        if (_surfaceHost is not null || _detached)
+            throw new InvalidOperationException("A ThemeBackdrop belongs to one local surface.");
+        _surfaceHost = surfaceHost;
+        _dispatcher = surfaceHost.DispatcherQueue;
+        _ownerThread = Environment.CurrentManagedThreadId;
+        _targets = new(() => _dispatcher.HasThreadAccess, QueueTargetCleanup, CloseTarget);
+        _dispatcher.ShutdownStarting += Dispatcher_ShutdownStarting;
+        surfaceHost.SystemBackdrop = this;
+    }
+
+    internal void DetachAndClose()
+    {
+        if (_detached || _surfaceHost is null) return;
+        if (_dispatcher?.HasThreadAccess != true)
+            throw new InvalidOperationException("Backdrop detachment requires the owning UI thread.");
+        // Returning from this setter means SystemBackdropElement has finished
+        // unlinking the target; draining is now safe even during app shutdown.
+        if (ReferenceEquals(_surfaceHost.SystemBackdrop, this)) _surfaceHost.SystemBackdrop = null;
+        _targets!.DrainDisconnected();
+        if (_targets.RetainedCount != 0)
+            throw new InvalidOperationException("The local backdrop still has connected targets.");
+        _dispatcher.ShutdownStarting -= Dispatcher_ShutdownStarting;
+        _surfaceHost = null;
+        _detached = true;
+    }
+
+    private void Dispatcher_ShutdownStarting(DispatcherQueue sender, DispatcherQueueShutdownStartingEventArgs args)
+    {
+        try { DetachAndClose(); }
+        catch (Exception ex) { LogLifetimeError("dispatcher-shutdown", null, ex); }
+    }
+
+    private bool QueueTargetCleanup(Action cleanup) => _dispatcher!.TryEnqueue(() =>
+    {
+        try { cleanup(); }
+        catch (Exception ex)
+        {
+            LogLifetimeError("deferred-close", null, ex);
+            // One queued retry, then an explicit drain at permanent close.
+            // A failed Close never silently drops the last protected reference.
+            if (!_dispatcher.TryEnqueue(() =>
+            {
+                try { _targets!.DrainDisconnected(); }
+                catch (Exception retryError) { LogLifetimeError("close-retry", null, retryError); }
+            })) LogLifetimeError("close-retry-not-queued", null, ex);
+        }
+    });
+
+    private void CloseTarget(ICompositionSupportsSystemBackdrop target)
+    {
+        try
+        {
+            // The runtime class is not projected by the stable SDK. As<T>
+            // queries its public IClosable interface (projected as IDisposable);
+            // it does not dispose C#/WinRT's internal IObjectReference.
+            target.As<IDisposable>().Dispose();
+            AppLogger.Performance($"backdrop-close target={RuntimeHelpers.GetHashCode(target):X} thread={_ownerThread}");
+        }
+        catch (Exception ex) when (ex.HResult == unchecked((int)0x80000013))
+        {
+            // WinUI already closed this disconnected target.
+        }
+        catch (Exception ex)
+        {
+            LogLifetimeError("target-close", target, ex);
+            throw;
+        }
+    }
+
+    private void LogLifetimeError(string operation, ICompositionSupportsSystemBackdrop? target, Exception ex) =>
+        AppLogger.Error($"Backdrop lifetime {operation}: target={(target is null ? "pending" : RuntimeHelpers.GetHashCode(target).ToString("X"))}, " +
+            $"ownerThread={_ownerThread}, currentThread={Environment.CurrentManagedThreadId}, retained={_targets?.RetainedCount ?? 0}", ex);
+
     internal void SetTheme(ThemeValues theme, bool useEffects)
     {
+        ThemeCompositionPlan next = ThemePalette.BuildCompositionPlan(theme, useEffects);
+        if (_hasTheme && _theme == theme && _plan == next) return;
+        _hasTheme = true;
         _theme = theme;
-        _plan = ThemePalette.BuildCompositionPlan(theme, useEffects);
+        _plan = next;
         if (_target is not null && _compositor is not null)
         {
             UpdateHostBackdropCapability();
@@ -50,7 +210,7 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
     protected override Wuc.CompositionBrush CreateBrush(Wuc.Compositor compositor)
     {
         _compositor = compositor;
-        Wuc.CompositionBrush brush = BuildBrush(compositor);
+        Wuc.CompositionBrush brush = ApplyRoundedMask(compositor, BuildBrush(compositor));
         _currentBrush = brush;
         return brush;
     }
@@ -59,40 +219,90 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
         Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop connectedTarget,
         Microsoft.UI.Xaml.XamlRoot xamlRoot)
     {
+        if (_targets is null || _detached)
+            throw new InvalidOperationException("Attach the backdrop to its local surface before connecting.");
+        if (_targets.IsConnected(connectedTarget)) return;
+        _targets.Connect(connectedTarget);
         _target = connectedTarget;
-        IntPtr hwnd = (IntPtr)xamlRoot.ContentIslandEnvironment.AppWindowId.Value;
-        _hwnd = hwnd;
-        if (hwnd != IntPtr.Zero)
+        try
         {
-            // Opt into HostBackdrop only for the one real glass case:
-            // intermediate opacity with a non-zero blur strength.
-            UpdateHostBackdropCapability();
-            _messageMonitor?.Dispose();
-            _messageMonitor = new WindowMessageMonitor(hwnd);
-            _messageMonitor.WindowMessageReceived += MessageMonitor_WindowMessageReceived;
+            IntPtr hwnd = (IntPtr)xamlRoot.ContentIslandEnvironment.AppWindowId.Value;
+            _hwnd = hwnd;
+            if (hwnd != IntPtr.Zero)
+            {
+                UpdateHostBackdropCapability();
+                _messageMonitor?.Dispose();
+                _messageMonitor = new WindowMessageMonitor(hwnd);
+                _messageMonitor.WindowMessageReceived += MessageMonitor_WindowMessageReceived;
+            }
+            base.OnTargetConnected(connectedTarget, xamlRoot);
         }
-        base.OnTargetConnected(connectedTarget, xamlRoot);
+        catch (Exception ex)
+        {
+            // Let the framework finish registering the connection so it will
+            // disconnect it later, even if creating the material failed.
+            LogLifetimeError("connect-material", connectedTarget, ex);
+        }
     }
 
     protected override void OnTargetDisconnected(
         Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop disconnectedTarget)
     {
-        if (_messageMonitor is not null)
+        if (_targets?.IsConnected(disconnectedTarget) != true) return;
+        bool current = ReferenceEquals(_target, disconnectedTarget);
+        Wuc.CompositionBrush? brush = current ? _currentBrush : null;
+        bool brushReleasedByBase = false;
+        try
         {
-            _messageMonitor.WindowMessageReceived -= MessageMonitor_WindowMessageReceived;
-            _messageMonitor.Dispose();
-            _messageMonitor = null;
+            bool installed = ReferenceEquals(disconnectedTarget.SystemBackdrop, brush);
+            base.OnTargetDisconnected(disconnectedTarget);
+            brushReleasedByBase = installed;
         }
-        // CompositionBrushBackdrop disposes the brush currently installed on
-        // the target. Release source and texture objects afterwards.
-        base.OnTargetDisconnected(disconnectedTarget);
-        DisableHostBackdropCapability();
-        _currentBrush = null;
-        _target = null;
-        _compositor = null;
-        _hwnd = IntPtr.Zero;
-        _backdropBrush?.Dispose();
-        _backdropBrush = null;
+        catch (Exception ex) { LogLifetimeError("disconnect-material", disconnectedTarget, ex); }
+        finally
+        {
+            try
+            {
+                if (current)
+                {
+                    _target = null;
+                    _compositor = null;
+                    _currentBrush = null;
+                    WindowMessageMonitor? monitor = _messageMonitor;
+                    _messageMonitor = null;
+                    Wuc.CompositionBackdropBrush? backdrop = _backdropBrush;
+                    _backdropBrush = null;
+                    Wuc.CompositionBrush? maskedSource = _maskedSourceBrush;
+                    _maskedSourceBrush = null;
+                    RoundedBackdropMask? roundedMask = _roundedMask;
+                    _roundedMask = null;
+                    if (monitor is not null)
+                    {
+                        monitor.WindowMessageReceived -= MessageMonitor_WindowMessageReceived;
+                        ReleaseResource(monitor.Dispose);
+                    }
+                    ReleaseResource(DisableHostBackdropCapability);
+                    _hwnd = IntPtr.Zero;
+                    // Also covers a brush created before a failed attachment.
+                    if (!brushReleasedByBase && brush is not null) ReleaseResource(brush.Dispose);
+                    if (maskedSource is not null) ReleaseResource(maskedSource.Dispose);
+                    if (roundedMask is not null) ReleaseResource(roundedMask.Dispose);
+                    if (backdrop is not null) ReleaseResource(backdrop.Dispose);
+                }
+            }
+            catch (Exception ex) { LogLifetimeError("disconnect-resources", disconnectedTarget, ex); }
+            finally
+            {
+                try { _targets!.Disconnect(disconnectedTarget); }
+                catch (Exception ex) { LogLifetimeError("queue-close", disconnectedTarget, ex); }
+            }
+        }
+
+        void ReleaseResource(Action release)
+        {
+            try { release(); }
+            catch (Exception ex) { LogLifetimeError("disconnect-resource", disconnectedTarget, ex); }
+        }
     }
 
     private void MessageMonitor_WindowMessageReceived(
@@ -190,7 +400,8 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
         if (!HostBackdropRequestCounts.TryGetValue(registeredHwnd, out int count) || count <= 1)
         {
             HostBackdropRequestCounts.Remove(registeredHwnd);
-            _ = NativeMethods.SetHostBackdropBrushEnabled(registeredHwnd, enabled: false);
+            if (NativeMethods.IsWindow(registeredHwnd))
+                _ = NativeMethods.SetHostBackdropBrushEnabled(registeredHwnd, enabled: false);
             return;
         }
 
@@ -203,14 +414,68 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
 
         Wuc.CompositionBrush? previous = _currentBrush;
         Wuc.CompositionBackdropBrush? previousBackdrop = _backdropBrush;
-        Wuc.CompositionBrush next = BuildBrush(_compositor);
-        _target.SystemBackdrop = next;
+        Wuc.CompositionBrush? previousSource = _maskedSourceBrush;
+        Wuc.CompositionBrush next = ApplyRoundedMask(_compositor, BuildBrush(_compositor));
+        try
+        {
+            _target.SystemBackdrop = next;
+        }
+        catch
+        {
+            next.Dispose();
+            _maskedSourceBrush?.Dispose();
+            _backdropBrush?.Dispose();
+            _maskedSourceBrush = previousSource;
+            _backdropBrush = previousBackdrop;
+            if (_useRoundedMask && _surfaceHost is not null)
+                _surfaceHost.CornerRadius = new CornerRadius(previousSource is null ? _roundedGeometry.Radius : 0);
+            throw;
+        }
         _currentBrush = next;
 
         if (previous is not null && !ReferenceEquals(previous, next))
             previous.Dispose();
+        previousSource?.Dispose();
         if (previousBackdrop is not null && !ReferenceEquals(previousBackdrop, _backdropBrush))
             previousBackdrop.Dispose();
+        if (_maskedSourceBrush is null && _roundedMask is not null)
+        {
+            RoundedBackdropMask? unusedMask = _roundedMask;
+            _roundedMask = null;
+            ReleaseMaskResource(unusedMask);
+        }
+    }
+
+    private Wuc.CompositionBrush ApplyRoundedMask(Wuc.Compositor compositor, Wuc.CompositionBrush source)
+    {
+        bool maskWasInUse = _maskedSourceBrush is not null;
+        _maskedSourceBrush = null;
+        if (!_useRoundedMask) return source;
+        Wuc.CompositionMaskBrush? brush = null;
+        try
+        {
+            _roundedMask ??= new RoundedBackdropMask(compositor);
+            _roundedMask.Update(_roundedGeometry, _surfaceHost?.XamlRoot?.RasterizationScale ?? 1);
+            brush = _roundedMask.Wrap(source);
+            // The brush now owns the sole backdrop contour. Keep SDK target
+            // ownership and rectangular bounds, without clipping its alpha twice.
+            if (_surfaceHost is not null) _surfaceHost.CornerRadius = new CornerRadius(0);
+            _maskedSourceBrush = source;
+            return brush;
+        }
+        catch (Exception ex)
+        {
+            brush?.Dispose();
+            if (!maskWasInUse)
+            {
+                RoundedBackdropMask? failedMask = _roundedMask;
+                _roundedMask = null;
+                ReleaseMaskResource(failedMask);
+            }
+            if (_surfaceHost is not null) _surfaceHost.CornerRadius = new CornerRadius(_roundedGeometry.Radius);
+            AppLogger.Error("收起背景圆角遮罩不可用，保留原生圆角裁剪。", ex);
+            return source;
+        }
     }
 
     private Wuc.CompositionBrush BuildBrush(Wuc.Compositor compositor)
@@ -218,119 +483,22 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
         _backdropBrush = null;
         Wuc.CompositionBackdropBrush? backdrop = null;
         Wuc.CompositionEffectBrush? effectBrush = null;
+        ThemeBackdropBranch branch = ThemeEffectGraph.ResolveBranch(_plan, _hostBackdropCapabilityAvailable);
         try
         {
-            // Both endpoints bypass the desktop graph. This also prevents an
-            // invisible HostBackdrop request from colouring the transparent
-            // window shell outside the rounded local surface.
-            if (_plan.SurfaceOpacity <= .0001f)
+            if (branch != ThemeBackdropBranch.Glass)
             {
                 DisableHostBackdropCapability();
-                return BuildTransparentBrush(compositor);
-            }
-
-            if (_plan.SurfaceOpacity >= .9999f)
-            {
-                DisableHostBackdropCapability();
-                return BuildTintOnlyBrush(compositor);
-            }
-
-            // Blur 0%, disabled advanced effects, and all other non-glass
-            // cases are a clear theme-colour brush whose alpha is exactly the
-            // selected background opacity.
-            if (!_plan.RequiresHostBackdrop)
-            {
-                DisableHostBackdropCapability();
-                return BuildColorFallbackBrush(compositor);
-            }
-
-            // DWM opt-in is verified before constructing the source. This
-            // avoids empty/black desktop branches when the attribute call is
-            // unsupported or failed.
-            if (!_hostBackdropCapabilityAvailable)
-            {
-                DisableHostBackdropCapability();
-                return BuildColorFallbackBrush(compositor);
+                return BuildColorBrush(compositor, branch);
             }
 
             backdrop = compositor.CreateHostBackdropBrush();
-
-            // Keep the desktop branch independent from the tint branch. This
-            // prevents GaussianBlur from ever blurring the selected colour.
-            IGraphicsEffectSource desktopSource =
-                new Wuc.CompositionEffectSourceParameter("Backdrop");
-            if (Math.Abs(_plan.Saturation - 1) > .0001f)
-            {
-                desktopSource = new SaturationEffect
-                {
-                    Name = "MaterialSaturation",
-                    Saturation = _plan.Saturation,
-                    Source = desktopSource
-                };
-            }
-
-            if (_plan.LuminosityOpacity > .0001f)
-            {
-                var luminosityComposite = new CompositeEffect
-                {
-                    Name = "MaterialLuminosity",
-                    Mode = CanvasComposite.SourceOver
-                };
-                luminosityComposite.Sources.Add(desktopSource);
-                luminosityComposite.Sources.Add(new OpacityEffect
-                {
-                    Name = "LuminosityOpacity",
-                    Opacity = _plan.LuminosityOpacity,
-                    Source = new ColorSourceEffect
-                    {
-                        Name = "LuminosityColor",
-                        Color = _plan.LuminosityColor
-                    }
-                });
-                desktopSource = luminosityComposite;
-            }
-
-            // Blur is optional and applies only to the desktop contribution.
-            if (_plan.UsesGaussianBlur)
-            {
-                desktopSource = new GaussianBlurEffect
-                {
-                    Name = "Blur",
-                    BlurAmount = _plan.BlurAmount,
-                    BorderMode = EffectBorderMode.Hard,
-                    Optimization = EffectOptimization.Balanced,
-                    Source = desktopSource
-                };
-            }
-
-            // First mix the blurred desktop towards the selected theme colour
-            // by o, then apply o to the entire local surface. Endpoint paths
-            // above avoid constructing this graph when o is 0 or 1.
-            IGraphicsEffectSource mixedSurface = new CrossFadeEffect
-            {
-                Name = "TransparencyComposite",
-                Source1 = desktopSource,
-                Source2 = new ColorSourceEffect
-                {
-                    Name = "TintColor",
-                    Color = ThemePalette.TintColor(_theme)
-                },
-                CrossFade = _plan.TintOpacity
-            };
-            IGraphicsEffectSource output = new OpacityEffect
-            {
-                Name = "SurfaceOpacity",
-                Opacity = _plan.SurfaceOpacity,
-                Source = mixedSurface
-            };
-
-            if (output is not IGraphicsEffect finalEffect)
-                throw new InvalidOperationException("主题效果图根节点不是可创建的图形效果。");
-            effectBrush = CreateEffectBrush(compositor, finalEffect, backdrop);
+            IGraphicsEffect effect = ThemeEffectGraph.Create(
+                _plan, new Wuc.CompositionEffectSourceParameter("Backdrop"));
+            effectBrush = CreateEffectBrush(compositor, effect, backdrop);
             _backdropBrush = backdrop;
             IsAvailable = true;
-            AppLogger.Info(
-                $"HostBackdrop 已连接，BlurAmount={_plan.BlurAmount:0.##}，UsesGaussianBlur={_plan.UsesGaussianBlur}。");
+            LogBranch(ThemeBackdropBranch.Glass);
             return effectBrush;
         }
         catch (Exception ex)
@@ -338,38 +506,29 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
             effectBrush?.Dispose();
             backdrop?.Dispose();
             _backdropBrush = null;
-            IsAvailable = false;
-            AppLogger.Error("HostBackdrop 玻璃效果不可用，已切换为遵守透明度的主题色。", ex);
+            AppLogger.Error("HostBackdrop 玻璃效果不可用，已切换为遵守不透明度的主题色。", ex);
             DisableHostBackdropCapability();
-            return BuildColorFallbackBrush(compositor, logFallback: false);
+            return BuildColorBrush(compositor, ThemeBackdropBranch.Fallback);
         }
     }
 
-    private Wuc.CompositionBrush BuildColorFallbackBrush(
-        Wuc.Compositor compositor,
-        bool logFallback = true)
+    private Wuc.CompositionBrush BuildColorBrush(Wuc.Compositor compositor, ThemeBackdropBranch branch)
     {
-        IsAvailable = false;
-        if (logFallback)
-            AppLogger.Info("高级主题效果不可用，使用遵守透明度比例的主题色背景。");
-        return compositor.CreateColorBrush(
-            ThemePalette.WithOpacity(
-                ThemePalette.TintColor(_theme),
-                _plan.TintOpacity));
+        IsAvailable = branch != ThemeBackdropBranch.Fallback;
+        Wuc.CompositionBrush brush = compositor.CreateColorBrush(
+            ThemePalette.WithOpacity(_plan.TintColor, _plan.TintOpacity));
+        LogBranch(branch);
+        return brush;
     }
 
-    private Wuc.CompositionBrush BuildTransparentBrush(Wuc.Compositor compositor)
+    private void LogBranch(ThemeBackdropBranch branch)
     {
-        IsAvailable = true;
-        AppLogger.Info("背景不透明度为 0%，使用完全透明画刷并旁路 HostBackdrop。");
-        return compositor.CreateColorBrush(Microsoft.UI.Colors.Transparent);
-    }
-
-    private Wuc.CompositionBrush BuildTintOnlyBrush(Wuc.Compositor compositor)
-    {
-        IsAvailable = true;
-        AppLogger.Info("背景不透明度为 100%，使用纯主题色背景并旁路 HostBackdrop。");
-        return compositor.CreateColorBrush(_plan.TintColor);
+        // This identifies the selected target and actual path without logging
+        // pointer events, file names or every duplicate ThemeChanged broadcast.
+        string diagnostic = FormattableString.Invariant($"theme-backdrop target={_themeTarget} surface={_surfaceName} hwnd=0x{_hwnd.ToInt64():X} color=#{_theme.ColorArgb:X8} opacity={_plan.TintOpacity:0.####} blurStrength={GlobalSettings.NormalizeThemeBlurStrength(_theme.BlurStrength):0.##} sigma={(branch == ThemeBackdropBranch.Glass ? _plan.BlurAmount : 0):0.##} solid={_theme.SolidColorMode} effects={_plan.UseEffects} branch={branch}");
+        if (diagnostic == _lastDiagnostic) return;
+        _lastDiagnostic = diagnostic;
+        AppLogger.Info(diagnostic);
     }
 
     private static Wuc.CompositionEffectBrush CreateEffectBrush(

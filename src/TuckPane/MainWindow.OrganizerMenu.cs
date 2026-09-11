@@ -1,0 +1,113 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using TuckPane.Models;
+using TuckPane.Core;
+using TuckPane.Services;
+
+namespace TuckPane;
+
+public sealed partial class MainWindow
+{
+    internal void RefreshOrganizerMenuVisibility()
+    {
+        var settings = _host.State.GlobalSettings;
+        string[] visible = OrganizerMenuVisibility.VisibleActions(settings, _definition.PlacementMode);
+        foreach (MenuFlyout menu in new[] { CompactTileContextMenu, ExpandedViewContextMenu })
+        {
+            foreach (MenuFlyoutItemBase item in menu.Items)
+                item.Visibility = item is MenuFlyoutSeparator
+                    ? OrganizerMenuVisibility.ShowSeparator(visible) ? Visibility.Visible : Visibility.Collapsed
+                    : visible.Contains(item.Name.EndsWith("ToggleExpansionModeMenuItem", StringComparison.Ordinal)
+                        ? "ContextSwitchExpansion" : item.Tag as string ?? "") ? Visibility.Visible : Visibility.Collapsed;
+            if (visible.Length == 0) menu.Hide();
+        }
+        CompactView.ContextFlyout = visible.Length == 0 ? null : CompactTileContextMenu;
+        ExpandedView.ContextFlyout = visible.Length == 0 ? null : ExpandedViewContextMenu;
+    }
+
+    private bool _addingItem;
+
+    private async void AddItemMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_addingItem || _closing) return;
+        _addingItem = true;
+        _overlayOpenCount++;
+        try
+        {
+            // Give the flyout a chance to close; a late Closed event also respects
+            // _addingItem while the Shell dialog runs its nested modal loop.
+            await Task.Yield();
+            if (_closing) return;
+            _desktopLayer?.SetInputActivation(true);
+            ResetStationPointerDelay();
+            string? source = FileSelectionService.PickSingleFile(_hwnd);
+            if (_closing || string.IsNullOrWhiteSpace(source)) return;
+            TransferOutcome outcome = _storage.AddFileShortcut(source);
+            if (outcome.Status != TransferStatus.ShortcutCreated)
+            {
+                ShowMessage(outcome.Message, InfoBarSeverity.Error);
+                return;
+            }
+            StartWatcher();
+            await RefreshCatalogAsync(notifyUnsupported: false);
+            ShowMessage(AppStrings.Get("ShortcutCreated"), InfoBarSeverity.Success);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("添加项目失败。", ex);
+            if (!_closing) ShowMessage(ex.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            if (!_closing) _desktopLayer?.SetInputActivation(_contextMenuActivated);
+            _overlayOpenCount = Math.Max(0, _overlayOpenCount - 1);
+            _addingItem = false;
+            ResetStationPointerDelay();
+        }
+    }
+
+    private void UpdatePlacementModeMenuItems()
+    {
+        bool station = !OrganizerKinds.IsRegular(_definition.PlacementMode);
+        string key = _definition.PlacementMode == OrganizerPlacementMode.Floating
+            ? "ContextSwitchToPositioned" : "ContextSwitchToFloating";
+        foreach (MenuFlyoutItem item in new[] { CompactToggleModeMenuItem, ExpandedToggleModeMenuItem })
+        {
+            item.Text = AppStrings.Get(key);
+            item.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
+            item.FontFamily = new FontFamily(AppStrings.FontFamily);
+            item.CharacterSpacing = AppStrings.CharacterSpacing;
+        }
+        UpdateHideNameMenuItems();
+    }
+
+    private void UpdateHideNameMenuItems()
+    {
+        foreach (ToggleMenuFlyoutItem item in new[] { CompactHideNameMenuItem, ExpandedHideNameMenuItem })
+        {
+            item.Text = AppStrings.Get("ContextHideName");
+            item.IsChecked = _definition.HideName;
+            item.Visibility = !OrganizerKinds.IsRegular(_definition.PlacementMode) ? Visibility.Collapsed : Visibility.Visible;
+            item.FontFamily = new FontFamily(AppStrings.FontFamily);
+            item.CharacterSpacing = AppStrings.CharacterSpacing;
+        }
+        RefreshOrganizerMenuVisibility();
+    }
+
+    private void ApplyOrganizerNameVisibility()
+    {
+        CompactNameText.Visibility = _definition.HideName ? Visibility.Collapsed : Visibility.Visible;
+        ExpandedNameText.Visibility = _organizerTitleEdit.IsEditing ? Visibility.Collapsed : _definition.HideName || !OrganizerKinds.IsRegular(_definition.PlacementMode)
+            ? Visibility.Collapsed : Visibility.Visible;
+        // Row heights and bounds are deliberately unchanged when names are hidden.
+        ToolTipService.SetToolTip(CompactTile, _storage.Exists
+            ? _definition.HideName ? null : _definition.Name
+            : AppStrings.Get("MissingStorage"));
+        UpdateHideNameMenuItems();
+    }
+
+    private async void HideNameMenuItem_Click(object sender, RoutedEventArgs e) =>
+        await RunSafelyAsync(() => _host.SetOrganizerNameVisibilityAsync(OrganizerId,
+            ((ToggleMenuFlyoutItem)sender).IsChecked), "更新收纳窗名称显示失败");
+}

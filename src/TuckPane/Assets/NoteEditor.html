@@ -12,7 +12,7 @@
       --border: #5F707A;
       --text: #F1F4F5;
       --muted: #BAC3C8;
-      --rule: #5F707A;
+      --rule: rgba(95, 112, 122, 0.5);
       --caret: #FFFFFF;
       --scroll-thumb: #343F47;
       --scroll-thumb-hover: #2F3940;
@@ -68,7 +68,11 @@
       let fontSize = 14;
       let resize = null;
       let notifyTimer = 0;
+      let diagnostics = false;
+      let lastTimingSample = -1000;
       let pastedImageLabel = 'Pasted image';
+      let composing = false;
+      let blankLinePress = null;
       const editorTopPadding = 14;
       const ruledLineHeightRatio = 1.8;
       const ruledLowerGapRatio = 0.2;
@@ -210,6 +214,86 @@
         positionHandles();
       }
 
+      // Inputs are content coordinates, so scrolling and font/DPI changes do not
+      // change which visual line the click addresses. The empty editor has row 0.
+      function blankLinesToAppend(contentY, lastLineTop, lineHeight) {
+        if (![contentY, lastLineTop, lineHeight].every(Number.isFinite) || lineHeight <= 0) return 0;
+        return Math.max(0, Math.floor((contentY - lastLineTop) / lineHeight + 1e-6));
+      }
+
+      function placeCaretOnBlankLine(event) {
+        const press = blankLinePress;
+        blankLinePress = null;
+        if (!press || event.target !== editor || event.button !== 0 || event.detail !== 1 ||
+            event.shiftKey || event.ctrlKey || event.altKey || event.metaKey || composing || resize ||
+            Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4) return;
+        // Do not interpret a scrollbar click or an image still loading as blank paper.
+        const bounds = editor.getBoundingClientRect();
+        if (event.clientX >= bounds.left + editor.clientWidth ||
+            [...editor.querySelectorAll('img')].some(image => !image.complete)) return;
+        const style = getComputedStyle(editor);
+        const lineHeight = Number.parseFloat(style.lineHeight);
+        const origin = bounds.top + Number.parseFloat(style.paddingTop) - editor.scrollTop;
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        const rects = [...range.getClientRects()].filter(rect => rect.height > 0);
+        let contentBottom = origin + lineHeight;
+        for (const rect of rects) contentBottom = Math.max(contentBottom, rect.bottom);
+        for (const image of editor.querySelectorAll('img')) {
+          contentBottom = Math.max(contentBottom, image.getBoundingClientRect().bottom +
+            (Number.parseFloat(getComputedStyle(image).marginBottom) || 0));
+        }
+        if (editor.childNodes.length && !rects.length) return;
+        let tail = editor;
+        while (tail.lastElementChild && tail.lastChild === tail.lastElementChild &&
+            /^(DIV|P)$/.test(tail.lastElementChild.tagName)) tail = tail.lastElementChild;
+        range.selectNodeContents(tail);
+        range.collapse(false);
+        if (tail.lastChild?.nodeType === Node.TEXT_NODE)
+          range.setStart(tail.lastChild, tail.lastChild.textContent.length);
+        else if (tail.lastChild?.nodeName === 'BR') range.setStartBefore(tail.lastChild);
+        range.collapse(true);
+        let lastLineTop = 0;
+        if (tail !== editor) {
+          // Blocks include their actual line boxes, including arbitrary-height
+          // images. Do not snap their bottom to the paper's global ruled grid.
+          lastLineTop = tail.getBoundingClientRect().bottom - origin - lineHeight;
+        } else if (tail.lastChild?.nodeName === 'IMG') {
+          lastLineTop = contentBottom - origin - lineHeight;
+        } else if (tail.childNodes.length) {
+          let caretRects = [...range.getClientRects()].filter(rect => rect.height > 0);
+          if (!caretRects.length && tail.lastChild?.nodeName === 'BR') {
+            const breakRange = document.createRange();
+            breakRange.selectNode(tail.lastChild);
+            caretRects = [...breakRange.getClientRects()].filter(rect => rect.height > 0);
+          }
+          const caret = caretRects.at(-1);
+          if (!caret) return;
+          // Text ranges measure glyph boxes; remove the half-leading to recover
+          // the line top, which may be offset by an unruled image above it.
+          lastLineTop = caret.top - origin - (lineHeight - caret.height) / 2;
+        }
+        // A trailing <br> beside a tall, top-aligned image has a short glyph box
+        // near the image's top. New paragraphs still start below the whole image.
+        lastLineTop = Math.max(0, lastLineTop, contentBottom - origin - lineHeight);
+        const count = blankLinesToAppend(event.clientY - origin, lastLineTop, lineHeight);
+        if (!count) return;
+
+        const selection = window.getSelection();
+        if (!selection || !selection.isCollapsed) return;
+        editor.focus({ preventScroll: true });
+        // Put the caret inside the final paragraph, before its placeholder <br>.
+        selection.removeAllRanges();
+        selection.addRange(range);
+        // Native editing commands retain the browser's editing/undo semantics.
+        // Insertion occurs only at the end; existing text and image nodes stay intact.
+        for (let index = 0; index < count; index++) {
+          if (!document.execCommand('insertParagraph', false)) break;
+        }
+        selectImage(null);
+        scheduleChanged();
+      }
+
       function positionHandles() {
         if (!selectedImage || !selectedImage.isConnected) {
           selectedImage = null;
@@ -226,13 +310,39 @@
         });
       }
 
-      editor.addEventListener('input', scheduleChanged);
+      editor.addEventListener('input', event => {
+        scheduleChanged();
+        if (!diagnostics) return;
+        const now = performance.now();
+        if (now - lastTimingSample < 1000) return;
+        lastTimingSample = now;
+        const eventMs = Math.max(0, now - event.timeStamp);
+        requestAnimationFrame(() => post({ type: 'editorTiming', eventMs,
+          frameMs: performance.now() - now, utcMs: Date.now() }));
+      });
       editor.addEventListener('scroll', positionHandles, { passive: true });
       window.addEventListener('resize', () => {
         applyFontMetrics(fontSize);
         positionHandles();
       });
-      editor.addEventListener('click', event => selectImage(event.target instanceof HTMLImageElement ? event.target : null));
+      editor.addEventListener('compositionstart', () => { composing = true; blankLinePress = null; });
+      editor.addEventListener('compositionend', () => { composing = false; });
+      editor.addEventListener('pointerdown', event => {
+        const selection = window.getSelection();
+        blankLinePress = event.button === 0 && event.isPrimary && !composing &&
+          !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey &&
+          (!selection || selection.isCollapsed)
+          ? { x: event.clientX, y: event.clientY } : null;
+      });
+      editor.addEventListener('pointermove', event => {
+        if (blankLinePress && Math.hypot(event.clientX - blankLinePress.x, event.clientY - blankLinePress.y) > 4)
+          blankLinePress = null;
+      });
+      editor.addEventListener('pointercancel', () => { blankLinePress = null; });
+      editor.addEventListener('click', event => {
+        placeCaretOnBlankLine(event);
+        selectImage(event.target instanceof HTMLImageElement ? event.target : null);
+      });
       editor.addEventListener('focusin', event => {
         if (event.target instanceof HTMLImageElement) selectImage(event.target);
       });
@@ -250,6 +360,14 @@
         event.preventDefault();
         setTimeout(() => post({ type: 'copyText', text }), 0);
       });
+      function onCutText(event) {
+        const text = window.getSelection()?.toString() || '';
+        if (!text) return;
+        // Preserve the browser's deletion and undo; the host adds history support
+        // after the default cut has finished writing to the clipboard.
+        setTimeout(() => post({ type: 'copyText', text }), 0);
+      }
+      editor.addEventListener('cut', onCutText);
       editor.addEventListener('wheel', event => {
         if (!event.ctrlKey) return;
         event.preventDefault();
@@ -302,7 +420,8 @@
       });
 
       window.__tuckpane = {
-        load(html, size, palette, ruledLines, placeholder, languageTag, imageLabel, resizeLabel) {
+        load(html, size, palette, ruledLines, placeholder, languageTag, imageLabel, resizeLabel, traceInput = false) {
+          diagnostics = Boolean(traceInput);
           document.documentElement.lang = languageTag || 'en-US';
           pastedImageLabel = imageLabel || 'Pasted image';
           handles.forEach(handle => handle.setAttribute('aria-label', resizeLabel || 'Resize image'));

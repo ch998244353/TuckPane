@@ -74,16 +74,7 @@ public static class AppPaths
 
     private static void LogNoteStagingCleanupFailure(string message, Exception exception)
     {
-        try
-        {
-            Directory.CreateDirectory(LocalRoot);
-            File.AppendAllText(LogPath,
-                $"{DateTimeOffset.Now:O} [ERROR] {message}{Environment.NewLine}{exception}{Environment.NewLine}");
-        }
-        catch
-        {
-            // Staging cleanup and its diagnostics must never prevent startup.
-        }
+        AppLogger.Error("Note staging cleanup failed", exception);
     }
 
     public static string ResolveStoragePath(string relativePath)
@@ -194,7 +185,7 @@ public static class AppPaths
         string itemsPath;
         try { itemsPath = ResolveStoragePath(definition); }
         catch { return null; }
-        if (!Path.GetFileName(itemsPath).Equals("Items", StringComparison.OrdinalIgnoreCase)) return null;
+        // A legacy owned container can keep its layout after its Items directory is renamed.
         string? container = Path.GetDirectoryName(itemsPath);
         if (container is null) return null;
         string suffix = "-" + definition.Id.ToString("N")[..8];

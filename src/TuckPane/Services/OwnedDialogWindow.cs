@@ -20,6 +20,9 @@ internal sealed class OwnedDialogWindow : Window
     private readonly ThemeSurface _surface;
     private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private readonly Button _primaryButton;
+    private readonly Button _cancelButton;
+    private readonly StackPanel _actions;
+    private bool _cancelByDefault;
     private readonly TaskCompletionSource<bool> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Func<bool>? _tryAccept;
     private bool _accepted;
@@ -32,7 +35,8 @@ internal sealed class OwnedDialogWindow : Window
         string title,
         FrameworkElement body,
         string primaryText,
-        string cancelText)
+        string cancelText,
+        bool alwaysOnTop = false)
     {
         _owner = owner;
         _host = host;
@@ -65,32 +69,42 @@ internal sealed class OwnedDialogWindow : Window
             HorizontalAlignment = HorizontalAlignment.Right
         };
         _primaryButton.Click += (_, _) => Accept();
-        var cancelButton = new Button { Content = cancelText, MinWidth = 92 };
-        cancelButton.Click += (_, _) => Close();
-        var actions = new StackPanel
+        _cancelButton = new Button { Content = cancelText, MinWidth = 92 };
+        _cancelButton.Click += (_, _) => CloseDialog();
+        _actions = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 10,
             HorizontalAlignment = HorizontalAlignment.Right
         };
-        actions.Children.Add(_primaryButton);
-        actions.Children.Add(cancelButton);
-        Grid.SetRow(actions, 1);
-        content.Children.Add(actions);
+        _actions.Children.Add(_primaryButton);
+        _actions.Children.Add(_cancelButton);
+        Grid.SetRow(_actions, 1);
+        content.Children.Add(_actions);
         Content = _root;
         IntPtr hwnd = WindowNative.GetWindowHandle(this);
         SystemBackdrop = new TransparentWindowBackdrop();
-        surfaceHost.SystemBackdrop = _backdrop;
+        _backdrop.Attach(surfaceHost);
         _surface = new ThemeSurface(surfaceHost);
 
         AppWindow appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
         appWindow.IsShownInSwitchers = false;
+        appWindow.Closing += (_, args) =>
+        {
+            try { _backdrop.DetachAndClose(); }
+            catch (Exception ex)
+            {
+                args.Cancel = true;
+                AppLogger.Error("Cannot close dialog backdrop safely.", ex);
+            }
+        };
         if (appWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.SetBorderAndTitleBar(true, true);
             presenter.IsResizable = false;
             presenter.IsMaximizable = false;
             presenter.IsMinimizable = false;
+            if (alwaysOnTop) presenter.IsAlwaysOnTop = true;
         }
 
         NativeMethods.RECT bounds = DisplayPlacementService.CalculateCenteredDialogBounds(display);
@@ -156,6 +170,23 @@ internal sealed class OwnedDialogWindow : Window
         return window.ShowAsync();
     }
 
+    internal static Task ShowMessageAsync(IntPtr owner, DisplayInfo display, AppHost host,
+        string title, string message, string acknowledgeText)
+    {
+        var body = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true }
+        };
+        var window = new OwnedDialogWindow(owner, display, host, title, body, acknowledgeText, string.Empty, alwaysOnTop: true)
+        {
+            _tryAccept = static () => true
+        };
+        window._cancelButton.Visibility = Visibility.Collapsed;
+        window._root.Loaded += (_, _) => _ = window._primaryButton.Focus(FocusState.Programmatic);
+        return window.ShowAsync();
+    }
+
     internal static Task<bool> ShowConfirmationAsync(
         IntPtr owner,
         DisplayInfo display,
@@ -183,6 +214,42 @@ internal sealed class OwnedDialogWindow : Window
         return window.ShowAsync();
     }
 
+    internal static async Task<OrganizerDeleteDisposition?> ShowDeleteChoiceAsync(
+        IntPtr owner, DisplayInfo display, AppHost host, string name, string storagePath)
+    {
+        var body = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = new TextBlock
+            {
+                Text = AppStrings.Format("DeleteChoiceMessageFormat", storagePath),
+                TextWrapping = TextWrapping.Wrap
+            }
+        };
+        var window = new OwnedDialogWindow(owner, display, host,
+            AppStrings.Format("DeleteTitleFormat", name), body,
+            AppStrings.Get("DeleteMoveFolderToDesktop"), AppStrings.Get("Cancel"));
+        OrganizerDeleteDisposition? choice = null;
+        window._cancelByDefault = true;
+        window._tryAccept = () => { choice = OrganizerDeleteDisposition.MoveFolderToDesktop; return true; };
+        var keep = new Button { Content = AppStrings.Get("DeleteKeepFolderInPlace"), MinWidth = 92 };
+        keep.Click += (_, _) =>
+        {
+            choice = OrganizerDeleteDisposition.KeepFilesInPlace;
+            window._accepted = true;
+            window.CloseDialog();
+        };
+        window._actions.Children.Insert(1, keep);
+        // Stack the longer localized choices so they also fit on small displays.
+        window._actions.Orientation = Orientation.Vertical;
+        window._actions.HorizontalAlignment = HorizontalAlignment.Stretch;
+        window._primaryButton.HorizontalAlignment = HorizontalAlignment.Stretch;
+        keep.HorizontalAlignment = HorizontalAlignment.Stretch;
+        window._cancelButton.HorizontalAlignment = HorizontalAlignment.Stretch;
+        window._root.Loaded += (_, _) => _ = window._cancelButton.Focus(FocusState.Programmatic);
+        return await window.ShowAsync() ? choice : null;
+    }
+
     private Task<bool> ShowAsync()
     {
         try
@@ -207,12 +274,14 @@ internal sealed class OwnedDialogWindow : Window
         if (e.Key == Windows.System.VirtualKey.Escape)
         {
             e.Handled = true;
-            Close();
+            CloseDialog();
         }
         else if (e.Key == Windows.System.VirtualKey.Enter)
         {
+            // Choice buttons handle Enter themselves; an unhandled/default Enter cancels.
             e.Handled = true;
-            Accept();
+            if (_cancelByDefault) CloseDialog();
+            else Accept();
         }
     }
 
@@ -220,11 +289,19 @@ internal sealed class OwnedDialogWindow : Window
     {
         if (_tryAccept is null || !_tryAccept()) return;
         _accepted = true;
+        CloseDialog();
+    }
+
+    private void CloseDialog()
+    {
+        _backdrop.DetachAndClose();
         Close();
     }
 
     private void OwnedDialogWindow_Closed(object sender, WindowEventArgs args)
     {
+        try { _backdrop.DetachAndClose(); }
+        catch (Exception ex) { AppLogger.Error("Dialog backdrop close failed.", ex); }
         _host.ThemeChanged -= Host_ThemeChanged;
         _surface.Dispose();
         RestoreOwner();

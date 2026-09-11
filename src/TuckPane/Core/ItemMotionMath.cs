@@ -19,16 +19,18 @@ internal static class ItemMotionMath
         ref Vector3 velocity,
         Vector3 target,
         double seconds,
-        double responseSeconds = .14)
+        double responseSeconds = .14,
+        float positionToleranceSquared = .0004f,
+        float velocityToleranceSquared = .01f)
     {
-        if (seconds <= 0) return IsSettled(value, velocity, target);
+        if (seconds <= 0) return IsSettled(value, velocity, target, positionToleranceSquared, velocityToleranceSquared);
 
         double omega = 2 * Math.PI / responseSeconds;
         double decay = Math.Exp(-omega * seconds);
         StepComponent(ref value.X, ref velocity.X, target.X, seconds, omega, decay);
         StepComponent(ref value.Y, ref velocity.Y, target.Y, seconds, omega, decay);
         StepComponent(ref value.Z, ref velocity.Z, target.Z, seconds, omega, decay);
-        if (!IsSettled(value, velocity, target)) return false;
+        if (!IsSettled(value, velocity, target, positionToleranceSquared, velocityToleranceSquared)) return false;
 
         value = target;
         velocity = Vector3.Zero;
@@ -43,6 +45,8 @@ internal static class ItemMotionMath
         velocity = (float)((velocity - omega * coefficient * seconds) * decay);
     }
 
-    private static bool IsSettled(Vector3 value, Vector3 velocity, Vector3 target) =>
-        Vector3.DistanceSquared(value, target) < .0004f && velocity.LengthSquared() < .01f;
+    private static bool IsSettled(Vector3 value, Vector3 velocity, Vector3 target,
+        float positionToleranceSquared, float velocityToleranceSquared) =>
+        Vector3.DistanceSquared(value, target) < positionToleranceSquared &&
+        velocity.LengthSquared() < velocityToleranceSquared;
 }

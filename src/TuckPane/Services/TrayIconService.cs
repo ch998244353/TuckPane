@@ -1,3 +1,5 @@
+using TuckPane.Core;
+
 namespace TuckPane.Services;
 
 public enum TrayCommand
@@ -20,34 +22,28 @@ public sealed class TrayIconService : IDisposable
     private readonly Func<bool> _isTransferActive;
     private readonly Action<TrayCommand> _command;
     private readonly NativeMethods.SubclassProc _subclass;
+    private readonly Func<string>? _lifecycleContext;
     private NativeMethods.NOTIFYICONDATA _data;
     private IntPtr _icon;
 
-    public TrayIconService(IntPtr window, Func<bool> isStartupEnabled, Func<bool> isTransferActive, Action<TrayCommand> command)
+    public TrayIconService(IntPtr window, Func<bool> isStartupEnabled, Func<bool> isTransferActive, Action<TrayCommand> command,
+        Func<string>? lifecycleContext = null)
     {
         _window = window;
         _isStartupEnabled = isStartupEnabled;
         _isTransferActive = isTransferActive;
         _command = command;
         _subclass = WindowProc;
+        _lifecycleContext = lifecycleContext;
 
         string iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "TuckPane.ico");
         _icon = NativeMethods.LoadImage(IntPtr.Zero, iconPath, NativeMethods.IMAGE_ICON, 0, 0, NativeMethods.LR_LOADFROMFILE | NativeMethods.LR_DEFAULTSIZE);
         _data = CreateData();
-        _ = NativeMethods.SetWindowSubclass(_window, _subclass, SubclassId, IntPtr.Zero);
-        _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _data);
+        bool subclassAdded = NativeMethods.SetWindowSubclass(_window, _subclass, SubclassId, IntPtr.Zero);
+        bool iconAdded = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _data);
         _data.uTimeoutOrVersion = NativeMethods.NOTIFYICON_VERSION_4;
-        _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_SETVERSION, ref _data);
-    }
-
-    public void ShowNotification(string title, string message, bool warning = false)
-    {
-        _data.uFlags = NativeMethods.NIF_INFO;
-        _data.szInfoTitle = title;
-        _data.szInfo = message;
-        _data.dwInfoFlags = warning ? NativeMethods.NIIF_WARNING : NativeMethods.NIIF_INFO;
-        _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_MODIFY, ref _data);
-        _data.uFlags = NativeMethods.NIF_MESSAGE | NativeMethods.NIF_ICON | NativeMethods.NIF_TIP;
+        bool versionSet = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_SETVERSION, ref _data);
+        AppLogger.Lifecycle("tray-created", $"hwnd=0x{_window:X} subclass={subclassAdded} icon={iconAdded} version={versionSet}");
     }
 
     public void ApplyLanguage()
@@ -59,6 +55,7 @@ public sealed class TrayIconService : IDisposable
 
     public void Dispose()
     {
+        AppLogger.Lifecycle("tray-dispose", $"hwnd=0x{_window:X}");
         _ = NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_DELETE, ref _data);
         _ = NativeMethods.RemoveWindowSubclass(_window, _subclass, SubclassId);
         if (_icon != IntPtr.Zero)
@@ -70,6 +67,16 @@ public sealed class TrayIconService : IDisposable
 
     private IntPtr WindowProc(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam, UIntPtr subclassId, IntPtr referenceData)
     {
+        string? lifecycle = LifecycleDiagnostics.DescribeWindowMessage(message, wParam.ToUInt64(), lParam.ToInt64());
+        if (lifecycle is not null)
+        {
+            try
+            {
+                AppLogger.Lifecycle(lifecycle, $"source=host-message hwnd=0x{hWnd:X} message=0x{message:X} " +
+                    $"wParam=0x{wParam.ToUInt64():X} lParam=0x{lParam.ToInt64():X} {_lifecycleContext?.Invoke()}");
+            }
+            catch { /* A diagnostic callback must never interrupt the native message chain. */ }
+        }
         if (message == CallbackMessage)
         {
             int mouseMessage = unchecked((int)((long)lParam & 0xFFFF));

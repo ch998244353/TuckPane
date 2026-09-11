@@ -213,7 +213,7 @@ public sealed class DesktopLayerService : IDisposable
         _ = NativeMethods.SetWindowPos(_window, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
     }
 
-    private void ApplyTransparentChrome()
+    internal void ApplyTransparentChrome()
     {
         if (!NativeMethods.SupportsWindows11DwmAttributes ||
             _window == IntPtr.Zero ||

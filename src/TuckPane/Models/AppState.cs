@@ -14,7 +14,9 @@ public enum OrganizerTextColor
 internal enum ThemeTarget
 {
     Settings,
-    Organizer
+    Organizer,
+    Station,
+    Dock
 }
 
 internal readonly record struct ThemeValues(
@@ -22,7 +24,8 @@ internal readonly record struct ThemeValues(
     double Transparency,
     double BlurStrength = GlobalSettings.DefaultThemeBlurStrength,
     bool SolidColorMode = false,
-    double SolidOpacity = 1);
+    double SolidOpacity = 1,
+    bool FullyTransparent = false);
 
 public enum PerformanceProfile
 {
@@ -47,13 +50,22 @@ public enum OrganizerPlacementMode
 {
     Floating = 0,
     Positioned = 1,
-    Station = 2
+    Station = 2,
+    Dock = 3
 }
+
+public enum DockOrientation { Horizontal = 0, Vertical = 1 }
 
 public enum OrganizerExpandedContentMode
 {
     Icon = 0,
     CompactList = 1
+}
+
+public enum OrganizerExpansionMode
+{
+    Collapsible = 0,
+    AlwaysExpanded = 1
 }
 
 public enum OrganizerDockEdge
@@ -101,7 +113,7 @@ public enum NoteTheme
 
 public sealed class AppStateV2
 {
-    public int SchemaVersion { get; set; } = 15;
+    public int SchemaVersion { get; set; } = 16;
     public GlobalSettings GlobalSettings { get; set; } = new();
     public ConsolePlacement? ConsolePlacement { get; set; }
     public List<OrganizerDefinition> Organizers { get; set; } = [];
@@ -109,17 +121,22 @@ public sealed class AppStateV2
 
 public sealed class GlobalSettings
 {
+    public bool CompactHoverMagnificationEnabled { get; set; } = true;
+    public bool DockHoverMagnificationEnabled { get; set; } = true;
+    public double CompactHoverMagnificationScale { get; set; } = 1.25;
+    public double DockHoverMagnificationScale { get; set; } = 1.25;
+    public static double NormalizeHoverMagnificationScale(double value) => double.IsFinite(value)
+        ? Math.Round(Math.Clamp(value, 1, 1.25), 2, MidpointRounding.AwayFromZero) : 1.25;
+    public Dictionary<string, bool> OrganizerMenuVisibility { get; set; } = new();
     public const uint DefaultThemeColorArgb = 0xFFE2E5E9;
     public const double DefaultThemeTransparency = .35;
-    // Glass opacity is persisted as a normalized 0..1 value and capped just
-    // below fully opaque so the Glass pipeline remains distinguishable.
-    public const double MaximumThemeTransparency = .99;
-    // Glass blur intentionally has a non-zero floor so selecting Glass always
-    // produces a perceptible material treatment (5% is the minimum setting).
-    public const double MinimumThemeBlurStrength = .05;
+    // Legacy "Transparency" fields store colour opacity, including both endpoints.
+    public const double MaximumThemeTransparency = 1;
+    // Zero selects the clear colour path; positive values add to the system backdrop blur.
+    public const double MinimumThemeBlurStrength = 0;
     public const double DefaultThemeBlurStrength = 1;
     public const double MaximumThemeBlurStrength = 2;
-    public const OrganizerTextColor DefaultOrganizerTextColor = OrganizerTextColor.Auto;
+    public const OrganizerTextColor DefaultOrganizerTextColor = OrganizerTextColor.White;
     public const int MinimumHoverDelayMs = 100;
     public const int MaximumHoverDelayMs = 2000;
     public const int HoverDelayStepMs = 50;
@@ -145,6 +162,17 @@ public sealed class GlobalSettings
     public double SettingsSolidThemeOpacity { get; set; } = 1;
     public double SettingsThemeBlurStrength { get; set; } = DefaultThemeBlurStrength;
     public bool SettingsSolidColorMode { get; set; }
+    public uint StationThemeColorArgb { get; set; } = DefaultThemeColorArgb;
+    public double StationThemeTransparency { get; set; } = DefaultThemeTransparency;
+    public double StationSolidThemeOpacity { get; set; } = 1;
+    public double StationThemeBlurStrength { get; set; } = DefaultThemeBlurStrength;
+    public bool StationSolidColorMode { get; set; }
+    public uint DockThemeColorArgb { get; set; } = DefaultThemeColorArgb;
+    public double DockThemeTransparency { get; set; } = DefaultThemeTransparency;
+    public double DockSolidThemeOpacity { get; set; } = 1;
+    public double DockThemeBlurStrength { get; set; } = DefaultThemeBlurStrength;
+    public bool DockSolidColorMode { get; set; }
+    public bool DockFullyTransparent { get; set; }
     public OrganizerTextColor OrganizerTextColor { get; set; } = DefaultOrganizerTextColor;
     public NoteTheme NoteTheme { get; set; } = NoteTheme.RainBlue;
     public bool StartWithWindows { get; set; }
@@ -153,12 +181,13 @@ public sealed class GlobalSettings
     public PerformanceProfile PerformanceProfile { get; set; } = global::TuckPane.Models.PerformanceProfile.Balanced;
     public bool ExclusiveExpansion { get; set; } = true;
     public bool CollapseOnOutsideClick { get; set; }
+    public bool HideCollapseIndicator { get; set; }
     public bool NoteAlwaysOnTop { get; set; }
+    public bool TodoShowSeparators { get; set; }
     public bool ExpandOnHover { get; set; }
     public bool CollapseOnPointerLeave { get; set; }
     public bool WindowAlignmentEnabled { get; set; }
     public bool RememberExpandedOrganizerPosition { get; set; }
-    public bool MoveOrganizerFilesToDesktopOnDelete { get; set; } = true;
     public bool UseUniformFloatingCompactScale { get; set; }
     public double UniformFloatingCompactScale { get; set; } = OrganizerLimits.DefaultCompactScale;
     public bool UseUniformPositionedCompactScale { get; set; }
@@ -243,7 +272,7 @@ public sealed class GlobalSettings
     }
 
     public static double NormalizeThemeTransparency(double value) =>
-        double.IsFinite(value) ? Math.Clamp(value, 0, .99) : DefaultThemeTransparency;
+        double.IsFinite(value) ? Math.Clamp(value, 0, MaximumThemeTransparency) : DefaultThemeTransparency;
 
     public static double NormalizeSolidThemeOpacity(double value) =>
         double.IsFinite(value) ? Math.Clamp(value, 0, 1) : 1;
@@ -255,6 +284,10 @@ public sealed class GlobalSettings
 
     internal ThemeValues GetTheme(ThemeTarget target)
     {
+        if (target == ThemeTarget.Station)
+            return new(StationThemeColorArgb, StationThemeTransparency, StationThemeBlurStrength, StationSolidColorMode, StationSolidThemeOpacity);
+        if (target == ThemeTarget.Dock)
+            return new(DockThemeColorArgb, DockThemeTransparency, DockThemeBlurStrength, DockSolidColorMode, DockSolidThemeOpacity, DockFullyTransparent);
         bool solid = target == ThemeTarget.Settings ? SettingsSolidColorMode : SolidColorMode;
         return target == ThemeTarget.Settings
             ? new(SettingsThemeColorArgb, SettingsThemeTransparency, SettingsThemeBlurStrength, solid, SettingsSolidThemeOpacity)
@@ -263,6 +296,25 @@ public sealed class GlobalSettings
 
     internal void SetTheme(ThemeTarget target, ThemeValues theme)
     {
+        if (target == ThemeTarget.Station)
+        {
+            StationThemeColorArgb = theme.ColorArgb;
+            StationThemeTransparency = theme.Transparency;
+            StationThemeBlurStrength = theme.BlurStrength;
+            StationSolidColorMode = theme.SolidColorMode;
+            StationSolidThemeOpacity = NormalizeSolidThemeOpacity(theme.SolidOpacity);
+            return;
+        }
+        if (target == ThemeTarget.Dock)
+        {
+            DockThemeColorArgb = theme.ColorArgb;
+            DockThemeTransparency = theme.Transparency;
+            DockThemeBlurStrength = theme.BlurStrength;
+            DockSolidColorMode = theme.SolidColorMode;
+            DockSolidThemeOpacity = NormalizeSolidThemeOpacity(theme.SolidOpacity);
+            DockFullyTransparent = theme.FullyTransparent;
+            return;
+        }
         if (target == ThemeTarget.Settings)
         {
             SettingsThemeColorArgb = theme.ColorArgb;
@@ -285,10 +337,29 @@ public sealed class GlobalSettings
         NormalizeThemeTransparency(theme.Transparency),
         NormalizeThemeBlurStrength(theme.BlurStrength),
         theme.SolidColorMode,
-        NormalizeSolidThemeOpacity(theme.SolidOpacity));
+        NormalizeSolidThemeOpacity(theme.SolidOpacity), theme.FullyTransparent);
 
+    // Shared by the UI update path and focused checks. Transparency always
+    // means the stored Glass weight, even in Solid mode. Keeping named values
+    // separate also lets a failed save restore the complete previous snapshot.
+    internal static ThemeValues ResolveThemeUpdate(
+        ThemeValues previous,
+        uint colorArgb,
+        double transparency,
+        double blurStrength,
+        bool solidColorMode,
+        double? solidOpacity = null,
+        bool? fullyTransparent = null) => NormalizeTheme(new(
+            colorArgb,
+            transparency,
+            blurStrength,
+            solidColorMode,
+            solidOpacity ?? previous.SolidOpacity,
+            fullyTransparent ?? previous.FullyTransparent));
+
+    // Retain the legacy field and enum values for reading older state files.
     internal static OrganizerTextColor NormalizeOrganizerTextColor(OrganizerTextColor color) =>
-        Enum.IsDefined(color) ? color : DefaultOrganizerTextColor;
+        OrganizerTextColor.White;
 }
 
 public sealed class ConsolePlacement
@@ -304,15 +375,24 @@ public sealed class OrganizerDefinition
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "收纳窗";
+    public bool HideName { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public OrganizerPlacementMode PlacementMode { get; set; } = OrganizerPlacementMode.Floating;
+    public OrganizerExpansionMode ExpansionMode { get; set; } = OrganizerExpansionMode.Collapsible;
     public OrganizerDockEdge DockEdge { get; set; } = OrganizerDockEdge.Right;
+    public DockOrientation DockOrientation { get; set; }
+    public double DockIconSizeDip { get; set; } = 64;
+    public double DockSpacingFactor { get; set; } = .75;
+    // Unlike the legacy positions, these offsets identify the Dock centre in its monitor's work area.
+    public WidgetPosition? DockCenter { get; set; }
     public OrganizerLayout Layout { get; set; } = new();
     public double CompactScale { get; set; } = OrganizerLimits.DefaultCompactScale;
     public double CanvasScale { get; set; } = 1;
     public double ItemScale { get; set; } = 1;
     public double NameScale { get; set; } = 1;
     public double CompactListItemScale { get; set; } = 1;
+    public double IconContentScale { get; set; } = 1;
+    public double CompactListContentScale { get; set; } = 1;
     public OrganizerExpandedContentMode ExpandedContentMode { get; set; } = OrganizerExpandedContentMode.Icon;
     public double CompactListCanvasWidthDip { get; set; } = OrganizerLimits.DefaultCompactListCanvasWidthDip;
     public double CompactListCanvasHeightDip { get; set; } = OrganizerLimits.DefaultCompactListCanvasHeightDip;

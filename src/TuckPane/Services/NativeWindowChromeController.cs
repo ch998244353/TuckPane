@@ -10,17 +10,22 @@ internal sealed class NativeWindowChromeController : IDisposable
     private readonly DispatcherQueue _dispatcher;
     private readonly NativeMethods.SubclassProc _subclass;
     private readonly bool _extendClientFrame;
+    private readonly bool _applyBorderLast;
     private int _visibleFrameThickness = 1;
     private bool _disposed;
+    private bool _applyQueued;
+    private bool _refreshFramePending;
 
     internal NativeWindowChromeController(
         IntPtr window,
         DispatcherQueue dispatcher,
-        bool extendClientFrame = true)
+        bool extendClientFrame = true,
+        bool applyBorderLast = false)
     {
         _window = window;
         _dispatcher = dispatcher;
         _extendClientFrame = extendClientFrame;
+        _applyBorderLast = applyBorderLast;
         _subclass = WindowProc;
         _ = NativeMethods.SetWindowSubclass(window, _subclass, SubclassId, IntPtr.Zero);
         Apply(refreshFrame: true);
@@ -33,12 +38,7 @@ internal sealed class NativeWindowChromeController : IDisposable
         int frameThickness = 1;
         if (NativeMethods.SupportsWindows11DwmAttributes)
         {
-            int noBorder = NativeMethods.DWMWA_COLOR_NONE;
-            LogResult(NativeMethods.DwmSetWindowAttribute(
-                _window,
-                NativeMethods.DWMWA_BORDER_COLOR,
-                ref noBorder,
-                sizeof(int)), "DwmSetWindowAttribute(DWMWA_BORDER_COLOR)");
+            if (!_applyBorderLast) SuppressBorder();
 
             int getFrame = NativeMethods.DwmGetWindowAttribute(
                 _window,
@@ -72,6 +72,17 @@ internal sealed class NativeWindowChromeController : IDisposable
                 NativeMethods.SWP_NOACTIVATE |
                 NativeMethods.SWP_FRAMECHANGED);
         }
+        // Console's title-bar and frame refresh may restore the system accent
+        // border. Its final native write must suppress that border again.
+        if (_applyBorderLast && NativeMethods.SupportsWindows11DwmAttributes) SuppressBorder();
+    }
+
+    private void SuppressBorder()
+    {
+        int noBorder = NativeMethods.DWMWA_COLOR_NONE;
+        LogResult(NativeMethods.DwmSetWindowAttribute(
+            _window, NativeMethods.DWMWA_BORDER_COLOR, ref noBorder, sizeof(int)),
+            "DwmSetWindowAttribute(DWMWA_BORDER_COLOR)");
     }
 
     public void Dispose()
@@ -108,17 +119,36 @@ internal sealed class NativeWindowChromeController : IDisposable
             NativeMethods.WM_DWMCOMPOSITIONCHANGED or
             NativeMethods.WM_SETTINGCHANGE)
         {
-            bool refreshFrame = message != NativeMethods.WM_NCACTIVATE;
-            _ = _dispatcher.TryEnqueue(() => Apply(refreshFrame));
+            QueueApply(message != NativeMethods.WM_NCACTIVATE);
         }
         return result;
+    }
+
+    internal void QueueApply(bool refreshFrame = false)
+    {
+        if (_disposed) return;
+        _refreshFramePending |= refreshFrame;
+        if (_applyQueued) return;
+        _applyQueued = true;
+        if (!_dispatcher.TryEnqueue(() =>
+        {
+            bool refresh = _refreshFramePending;
+            _refreshFramePending = false;
+            // Ignore reentrant activation-only refreshes; retain a real theme/frame change.
+            try { Apply(refresh); }
+            finally
+            {
+                _applyQueued = false;
+                if (_refreshFramePending) QueueApply(refreshFrame: true);
+            }
+        })) _applyQueued = false;
     }
 
     private static void LogResult(int hresult, string operation)
     {
         if (hresult >= 0)
         {
-            AppLogger.Info($"{operation} 完成，HRESULT=0x{hresult:X8}。");
+            AppLogger.Performance($"{operation} 完成，HRESULT=0x{hresult:X8}。");
         }
         else
         {

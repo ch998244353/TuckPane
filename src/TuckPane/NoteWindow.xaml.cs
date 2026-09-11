@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using Microsoft.UI;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
@@ -29,6 +30,7 @@ public sealed partial class NoteWindow : Window
     private string? _externalPath;
     private readonly PortableNoteDocument? _portableDocument;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _saveTimer;
+    private readonly NoteSaveSequence _saveSequence;
     private readonly AccessibilitySettings _accessibility = new();
     private AppWindow _appWindow = null!;
     private InputNonClientPointerSource? _titleInput;
@@ -38,7 +40,17 @@ public sealed partial class NoteWindow : Window
     private bool _editorReady;
     private bool _editorInitializing;
     private bool _permanentClose;
-    private bool _visible;
+    private bool _visibleValue;
+    private bool _visible
+    {
+        get => _visibleValue;
+        set
+        {
+            if (_visibleValue == value) return;
+            _visibleValue = value;
+            _host.NotifyDockOpenStateChanged();
+        }
+    }
     private bool _restoringPlacement;
     private NoteDocument _document = new();
     private Task<NoteDocument>? _documentLoadTask;
@@ -60,6 +72,11 @@ public sealed partial class NoteWindow : Window
         _organizerId = organizerId;
         _externalPath = externalPath is null ? null : Path.GetFullPath(externalPath);
         _portableDocument = portableDocument;
+        _saveSequence = new NoteSaveSequence(async readEditor =>
+        {
+            await EnsureDocumentLoadedAsync();
+            if (readEditor) await ReadEditorStateAsync();
+        }, CaptureWrite);
         if (_externalPath is not null)
         {
             ArgumentNullException.ThrowIfNull(portableDocument);
@@ -319,6 +336,12 @@ public sealed partial class NoteWindow : Window
                 await SendEditorLoadAsync();
                 return;
             }
+            if (type == "editorTiming" && AppLogger.PerformanceTraceEnabled)
+            {
+                JsonElement metrics = message.RootElement;
+                AppLogger.Performance($"note-input id={Id} eventMs={metrics.GetProperty("eventMs").GetDouble():F2} frameOpportunityMs={metrics.GetProperty("frameMs").GetDouble():F2} utcMs={metrics.GetProperty("utcMs").GetDouble():F0}");
+                return;
+            }
             if (type == "copyText")
             {
                 if (!message.RootElement.TryGetProperty("text", out JsonElement textElement) ||
@@ -333,7 +356,7 @@ public sealed partial class NoteWindow : Window
                     if (delayMs > 0) await Task.Delay(delayMs);
                     copied = Clipboard.SetContentWithOptions(
                         content,
-                        new ClipboardContentOptions());
+                        new ClipboardContentOptions { IsAllowedInHistory = true });
                     if (copied) break;
                 }
                 if (!copied)
@@ -371,7 +394,8 @@ public sealed partial class NoteWindow : Window
             $"{JsonSerializer.Serialize(AppStrings.Get("NotePlaceholder"))}," +
             $"{JsonSerializer.Serialize(AppStrings.GetLanguageTag(AppStrings.Language))}," +
             $"{JsonSerializer.Serialize(AppStrings.Get("NotePastedImage"))}," +
-            $"{JsonSerializer.Serialize(AppStrings.Get("NoteResizeImage"))})";
+            $"{JsonSerializer.Serialize(AppStrings.Get("NoteResizeImage"))}," +
+            $"{JsonSerializer.Serialize(AppLogger.PerformanceTraceEnabled)})";
         await Editor.CoreWebView2.ExecuteScriptAsync(script);
     }
 
@@ -400,25 +424,32 @@ public sealed partial class NoteWindow : Window
     private async Task<bool> FlushAsync(bool readEditor)
     {
         _saveTimer.Stop();
+        return await FlushCoreAsync(readEditor);
+    }
+
+    internal async Task BeginDirectoryRenameAsync()
+    {
+        _saveTimer.Stop();
+        if (await FlushCoreAsync(readEditor: true, holdForDirectoryRename: true))
+        {
+            WindowRoot.IsHitTestVisible = false;
+            return;
+        }
+        throw new IOException(AppStrings.Get("NoteDragSaveFailed"));
+    }
+
+    internal void EndDirectoryRename()
+    {
+        WindowRoot.IsHitTestVisible = true;
+        _saveSequence.EndDirectoryRename();
+    }
+
+    private async Task<bool> FlushCoreAsync(bool readEditor, bool holdForDirectoryRename = false)
+    {
+        long traceStart = AppLogger.PerformanceTraceEnabled ? Stopwatch.GetTimestamp() : 0;
         try
         {
-            await EnsureDocumentLoadedAsync();
-            if (readEditor) await ReadEditorStateAsync();
-            if (_externalPath is null)
-            {
-                await _store.SaveAsync(Id, _document);
-                await _host.SaveStateAsync();
-            }
-            else
-            {
-                PortableNoteDocument portable = _portableDocument!;
-                portable.Theme = _definition.Theme;
-                portable.FontSize = _definition.FontSize;
-                portable.ShowRuledLines = _definition.ShowRuledLines;
-                portable.Placement = ToPortablePlacement(_definition.Placement);
-                portable.Html = _document.Html;
-                await _store.SavePortableAsync(_externalPath, portable);
-            }
+            await _saveSequence.SaveAsync(readEditor, holdForDirectoryRename);
             return true;
         }
         catch (Exception ex)
@@ -427,6 +458,35 @@ public sealed partial class NoteWindow : Window
             ShowError(AppStrings.Format("NoteSaveErrorFormat", ex.Message));
             return false;
         }
+        finally
+        {
+            if (traceStart != 0) AppLogger.Performance($"note-save id={Id} totalMs={Stopwatch.GetElapsedTime(traceStart).TotalMilliseconds:F2}");
+        }
+    }
+
+    private Func<Task> CaptureWrite()
+    {
+        if (_externalPath is null)
+        {
+            var snapshot = new NoteDocument { Html = _document.Html };
+            return async () =>
+            {
+                await _store.SaveAsync(Id, snapshot);
+                await _host.SaveStateAsync();
+            };
+        }
+        // Capture on the UI thread; this snapshot cannot change while the atomic write waits.
+        var portable = new PortableNoteDocument
+        {
+            Theme = _definition.Theme,
+            FontSize = _definition.FontSize,
+            ShowRuledLines = _definition.ShowRuledLines,
+            Placement = ToPortablePlacement(_definition.Placement),
+            Html = _document.Html
+        };
+        string path = _externalPath;
+        // File opening/replacement also have synchronous phases; keep them off the input dispatcher.
+        return () => Task.Run(() => _store.SavePortableAsync(path, portable));
     }
 
     private async Task EnsureDocumentLoadedAsync()
@@ -546,9 +606,10 @@ public sealed partial class NoteWindow : Window
         {
             IReadOnlyDictionary<string, string> theme = NoteThemePalette.Get(_definition.Theme).Css;
             Color editor = ParseColor(theme["editor"]);
+            Color rule = ParseColor(theme["border"]);
             return new Dictionary<string, string>(theme)
             {
-                ["rule"] = theme["border"],
+                ["rule"] = $"rgba({rule.R}, {rule.G}, {rule.B}, 0.5)",
                 ["caret"] = IsDark(editor) ? "#FFFFFF" : "#000000",
                 ["scroll-thumb"] = Darken(editor, .22),
                 ["scroll-thumb-hover"] = Darken(editor, .30)

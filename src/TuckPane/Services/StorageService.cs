@@ -1,6 +1,8 @@
 using TuckPane.Core;
 using TuckPane.Models;
 using Microsoft.Win32;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
 
 namespace TuckPane.Services;
 
@@ -82,6 +84,65 @@ public sealed class StorageService
         return outcomes;
     }
 
+    internal TransferOutcome AddFileShortcut(string sourcePath)
+    {
+        string? staging = null;
+        try
+        {
+            string source = Path.GetFullPath(sourcePath);
+            if (!File.Exists(source)) throw new FileNotFoundException(AppStrings.Get("AddItemSourceMissing"), source);
+            if (!Exists) throw new DirectoryNotFoundException(AppStrings.Get("MissingStorage"));
+            bool existingLink = Path.GetExtension(source).Equals(".lnk", StringComparison.OrdinalIgnoreCase);
+            staging = Path.Combine(_itemsRoot, $".glassfolder-staging-{Guid.NewGuid():N}.lnk");
+            if (existingLink)
+            {
+                // Preserve arguments, icon locations and Shell namespace targets verbatim.
+                File.Copy(source, staging, overwrite: false);
+            }
+            else
+            {
+                object instance = new NativeMethods.ShellLink();
+                try
+                {
+                    var link = (NativeMethods.IShellLinkW)instance;
+                    Marshal.ThrowExceptionForHR(link.SetPath(source));
+                    Marshal.ThrowExceptionForHR(link.SetWorkingDirectory(Path.GetDirectoryName(source)!));
+                    ((IPersistFile)instance).Save(staging, true);
+                }
+                finally { Marshal.FinalReleaseComObject(instance); }
+            }
+            string name = existingLink ? Path.GetFileName(source) : Path.GetFileNameWithoutExtension(source) + ".lnk";
+            string requested = Path.Combine(_itemsRoot, name);
+            for (int attempt = 0; attempt < 32; attempt++)
+            {
+                string destination = GetUniquePath(requested);
+                try
+                {
+                    File.Move(staging, destination, overwrite: false);
+                    return new(source, destination, TransferStatus.ShortcutCreated, AppStrings.Get("ShortcutCreated"));
+                }
+                catch (IOException) when (File.Exists(destination) || Directory.Exists(destination))
+                {
+                    // Another writer claimed the name; publish under a fresh name, never overwrite.
+                }
+            }
+            throw new IOException(AppStrings.Get("AddItemNameConflict"));
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"添加项目快捷方式失败：{sourcePath}", ex);
+            return new(sourcePath, null, TransferStatus.Failed, ex.Message);
+        }
+        finally
+        {
+            if (staging is not null)
+            {
+                try { if (File.Exists(staging)) File.Delete(staging); }
+                catch (Exception ex) { AppLogger.Error("添加项目临时文件清理失败。", ex); }
+            }
+        }
+    }
+
     internal string CreateUniqueFolder(string requestedName)
     {
         string name = ValidateNewFolderName(requestedName);
@@ -113,6 +174,7 @@ public sealed class StorageService
         {
             string relativeName = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar));
             if (relativeName.StartsWith(".glassfolder-staging-", StringComparison.OrdinalIgnoreCase) ||
+                PortableDocumentCatalogChanges.IsInternalTemporary(relativeName) ||
                 !DropValidator.TryGetKind(path, out WidgetItemKind kind))
             {
                 continue;
@@ -133,8 +195,8 @@ public sealed class StorageService
         if (!_exportEmptyDirectory && !Directory.EnumerateFileSystemEntries(_itemsRoot).Any())
         {
             Directory.Delete(_itemsRoot);
-            DeleteEmptyParent();
-            return new(_itemsRoot, null, TransferStatus.Moved, AppStrings.Get("EmptyDeleted"));
+            return PublishedMoveCompletion.Complete(_itemsRoot, _itemsRoot, () => { }, DeleteEmptyParent)
+                with { DestinationPath = null, Message = AppStrings.Get("EmptyDeleted") };
         }
 
         string desktop = AppPaths.DesktopRoot;
@@ -148,8 +210,7 @@ public sealed class StorageService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 Directory.Move(_itemsRoot, destination);
-                DeleteEmptyParent();
-                return new(_itemsRoot, destination, TransferStatus.Moved, AppStrings.Get("ExportedDesktop"));
+                return PublishedMoveCompletion.Complete(_itemsRoot, destination, () => { }, DeleteEmptyParent);
             }
 
             string staging = Path.Combine(desktop, $".glassfolder-staging-{Guid.NewGuid():N}");
@@ -165,18 +226,11 @@ public sealed class StorageService
                 VerifyEquivalent(_itemsRoot, staging, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 Directory.Move(staging, destination);
-                try
+                return PublishedMoveCompletion.Complete(_itemsRoot, destination, () =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     Directory.Delete(_itemsRoot, recursive: true);
-                    DeleteEmptyParent();
-                }
-                catch
-                {
-                    TryDelete(destination);
-                    throw;
-                }
-                return new(_itemsRoot, destination, TransferStatus.Moved, AppStrings.Get("ExportedDesktopCrossVolume"));
+                }, DeleteEmptyParent);
             }
             catch
             {
@@ -246,8 +300,7 @@ public sealed class StorageService
                 source,
                 destination,
                 progress,
-                cancellationToken,
-                rollbackDestinationOnSourceDeleteFailure: true);
+                cancellationToken);
             if (outcome.Status != TransferStatus.Failed ||
                 (!File.Exists(destination) && !Directory.Exists(destination))) return outcome;
             AppLogger.Info($"目标名称被并发占用，重新编号：{destination}");
@@ -284,7 +337,7 @@ public sealed class StorageService
         string source = Path.GetFullPath(sourcePath).TrimEnd(Path.DirectorySeparatorChar);
         bool isDirectory = Directory.Exists(source);
         string destination = GetUniquePath(Path.Combine(_itemsRoot, Path.GetFileName(source)), isDirectory);
-        return await MovePathAsync(source, destination, progress, cancellationToken, rollbackDestinationOnSourceDeleteFailure: false);
+        return await MovePathAsync(source, destination, progress, cancellationToken);
     }
 
     private async Task<TransferOutcome> CopyOneAsync(
@@ -337,8 +390,7 @@ public sealed class StorageService
         string source,
         string destination,
         IProgress<TransferProgress>? progress,
-        CancellationToken cancellationToken,
-        bool rollbackDestinationOnSourceDeleteFailure)
+        CancellationToken cancellationToken)
     {
         bool isDirectory = Directory.Exists(source);
         string itemName = Path.GetFileName(source);
@@ -402,23 +454,12 @@ public sealed class StorageService
                 throw;
             }
 
-            try
+            return PublishedMoveCompletion.Complete(source, destination, () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (isDirectory) Directory.Delete(source, recursive: true);
                 else File.Delete(source);
-                return new(source, destination, TransferStatus.Moved, AppStrings.Get("CrossVolumeMoved"));
-            }
-            catch (Exception deleteException)
-            {
-                AppLogger.Error($"目标副本完整，但无法删除源项目：{source}", deleteException);
-                if (rollbackDestinationOnSourceDeleteFailure)
-                {
-                    TryDelete(destination);
-                    return new(source, null, TransferStatus.Failed, deleteException.Message);
-                }
-                return new(source, destination, TransferStatus.CopiedSourceRetained, AppStrings.Get("DuplicateRetained"));
-            }
+            });
         }
         catch (Exception ex)
         {

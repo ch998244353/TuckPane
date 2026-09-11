@@ -1,113 +1,61 @@
-using System.Threading.Channels;
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace TuckPane.Services;
 
 public static class AppLogger
 {
-    private static readonly object Gate = new();
-    private static readonly Channel<string> Queue = Channel.CreateBounded<string>(new BoundedChannelOptions(2048)
-    {
-        FullMode = BoundedChannelFullMode.Wait,
-        SingleReader = true,
-        SingleWriter = false
-    });
-    private static readonly object FlushGate = new();
-    private static Task? _writerTask;
-    private static TaskCompletionSource _drained = CompletedSignal();
-    private static int _pending;
+    internal static DiagnosticLogWriter Writer { get; } = new(Path.Combine(AppPaths.LocalRoot, "diagnostics"));
 
-    public static void Info(string message) => Write("INFO", message, null);
-    public static void Error(string message, Exception? exception = null) => Write("ERROR", message, exception);
+    // Compatibility callers may format user content. It is intentionally never persisted.
+    public static void Info(string message, [CallerMemberName] string caller = "") =>
+        Record(DiagnosticArea.Runtime, DiagnosticStage.Notice, origin: caller);
+    public static void Error(string message, Exception? exception = null, [CallerMemberName] string caller = "") =>
+        Record(DiagnosticArea.Runtime, DiagnosticStage.Failed, exception: exception, origin: caller);
+
+    public static void Lifecycle(string name, string details = "") => Record(DiagnosticArea.Lifecycle, name switch
+    {
+        "startup" => DiagnosticStage.Started,
+        "exit-application" or "message-loop-ended" => DiagnosticStage.Exit,
+        "exit-cancelled" => DiagnosticStage.Cancelled,
+        "ui-exception" => DiagnosticStage.Failed,
+        _ => DiagnosticStage.Notice
+    }, origin: name);
+
     public static bool PerformanceTraceEnabled =>
         string.Equals(Environment.GetEnvironmentVariable("TUCKPANE_PERF_TRACE"), "1", StringComparison.Ordinal);
-
-    public static void Performance(string message)
+    public static void Performance(string message, [CallerMemberName] string caller = "")
     {
-        if (PerformanceTraceEnabled) Info($"[PERF] {message}");
+        if (PerformanceTraceEnabled) Record(DiagnosticArea.Runtime, DiagnosticStage.Notice, origin: caller);
     }
 
-    public static async Task FlushAsync()
+    public static async Task FlushAsync() => await Writer.FlushAsync(TimeSpan.FromSeconds(2));
+
+    internal static void Record(DiagnosticArea area, DiagnosticStage stage, Guid? operation = null,
+        double? elapsedMs = null, int? count = null, Exception? exception = null, [CallerMemberName] string origin = "")
     {
-        Task drained;
-        lock (FlushGate) drained = _drained.Task;
-        await drained.ConfigureAwait(false);
+        try { Writer.Write(DiagnosticRecord.Create(area, stage, operation, elapsedMs, count, exception, origin)); }
+        catch { /* Diagnostic failures must not change application behavior. */ }
     }
 
-    private static void Write(string level, string message, Exception? exception)
+    internal static Operation Begin(DiagnosticArea area) => new(area);
+    internal sealed class Operation : IDisposable
     {
-        try
+        internal Guid Id { get; } = Guid.NewGuid();
+        private readonly DiagnosticArea _area;
+        private readonly long _started = Stopwatch.GetTimestamp();
+        private DiagnosticStage _result = DiagnosticStage.Interrupted;
+        private Exception? _exception;
+        private int? _count;
+        private bool _disposed;
+        internal Operation(DiagnosticArea area) { _area = area; Record(area, DiagnosticStage.Started, Id); }
+        internal void Complete(int? count = null) { _result = DiagnosticStage.Completed; _count = count; }
+        internal void Fail(Exception exception) { _result = exception is OperationCanceledException ? DiagnosticStage.Cancelled : DiagnosticStage.Failed; _exception = exception; }
+        public void Dispose()
         {
-            AppPaths.EnsureCreated();
-            string line = $"{DateTimeOffset.Now:O} [{level}] {message}{(exception is null ? string.Empty : Environment.NewLine + exception)}{Environment.NewLine}";
-            bool queued;
-            lock (FlushGate)
-            {
-                EnsureWriter();
-                queued = Queue.Writer.TryWrite(line);
-                if (queued && _pending++ == 0) _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            }
-            if (!queued && level == "ERROR")
-            {
-                // Never lose an error solely because the bounded queue is full.
-                lock (Gate) File.AppendAllText(AppPaths.LogPath, line);
-            }
+            if (_disposed) return;
+            _disposed = true;
+            Record(_area, _result, Id, Stopwatch.GetElapsedTime(_started).TotalMilliseconds, _count, _exception);
         }
-        catch
-        {
-            // Logging must never take down the widget.
-        }
-    }
-
-    private static void EnsureWriter()
-    {
-        if (_writerTask is { IsCompleted: false }) return;
-        _writerTask = Task.Run(WriterLoopAsync);
-    }
-
-    private static async Task WriterLoopAsync()
-    {
-        try
-        {
-            await foreach (string first in Queue.Reader.ReadAllAsync().ConfigureAwait(false))
-            {
-                var entries = new List<string>(8) { first };
-                int length = first.Length;
-                while (length < 32 * 1024 && Queue.Reader.TryRead(out string? next))
-                {
-                    entries.Add(next);
-                    length += next.Length;
-                }
-                try
-                {
-                    lock (Gate) File.AppendAllText(AppPaths.LogPath, string.Concat(entries));
-                }
-                catch
-                {
-                    // Logging must never take down the widget.
-                }
-
-                lock (FlushGate)
-                {
-                    _pending = Math.Max(0, _pending - entries.Count);
-                    if (_pending == 0) _drained.TrySetResult();
-                }
-            }
-        }
-        catch
-        {
-            // Logging must never take down the widget.
-            lock (FlushGate)
-            {
-                _pending = 0;
-                _drained.TrySetResult();
-            }
-        }
-    }
-
-    private static TaskCompletionSource CompletedSignal()
-    {
-        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        signal.SetResult();
-        return signal;
     }
 }

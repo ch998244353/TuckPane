@@ -469,6 +469,9 @@ internal static class NativeMethods
     internal static extern int GetSystemMetrics(int index);
 
     [DllImport("user32.dll")]
+    internal static extern uint GetDoubleClickTime();
+
+    [DllImport("user32.dll")]
     internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     [DllImport("user32.dll")]

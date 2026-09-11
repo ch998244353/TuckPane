@@ -1,14 +1,16 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '3.0.2'
+    [string]$Version = '4.0.0',
+    [ValidatePattern('^[a-zA-Z0-9.-]+$')]
+    [string]$OutputName = 'v4.0.0'
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $artifactsRoot = Join-Path $projectRoot 'artifacts'
-$publishRoot = Join-Path $artifactsRoot 'publish\win-x64'
-$releaseRoot = Join-Path $artifactsRoot 'release'
+$publishRoot = Join-Path $artifactsRoot "publish\$OutputName"
+$releaseRoot = Join-Path $artifactsRoot "release\$OutputName"
 $shellArtifactsRoot = Join-Path $artifactsRoot 'shell-extension'
 $webView2Root = Join-Path $artifactsRoot 'dependencies\webview2'
 $webView2Installer = Join-Path $webView2Root 'MicrosoftEdgeWebView2RuntimeInstallerX64.exe'
@@ -47,6 +49,11 @@ function Reset-BuildDirectory([string]$Path) {
 Reset-BuildDirectory $publishRoot
 Reset-BuildDirectory $releaseRoot
 Reset-BuildDirectory $shellArtifactsRoot
+
+$updaterRoot = Join-Path $artifactsRoot 'publish\updater'
+Reset-BuildDirectory $updaterRoot
+dotnet publish (Join-Path $projectRoot 'src\TuckPane.Updater\TuckPane.Updater.csproj') -c Release -o $updaterRoot
+if ($LASTEXITCODE -ne 0) { throw 'Updater publish failed.' }
 
 New-Item -ItemType Directory -Path $webView2Root -Force | Out-Null
 if (-not (Test-WebView2Installer $webView2Installer)) {
@@ -108,6 +115,7 @@ if ($fileVersion.FileVersion -ne "$Version.0" -or $fileVersion.ProductName -ne '
 }
 
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $publishRoot
+Copy-Item -LiteralPath (Join-Path $updaterRoot 'TuckPane.Updater.exe') -Destination $publishRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD-PARTY-NOTICES.md') -Destination $publishRoot
 $publishLicenses = Join-Path $publishRoot 'licenses'
 New-Item -ItemType Directory -Path $publishLicenses -Force | Out-Null
@@ -126,6 +134,13 @@ $privateArtifacts = @(Get-ChildItem -LiteralPath $publishRoot -Recurse -File | W
 if ($privateArtifacts.Count -gt 0) {
     throw "Private/debug files entered the package: $($privateArtifacts.FullName -join ', ')"
 }
+
+$programFiles = [ordered]@{}
+Get-ChildItem -LiteralPath $publishRoot -File -Recurse | Sort-Object FullName | ForEach-Object {
+    $relative = [IO.Path]::GetRelativePath($publishRoot, $_.FullName).Replace('\', '/')
+    $programFiles[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+@{ Version = $Version; Files = $programFiles } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $publishRoot 'update-files.json') -Encoding utf8
 
 $isccCandidates = @(
     (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),

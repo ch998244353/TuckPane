@@ -1,566 +1,1312 @@
-<Window
-    x:Class="TuckPane.ConsoleWindow"
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:controls="using:TuckPane.Controls">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:controls="using:TuckPane.Controls" x:Class="TuckPane.ConsoleWindow">
     <Grid x:Name="ConsoleRoot" Background="Transparent">
         <Grid.Resources>
-            <SolidColorBrush x:Key="ConsolePaneSurfaceBrush" Color="#18FFFFFF" />
-            <SolidColorBrush x:Key="ConsolePageSurfaceBrush" Color="#0AFFFFFF" />
-            <SolidColorBrush x:Key="ConsoleCardSurfaceBrush" Color="#34FFFFFF" />
-            <SolidColorBrush x:Key="ConsoleGeneralRowBorderBrush" Color="#181F1F1F" />
-            <SolidColorBrush x:Key="ConsoleTitleBarSurfaceBrush" Color="#12FFFFFF" />
-            <SolidColorBrush x:Key="ConsoleManageRowSurfaceBrush" Color="#18000000" />
-            <SolidColorBrush x:Key="ConsoleManageRowBorderBrush" Color="#181F1F1F" />
-            <SolidColorBrush x:Key="ConsoleListItemSurfaceBrush" Color="Transparent" />
-            <SolidColorBrush x:Key="ConsoleListItemSelectedSurfaceBrush" Color="#34FFFFFF" />
-            <SolidColorBrush x:Key="ConsolePrimaryTextBrush" Color="#FF1F1F1F" />
-            <SolidColorBrush x:Key="ConsoleSecondaryTextBrush" Color="#FF656060" />
-            <SolidColorBrush x:Key="ConsoleInputSurfaceBrush" Color="#34FFFFFF" />
-            <SolidColorBrush x:Key="ConsoleSelectionAccentBrush" Color="#FF2DDDE8" />
-            <SolidColorBrush x:Key="ConsoleSliderActiveBrush" Color="#FF888B8E" />
-            <SolidColorBrush x:Key="ConsoleSliderInactiveBrush" Color="#FFC1C4C6" />
-            <SolidColorBrush x:Key="ConsoleSliderThumbBorderBrush" Color="#FFB8B7B3" />
-            <SolidColorBrush x:Key="ConsoleSliderFocusPrimaryBrush" Color="#FF615F5B" />
-            <SolidColorBrush x:Key="ConsoleSliderFocusSecondaryBrush" Color="#FFFAF9F6" />
-            <SolidColorBrush x:Key="SliderThumbBackground" Color="#FFFAF9F6" />
-            <SolidColorBrush x:Key="SliderThumbBackgroundPointerOver" Color="#FFFAF9F6" />
-            <SolidColorBrush x:Key="SliderThumbBackgroundPressed" Color="#FFFAF9F6" />
-            <SolidColorBrush x:Key="SliderThumbBackgroundDisabled" Color="#73FAF9F6" />
-            <SolidColorBrush x:Key="SliderThumbBorderBrush" Color="#FFB8B7B3" />
-            <SolidColorBrush x:Key="SliderTrackFill" Color="#FFC1C4C6" />
-            <SolidColorBrush x:Key="SliderTrackFillPointerOver" Color="#FFC1C4C6" />
-            <SolidColorBrush x:Key="SliderTrackFillPressed" Color="#FFC1C4C6" />
-            <SolidColorBrush x:Key="SliderTrackFillDisabled" Color="#73C1C4C6" />
-            <SolidColorBrush x:Key="SliderTrackValueFill" Color="#FF888B8E" />
-            <SolidColorBrush x:Key="SliderTrackValueFillPointerOver" Color="#FF888B8E" />
-            <SolidColorBrush x:Key="SliderTrackValueFillPressed" Color="#FF888B8E" />
-            <SolidColorBrush x:Key="SliderTrackValueFillDisabled" Color="#73888B8E" />
-            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#18FFFFFF" />
-            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent" />
-            <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent" />
+            <SolidColorBrush Color="#F5F5F7" x:Key="ToggleSwitchKnobFillOffDisabled"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ToggleSwitchStrokeOffDisabled"/>
+            <SolidColorBrush Color="#E5E5EA" x:Key="ToggleSwitchFillOffDisabled"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ToggleButtonBorderBrushCheckedDisabled"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ToggleSwitchStrokeOnDisabled"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ToggleSwitchKnobFillOffPressed"/>
+            <SolidColorBrush Color="#C7C7CC" x:Key="ToggleSwitchStrokeOffPressed"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ToggleSwitchFillOffPressed"/>
+            <SolidColorBrush Color="#0062CC" x:Key="ToggleButtonBorderBrushCheckedPressed"/>
+            <SolidColorBrush Color="#0062CC" x:Key="ToggleSwitchStrokeOnPressed"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ToggleSwitchKnobFillOffPointerOver"/>
+            <SolidColorBrush Color="#C7C7CC" x:Key="ToggleSwitchStrokeOffPointerOver"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ToggleSwitchFillOffPointerOver"/>
+            <SolidColorBrush Color="#006EE6" x:Key="ToggleButtonBorderBrushCheckedPointerOver"/>
+            <SolidColorBrush Color="#006EE6" x:Key="ToggleSwitchStrokeOnPointerOver"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ToggleSwitchKnobFillOff"/>
+            <SolidColorBrush Color="#C7C7CC" x:Key="ToggleSwitchStrokeOff"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ToggleSwitchFillOff"/>
+            <SolidColorBrush Color="#007AFF" x:Key="ToggleButtonBorderBrushChecked"/>
+            <SolidColorBrush Color="#007AFF" x:Key="ToggleSwitchStrokeOn"/>
+            <SolidColorBrush Color="#007AFF" x:Key="NavigationViewSelectionIndicatorForeground"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="NavigationViewItemForegroundSelectedDisabled"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="NavigationViewItemForegroundSelectedPressed"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="NavigationViewItemForegroundSelectedPointerOver"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="NavigationViewItemForegroundSelected"/>
+            <SolidColorBrush Color="#F5F5F7" x:Key="NavigationViewItemBackgroundSelectedDisabled"/>
+            <SolidColorBrush Color="#D1E4FF" x:Key="NavigationViewItemBackgroundSelectedPressed"/>
+            <SolidColorBrush Color="#DEECFF" x:Key="NavigationViewItemBackgroundSelectedPointerOver"/>
+            <SolidColorBrush Color="#EAF3FF" x:Key="NavigationViewItemBackgroundSelected"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ToggleButtonForegroundCheckedDisabled"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ToggleButtonForegroundCheckedPressed"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ToggleButtonForegroundCheckedPointerOver"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ToggleButtonForegroundChecked"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ToggleSwitchKnobFillOnDisabled"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ToggleSwitchKnobFillOnPressed"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ToggleSwitchKnobFillOnPointerOver"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ToggleSwitchKnobFillOn"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ToggleButtonBackgroundCheckedDisabled"/>
+            <SolidColorBrush Color="#0062CC" x:Key="ToggleButtonBackgroundCheckedPressed"/>
+            <SolidColorBrush Color="#006EE6" x:Key="ToggleButtonBackgroundCheckedPointerOver"/>
+            <SolidColorBrush Color="#007AFF" x:Key="ToggleButtonBackgroundChecked"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ToggleSwitchFillOnDisabled"/>
+            <SolidColorBrush Color="#0062CC" x:Key="ToggleSwitchFillOnPressed"/>
+            <SolidColorBrush Color="#006EE6" x:Key="ToggleSwitchFillOnPointerOver"/>
+            <SolidColorBrush Color="#007AFF" x:Key="ToggleSwitchFillOn"/>
+            <SolidColorBrush Color="#EAF3FF" x:Key="SystemControlHighlightListAccentLowBrush"/>
+            <SolidColorBrush Color="#007AFF" x:Key="SystemControlHighlightAccentBrush"/>
+            <SolidColorBrush Color="#E5E5EA" x:Key="ComboBoxDropDownBorderBrush"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="ComboBoxDropDownBackground"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="TextControlForegroundFocused"/>
+            <SolidColorBrush Color="#FFFFFF" x:Key="TextControlBackgroundFocused"/>
+            <SolidColorBrush Color="#007AFF" x:Key="TextControlBorderBrushFocused"/>
+            <SolidColorBrush Color="#E5E5EA" x:Key="ToggleButtonBorderBrushDisabled"/>
+            <SolidColorBrush Color="#8E8E93" x:Key="ToggleButtonForegroundDisabled"/>
+            <SolidColorBrush Color="#F5F5F7" x:Key="ToggleButtonBackgroundDisabled"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ToggleButtonBorderBrushPressed"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="ToggleButtonForegroundPressed"/>
+            <SolidColorBrush Color="#E2E2E7" x:Key="ToggleButtonBackgroundPressed"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ToggleButtonBorderBrushPointerOver"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="ToggleButtonForegroundPointerOver"/>
+            <SolidColorBrush Color="#EBEBEF" x:Key="ToggleButtonBackgroundPointerOver"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ToggleButtonBorderBrush"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="ToggleButtonForeground"/>
+            <SolidColorBrush Color="#F5F5F7" x:Key="ToggleButtonBackground"/>
+            <SolidColorBrush Color="#E5E5EA" x:Key="TextControlBorderBrushDisabled"/>
+            <SolidColorBrush Color="#8E8E93" x:Key="TextControlForegroundDisabled"/>
+            <SolidColorBrush Color="#F5F5F7" x:Key="TextControlBackgroundDisabled"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="TextControlBorderBrushPressed"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="TextControlForegroundPressed"/>
+            <SolidColorBrush Color="#E2E2E7" x:Key="TextControlBackgroundPressed"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="TextControlBorderBrushPointerOver"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="TextControlForegroundPointerOver"/>
+            <SolidColorBrush Color="#EBEBEF" x:Key="TextControlBackgroundPointerOver"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="TextControlBorderBrush"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="TextControlForeground"/>
+            <SolidColorBrush Color="#F5F5F7" x:Key="TextControlBackground"/>
+            <SolidColorBrush Color="#E5E5EA" x:Key="ComboBoxBorderBrushDisabled"/>
+            <SolidColorBrush Color="#8E8E93" x:Key="ComboBoxForegroundDisabled"/>
+            <SolidColorBrush Color="#F5F5F7" x:Key="ComboBoxBackgroundDisabled"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ComboBoxBorderBrushPressed"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="ComboBoxForegroundPressed"/>
+            <SolidColorBrush Color="#E2E2E7" x:Key="ComboBoxBackgroundPressed"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ComboBoxBorderBrushPointerOver"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="ComboBoxForegroundPointerOver"/>
+            <SolidColorBrush Color="#EBEBEF" x:Key="ComboBoxBackgroundPointerOver"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ComboBoxBorderBrush"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="ComboBoxForeground"/>
+            <SolidColorBrush Color="#F5F5F7" x:Key="ComboBoxBackground"/>
+            <SolidColorBrush Color="#E5E5EA" x:Key="ButtonBorderBrushDisabled"/>
+            <SolidColorBrush Color="#8E8E93" x:Key="ButtonForegroundDisabled"/>
+            <SolidColorBrush Color="#F5F5F7" x:Key="ButtonBackgroundDisabled"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ButtonBorderBrushPressed"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="ButtonForegroundPressed"/>
+            <SolidColorBrush Color="#E2E2E7" x:Key="ButtonBackgroundPressed"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ButtonBorderBrushPointerOver"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="ButtonForegroundPointerOver"/>
+            <SolidColorBrush Color="#EBEBEF" x:Key="ButtonBackgroundPointerOver"/>
+            <SolidColorBrush Color="#D1D1D6" x:Key="ButtonBorderBrush"/>
+            <SolidColorBrush Color="#1D1D1F" x:Key="ButtonForeground"/>
+            <SolidColorBrush Color="#F5F5F7" x:Key="ButtonBackground"/>
+            <SolidColorBrush x:Key="ConsolePaneSurfaceBrush" Color="#F5F5F7"/>
+            <SolidColorBrush x:Key="ConsolePageSurfaceBrush" Color="#F5F5F7"/>
+            <SolidColorBrush x:Key="ConsoleCardSurfaceBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="ConsoleGeneralRowBorderBrush" Color="#E5E5EA"/>
+            <SolidColorBrush x:Key="ConsoleTitleBarSurfaceBrush" Color="#F5F5F7"/>
+            <SolidColorBrush x:Key="ConsoleManageRowSurfaceBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="ConsoleManageRowBorderBrush" Color="#E5E5EA"/>
+            <SolidColorBrush x:Key="ConsoleListItemSurfaceBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="ConsoleListItemSelectedSurfaceBrush" Color="#EAF3FF"/>
+            <SolidColorBrush x:Key="ListViewItemBackground" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="#EBEBEF"/>
+            <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="#E2E2E7"/>
+            <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#EAF3FF"/>
+            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedUnfocused" Color="#EAF3FF"/>
+            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#EAF3FF"/>
+            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="#EAF3FF"/>
+            <SolidColorBrush x:Key="ListViewItemBackgroundDisabled" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="ConsolePrimaryTextBrush" Color="#1D1D1F"/>
+            <SolidColorBrush x:Key="ConsoleSecondaryTextBrush" Color="#6E6E73"/>
+            <SolidColorBrush x:Key="ConsoleInputSurfaceBrush" Color="#F5F5F7"/>
+            <SolidColorBrush x:Key="ConsoleSelectionAccentBrush" Color="#007AFF"/>
+            <SolidColorBrush x:Key="ConsoleSliderActiveBrush" Color="#007AFF"/>
+            <SolidColorBrush x:Key="ConsoleSliderInactiveBrush" Color="#D1D1D6"/>
+            <SolidColorBrush x:Key="ConsoleSliderThumbBorderBrush" Color="#C7C7CC"/>
+            <SolidColorBrush x:Key="ConsoleSliderFocusPrimaryBrush" Color="#007AFF"/>
+            <SolidColorBrush x:Key="ConsoleSliderFocusSecondaryBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="SliderThumbBackground" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="SliderThumbBackgroundPointerOver" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="SliderThumbBackgroundPressed" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="SliderThumbBackgroundDisabled" Color="#FFF5F5F7"/>
+            <SolidColorBrush x:Key="SliderThumbBorderBrush" Color="#C7C7CC"/>
+            <SolidColorBrush x:Key="SliderTrackFill" Color="#D1D1D6"/>
+            <SolidColorBrush x:Key="SliderTrackFillPointerOver" Color="#D1D1D6"/>
+            <SolidColorBrush x:Key="SliderTrackFillPressed" Color="#D1D1D6"/>
+            <SolidColorBrush x:Key="SliderTrackFillDisabled" Color="#E5E5EA"/>
+            <SolidColorBrush x:Key="SliderTrackValueFill" Color="#007AFF"/>
+            <SolidColorBrush x:Key="SliderTrackValueFillPointerOver" Color="#007AFF"/>
+            <SolidColorBrush x:Key="SliderTrackValueFillPressed" Color="#007AFF"/>
+            <SolidColorBrush x:Key="SliderTrackValueFillDisabled" Color="#D1D1D6"/>
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#F5F5F7"/>
+            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent"/>
+            <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent"/>
             <Style x:Key="Row" TargetType="Border">
-                <Setter Property="MinHeight" Value="46" />
-                <Setter Property="Padding" Value="12,5" />
-                <Setter Property="Margin" Value="0,0,0,6" />
-                <Setter Property="Background" Value="{StaticResource ConsoleManageRowSurfaceBrush}" />
-                <Setter Property="BorderBrush" Value="{StaticResource ConsoleManageRowBorderBrush}" />
-                <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="10" />
+                <Setter Property="MinHeight" Value="48"/>
+                <Setter Property="Padding" Value="16,8"/>
+                <Setter Property="Margin" Value="0"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="{StaticResource ConsoleGeneralRowBorderBrush}"/>
+                <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                <Setter Property="CornerRadius" Value="0"/>
             </Style>
-            <Style x:Key="GeneralRow" TargetType="Border" BasedOn="{StaticResource Row}">
-                <Setter Property="BorderBrush" Value="{StaticResource ConsoleGeneralRowBorderBrush}" />
-                <Setter Property="BorderThickness" Value="1" />
-            </Style>
+            <Style x:Key="GeneralRow" TargetType="Border" BasedOn="{StaticResource Row}"/>
             <Style x:Key="Pct" TargetType="controls:ConsoleSlider">
-                <Setter Property="StepFrequency" Value="0.01" />
-                <Setter Property="SmallChange" Value="0.01" />
-                <Setter Property="Foreground" Value="{StaticResource ConsoleSliderActiveBrush}" />
+                <Setter Property="StepFrequency" Value="0.01"/>
+                <Setter Property="SmallChange" Value="0.01"/>
+                <Setter Property="Foreground" Value="{StaticResource ConsoleSliderActiveBrush}"/>
             </Style>
             <Style x:Key="FlatTextBoxStyle" TargetType="TextBox">
-                <Setter Property="Background" Value="{StaticResource ConsoleInputSurfaceBrush}" />
-                <Setter Property="BorderBrush" Value="Transparent" />
-                <Setter Property="BorderThickness" Value="0" />
-                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Background" Value="{StaticResource ConsoleInputSurfaceBrush}"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource TextControlBorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="8"/>
+                <Setter Property="MinHeight" Value="32"/>
             </Style>
             <Style TargetType="Button">
-                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="CornerRadius" Value="8"/>
+                <Setter Property="MinHeight" Value="32"/>
+                <Setter Property="Padding" Value="12,5"/>
             </Style>
             <Style x:Key="NeutralActionButtonStyle" TargetType="Button">
-                <Setter Property="Background" Value="{StaticResource ConsoleCardSurfaceBrush}" />
-                <Setter Property="BorderBrush" Value="{StaticResource ConsoleManageRowBorderBrush}" />
-                <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="8" />
-                <Setter Property="Foreground" Value="{StaticResource ConsolePrimaryTextBrush}" />
+                <Setter Property="Background" Value="{StaticResource ConsoleCardSurfaceBrush}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource ConsoleManageRowBorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="8"/>
+                <Setter Property="Foreground" Value="{StaticResource ConsolePrimaryTextBrush}"/>
+                <Setter Property="MinHeight" Value="32"/>
             </Style>
             <Style TargetType="ComboBox">
-                <Setter Property="Background" Value="{StaticResource ConsoleInputSurfaceBrush}" />
-                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Background" Value="{StaticResource ConsoleInputSurfaceBrush}"/>
+                <Setter Property="CornerRadius" Value="8"/>
+                <Setter Property="MinHeight" Value="32"/>
             </Style>
             <Style TargetType="ComboBoxItem">
-                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="CornerRadius" Value="6"/>
             </Style>
             <Style TargetType="controls:ConsoleSlider">
-                <Setter Property="Background" Value="{StaticResource ConsoleSliderInactiveBrush}" />
-                <Setter Property="Foreground" Value="{StaticResource ConsoleSliderActiveBrush}" />
-                <Setter Property="FocusVisualPrimaryBrush" Value="{StaticResource ConsoleSliderFocusPrimaryBrush}" />
-                <Setter Property="FocusVisualSecondaryBrush" Value="{StaticResource ConsoleSliderFocusSecondaryBrush}" />
+                <Setter Property="Background" Value="{StaticResource ConsoleSliderInactiveBrush}"/>
+                <Setter Property="Foreground" Value="{StaticResource ConsoleSliderActiveBrush}"/>
+                <Setter Property="FocusVisualPrimaryBrush" Value="{StaticResource ConsoleSliderFocusPrimaryBrush}"/>
+                <Setter Property="FocusVisualSecondaryBrush" Value="{StaticResource ConsoleSliderFocusSecondaryBrush}"/>
             </Style>
             <CornerRadius x:Key="ControlCornerRadius">8</CornerRadius>
             <CornerRadius x:Key="OverlayCornerRadius">10</CornerRadius>
-            <Style x:Key="ManageRow" TargetType="Border" BasedOn="{StaticResource Row}">
-                <Setter Property="Background" Value="{StaticResource ConsoleManageRowSurfaceBrush}" />
-                <Setter Property="BorderBrush" Value="{StaticResource ConsoleManageRowBorderBrush}" />
-                <Setter Property="BorderThickness" Value="1" />
+            <Style x:Key="ManageRow" TargetType="Border" BasedOn="{StaticResource Row}"/>
+            <Style TargetType="Border" x:Key="SettingsGroup">
+                <Setter Property="Background" Value="{StaticResource ConsoleCardSurfaceBrush}"/>
+                <Setter Property="CornerRadius" Value="12"/>
+                <Setter Property="Padding" Value="0,4"/>
+                <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            </Style>
+            <Style TargetType="TextBlock">
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+            </Style>
+            <Style TargetType="ToggleSwitch">
+                <Setter Property="MinWidth" Value="40"/>
+                <Setter Property="OnContent" Value=""/>
+                <Setter Property="OffContent" Value=""/>
+                <Setter Property="HorizontalAlignment" Value="Right"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+            </Style>
+            <Style TargetType="ToggleButton">
+                <Setter Property="MinHeight" Value="32"/>
+                <Setter Property="CornerRadius" Value="8"/>
             </Style>
         </Grid.Resources>
-
         <Grid.RowDefinitions>
-            <RowDefinition Height="48" />
-            <RowDefinition Height="*" />
+            <RowDefinition Height="48"/>
+            <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-
-        <SystemBackdropElement
-            x:Name="ConsoleSurfaceHost"
-            Grid.RowSpan="2"
-            IsHitTestVisible="False" />
-
-        <Grid
-            Background="{StaticResource ConsoleTitleBarSurfaceBrush}">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="46" />
-                <ColumnDefinition Width="46" />
-            </Grid.ColumnDefinitions>
-            <Grid
-                x:Name="TitleBarDragRegion"
-                Padding="18,0"
-                Background="Transparent">
-                <StackPanel VerticalAlignment="Center" Orientation="Horizontal" Spacing="10">
-                    <Image Width="22" Height="22" Source="ms-appx:///Assets/TuckPane.png" />
-                    <TextBlock x:Name="ConsoleTitleText" FontSize="13" FontWeight="SemiBold" Tag="loc:AppTitle" Text="TuckPane" />
-                </StackPanel>
+        <SystemBackdropElement x:Name="ConsoleSurfaceHost" Grid.RowSpan="2" IsHitTestVisible="False"/>
+        <!-- Only the content is clipped here; the backdrop and edge each
+             draw their own rounded outline without a second alpha clip. -->
+        <Grid x:Name="ConsoleContentLayer" Grid.RowSpan="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="48"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Grid Background="{StaticResource ConsoleTitleBarSurfaceBrush}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="46"/>
+                    <ColumnDefinition Width="46"/>
+                </Grid.ColumnDefinitions>
+                <Grid x:Name="TitleBarDragRegion" Padding="18,0" Background="Transparent">
+                    <StackPanel VerticalAlignment="Center" Orientation="Horizontal" Spacing="10">
+                        <Image Width="22" Height="22" Source="ms-appx:///Assets/TuckPane.png"/>
+                        <TextBlock x:Name="ConsoleTitleText" FontSize="13" FontWeight="SemiBold" Tag="loc:AppTitle" Text="TuckPane" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                    </StackPanel>
+                </Grid>
+                <Button x:Name="ConsoleMinimizeButton" Grid.Column="1" Width="46" Height="48" Padding="0" Background="Transparent" BorderThickness="0" Click="ConsoleMinimizeButton_Click" CornerRadius="0" HorizontalContentAlignment="Center" PointerCanceled="ConsoleMinimizeButton_PointerReleased" PointerEntered="ConsoleMinimizeButton_PointerEntered" PointerExited="ConsoleMinimizeButton_PointerExited" PointerPressed="ConsoleMinimizeButton_PointerPressed" PointerReleased="ConsoleMinimizeButton_PointerReleased" VerticalContentAlignment="Center">
+                    <FontIcon FontSize="10" Glyph=""/>
+                </Button>
+                <Button x:Name="ConsoleCloseButton" Grid.Column="2" Width="46" Height="48" Padding="0" Background="Transparent" BorderThickness="0" Click="ConsoleCloseButton_Click" CornerRadius="0" HorizontalContentAlignment="Center" PointerCanceled="ConsoleCloseButton_PointerReleased" PointerEntered="ConsoleCloseButton_PointerEntered" PointerExited="ConsoleCloseButton_PointerExited" PointerPressed="ConsoleCloseButton_PointerPressed" PointerReleased="ConsoleCloseButton_PointerReleased" VerticalContentAlignment="Center">
+                    <FontIcon FontSize="12" Glyph=""/>
+                </Button>
             </Grid>
-            <Button
-                x:Name="ConsoleMinimizeButton"
-                Grid.Column="1"
-                Width="46"
-                Height="48"
-                Padding="0"
-                Background="Transparent"
-                BorderThickness="0"
-                Click="ConsoleMinimizeButton_Click"
-                CornerRadius="0"
-                HorizontalContentAlignment="Center"
-                PointerCanceled="ConsoleMinimizeButton_PointerReleased"
-                PointerEntered="ConsoleMinimizeButton_PointerEntered"
-                PointerExited="ConsoleMinimizeButton_PointerExited"
-                PointerPressed="ConsoleMinimizeButton_PointerPressed"
-                PointerReleased="ConsoleMinimizeButton_PointerReleased"
-                VerticalContentAlignment="Center">
-                <FontIcon FontSize="10" Glyph="&#xE921;" />
-            </Button>
-            <Button
-                x:Name="ConsoleCloseButton"
-                Grid.Column="2"
-                Width="46"
-                Height="48"
-                Padding="0"
-                Background="Transparent"
-                BorderThickness="0"
-                Click="ConsoleCloseButton_Click"
-                CornerRadius="0"
-                HorizontalContentAlignment="Center"
-                PointerCanceled="ConsoleCloseButton_PointerReleased"
-                PointerEntered="ConsoleCloseButton_PointerEntered"
-                PointerExited="ConsoleCloseButton_PointerExited"
-                PointerPressed="ConsoleCloseButton_PointerPressed"
-                PointerReleased="ConsoleCloseButton_PointerReleased"
-                VerticalContentAlignment="Center">
-                <FontIcon FontSize="12" Glyph="&#xE8BB;" />
-            </Button>
-        </Grid>
-
-        <NavigationView
-            x:Name="RootNavigation"
-            Grid.Row="1"
-            AlwaysShowHeader="False"
-            Background="Transparent"
-            IsBackButtonVisible="Collapsed"
-            IsPaneOpen="True"
-            IsPaneToggleButtonVisible="False"
-            IsSettingsVisible="False"
-            OpenPaneLength="148"
-            PaneDisplayMode="Left"
-            SelectionChanged="RootNavigation_SelectionChanged">
-            <NavigationView.MenuItems>
-                <NavigationViewItem x:Name="SystemNavItem" Height="44" Content="系统" Tag="system">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Setting" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="DisplayNavItem" Height="44" Content="显示" Tag="display">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="View" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="InteractionNavItem" Height="44" Content="交互" Tag="interaction">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="TouchPointer" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="ThemeNavItem" Height="44" Content="主题" Tag="theme">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="FontColor" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="AddNavItem" Height="44" Content="添加" Tag="add">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Add" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="ManageNavItem" Height="44" Content="管理" Tag="manage">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Manage" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-            </NavigationView.MenuItems>
-
-            <Grid x:Name="SettingsContentRoot" Padding="18,6,18,18" Background="{StaticResource ConsolePageSurfaceBrush}">
-                <InfoBar x:Name="ConsoleInfoBar" Canvas.ZIndex="5" VerticalAlignment="Top" IsClosable="True" IsOpen="False" />
-
-                <ScrollViewer
-                    x:Name="SystemPage"
-                    Margin="0,22,0,0"
-                    Background="Transparent"
-                    VerticalScrollBarVisibility="Hidden"
-                    Visibility="Collapsed">
-                    <StackPanel Width="420" HorizontalAlignment="Left" Spacing="16">
-                        <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:SystemTitle" Text="系统" />
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock FontSize="15" Tag="loc:StartupTitle" Text="开机时启动 TuckPane" />
-                                <ToggleSwitch x:Name="StartupToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="StartupToggle_Toggled" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12" RowSpacing="6">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:PerformanceProfileTitle" Text="性能档位" />
-                                <ComboBox x:Name="PerformanceProfileCombo" Grid.Column="1" Width="150" Height="34" AutomationProperties.AutomationId="PerformanceProfileCombo" SelectionChanged="PerformanceProfileCombo_SelectionChanged">
-                                    <ComboBoxItem Tag="loc:PerformanceProfilePowerSaver" Content="节能" />
-                                    <ComboBoxItem Tag="loc:PerformanceProfileBalanced" Content="平衡" />
-                                    <ComboBoxItem Tag="loc:PerformanceProfileHighPerformance" Content="高性能" />
-                                </ComboBox>
-                                <TextBlock x:Name="PerformanceProfileDescription" Grid.Row="1" Grid.ColumnSpan="2" Opacity=".68" TextWrapping="Wrap" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:MoveOrganizerFilesOnDeleteTitle" Text="删除收纳窗时将文件移到桌面" />
-                                <ToggleSwitch x:Name="MoveOrganizerFilesOnDeleteToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="MoveOrganizerFilesOnDeleteToggle" Toggled="MoveOrganizerFilesOnDeleteToggle_Toggled" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:LanguageLabel" Text="语言" />
-                                <ComboBox x:Name="LanguageCombo" Grid.Column="1" Width="150" Height="34" SelectionChanged="LanguageCombo_SelectionChanged">
-                                    <ComboBoxItem Tag="loc:LanguageChinese" Content="简体中文" />
-                                    <ComboBoxItem Tag="loc:LanguageEnglish" Content="English" />
-                                    <ComboBoxItem Tag="loc:LanguageJapanese" Content="日本語" />
-                                </ComboBox>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid RowSpacing="10">
-                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <StackPanel Spacing="2">
-                                    <TextBlock FontSize="15" Tag="loc:DefaultStorageDirectoryTitle" Text="默认存储与目录" />
-                                    <TextBlock Opacity=".68" Tag="loc:DefaultStorageDirectoryDescription" Text="仅影响之后新建的收纳窗" TextWrapping="Wrap" />
+            <NavigationView x:Name="RootNavigation" Grid.Row="1" AlwaysShowHeader="False" Background="Transparent" IsBackButtonVisible="Collapsed" IsPaneOpen="True" IsPaneToggleButtonVisible="False" IsSettingsVisible="False" OpenPaneLength="148" PaneDisplayMode="Left" SelectionChanged="RootNavigation_SelectionChanged">
+                <NavigationView.MenuItems>
+                    <NavigationViewItem x:Name="SystemNavItem" Height="44" Content="系统" Tag="system">
+                        <NavigationViewItem.Icon>
+                            <SymbolIcon Symbol="Setting"/>
+                        </NavigationViewItem.Icon>
+                    </NavigationViewItem>
+                    <NavigationViewItem x:Name="DisplayNavItem" Height="44" Content="显示" Tag="display">
+                        <NavigationViewItem.Icon>
+                            <SymbolIcon Symbol="View"/>
+                        </NavigationViewItem.Icon>
+                    </NavigationViewItem>
+                    <NavigationViewItem x:Name="MenuNavItem" Height="44" Content="右键菜单" Tag="menus">
+                        <NavigationViewItem.Icon>
+                            <SymbolIcon Symbol="List"/>
+                        </NavigationViewItem.Icon>
+                    </NavigationViewItem>
+                    <NavigationViewItem x:Name="InteractionNavItem" Height="44" Content="交互" Tag="interaction">
+                        <NavigationViewItem.Icon>
+                            <SymbolIcon Symbol="TouchPointer"/>
+                        </NavigationViewItem.Icon>
+                    </NavigationViewItem>
+                    <NavigationViewItem x:Name="ThemeNavItem" Height="44" Content="主题" Tag="theme">
+                        <NavigationViewItem.Icon>
+                            <SymbolIcon Symbol="FontColor"/>
+                        </NavigationViewItem.Icon>
+                    </NavigationViewItem>
+                    <NavigationViewItem x:Name="ManageNavItem" Height="44" Content="收纳窗" Tag="manage">
+                        <NavigationViewItem.Icon>
+                            <SymbolIcon Symbol="Manage"/>
+                        </NavigationViewItem.Icon>
+                    </NavigationViewItem>
+                    <NavigationViewItem x:Name="StationNavItem" Height="44" Content="中转站" Tag="stations">
+                        <NavigationViewItem.Icon>
+                            <SymbolIcon Symbol="Switch"/>
+                        </NavigationViewItem.Icon>
+                    </NavigationViewItem>
+                    <NavigationViewItem x:Name="DockNavItem" Height="44" Content="Dock 栏" Tag="docks">
+                        <NavigationViewItem.Icon>
+                            <SymbolIcon Symbol="AllApps"/>
+                        </NavigationViewItem.Icon>
+                    </NavigationViewItem>
+                    <NavigationViewItem x:Name="UpdateNavItem" Height="44" Content="更新" Tag="update">
+                        <NavigationViewItem.Icon><SymbolIcon Symbol="Download"/></NavigationViewItem.Icon>
+                        <NavigationViewItem.InfoBadge><InfoBadge x:Name="UpdateBadge" Value="1" Visibility="Collapsed"/></NavigationViewItem.InfoBadge>
+                    </NavigationViewItem>
+                </NavigationView.MenuItems>
+                <Grid x:Name="SettingsContentRoot" Padding="18,6,18,18" Background="{StaticResource ConsolePageSurfaceBrush}">
+                    <InfoBar x:Name="ConsoleInfoBar" Canvas.ZIndex="5" VerticalAlignment="Top" IsClosable="True" IsOpen="False"/>
+                    <ScrollViewer x:Name="UpdatePage" Margin="0,22,0,0" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Spacing="20" MaxWidth="620" HorizontalAlignment="Left" Width="{Binding ViewportWidth, ElementName=UpdatePage}">
+                            <TextBlock Tag="loc:NavUpdate" Text="更新" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded" Padding="18">
+                                <StackPanel Spacing="12">
+                                    <TextBlock x:Name="UpdateVersionText" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                    <TextBlock x:Name="UpdateStatusText" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                    <TextBlock x:Name="UpdateLastCheckText" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                    <TextBlock Tag="loc:UpdateDescription" Text="每天自动检查正式版。更新前保存数据并备份配置，完成后重新启动。" TextWrapping="Wrap" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                    <ProgressBar x:Name="UpdateProgress" Minimum="0" Maximum="100" Visibility="Collapsed"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button x:Name="UpdateCheckButton" Tag="loc:UpdateCheck" Content="检查更新" Click="UpdateCheck_Click"/>
+                                        <Button x:Name="UpdateInstallButton" Tag="loc:UpdateInstall" Content="更新并重启" Click="UpdateInstall_Click"/>
+                                        <Button x:Name="UpdateCancelButton" Tag="loc:UpdateCancel" Content="取消下载" Click="UpdateCancel_Click" Visibility="Collapsed"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="UpdateErrorText" TextWrapping="Wrap" IsTextSelectionEnabled="True" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                 </StackPanel>
-                                <TextBox x:Name="DefaultStorageDirectoryBox" Grid.Row="1" Height="32" IsReadOnly="True" Style="{StaticResource FlatTextBoxStyle}" AutomationProperties.AutomationId="DefaultStorageDirectoryBox" />
-                                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
-                                    <Button Height="30" Click="ChooseDefaultStorageDirectoryButton_Click" Content="选择目录" Tag="loc:ChooseFolder" />
-                                    <Button Height="30" Click="ResetDefaultStorageDirectoryButton_Click" Content="恢复默认" Tag="loc:UseDefaultLocation" />
-                                </StackPanel>
-                            </Grid>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
-
-                <ScrollViewer
-                    x:Name="DisplayPage"
-                    Margin="0,22,0,0"
-                    Background="Transparent"
-                    VerticalScrollBarVisibility="Hidden"
-                    Visibility="Collapsed">
-                    <StackPanel Width="420" HorizontalAlignment="Left" Spacing="16">
-                        <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:DisplaySettingsTitle" Text="显示" />
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:NoteAlwaysOnTopTitle" Text="便签与待办永远处于最高层" />
-                                <ToggleSwitch x:Name="NoteAlwaysOnTopToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="NoteAlwaysOnTopToggle" Toggled="NoteAlwaysOnTopToggle_Toggled" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:EdgeGlowTitle" Text="显示边缘弧光" />
-                                <ToggleSwitch x:Name="EdgeGlowToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="EdgeGlowToggle" Toggled="EdgeGlowToggle_Toggled" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:OrganizerTextColorTitle" Text="收纳窗文字颜色" />
-                                <ComboBox x:Name="OrganizerTextColorCombo" Grid.Column="1" Width="140" Height="32" AutomationProperties.AutomationId="OrganizerTextColorCombo" SelectionChanged="OrganizerTextColorCombo_SelectionChanged">
-                                    <ComboBoxItem x:Name="OrganizerTextColorAuto" Tag="Auto" Content="自动" />
-                                    <ComboBoxItem x:Name="OrganizerTextColorWhite" Tag="White" Content="白色" />
-                                    <ComboBoxItem x:Name="OrganizerTextColorBlack" Tag="Black" Content="黑色" />
-                                </ComboBox>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12" RowSpacing="10">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <TextBlock FontSize="15" Tag="loc:UniformFloatingCompactScaleTitle" Text="统一悬浮模式入口大小" />
-                                <ToggleSwitch x:Name="UniformFloatingCompactScaleToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="UniformFloatingCompactScaleToggle" Toggled="UniformCompactScaleToggle_Toggled" />
-                                <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
-                                    <TextBlock VerticalAlignment="Center" Tag="loc:CompactScaleLabel" Text="入口整体" />
-                                    <controls:ConsoleSlider x:Name="UniformFloatingCompactScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1.2" Maximum="3" Value="1.56" AutomationProperties.AutomationId="UniformFloatingCompactScaleSlider" ValueChanged="UniformCompactScaleSlider_ValueChanged" />
-                                    <TextBlock x:Name="UniformFloatingCompactScalePercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
-                                </Grid>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12" RowSpacing="10">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <TextBlock FontSize="15" Tag="loc:UniformPositionedCompactScaleTitle" Text="统一定位模式入口大小" />
-                                <ToggleSwitch x:Name="UniformPositionedCompactScaleToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="UniformPositionedCompactScaleToggle" Toggled="UniformCompactScaleToggle_Toggled" />
-                                <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
-                                    <TextBlock VerticalAlignment="Center" Tag="loc:CompactScaleLabel" Text="入口整体" />
-                                    <controls:ConsoleSlider x:Name="UniformPositionedCompactScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1.2" Maximum="1.8" Value="1.56" AutomationProperties.AutomationId="UniformPositionedCompactScaleSlider" ValueChanged="UniformCompactScaleSlider_ValueChanged" />
-                                    <TextBlock x:Name="UniformPositionedCompactScalePercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
-                                </Grid>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="10">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="150" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:CompactNameScaleTitle" Text="收起名称大小" />
-                                <controls:ConsoleSlider x:Name="CompactNameScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".6" Maximum="1" Value="1" AutomationProperties.AutomationId="CompactNameScaleSlider" ValueChanged="NameScaleSlider_ValueChanged" />
-                                <TextBlock x:Name="CompactNameScalePercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="10">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="150" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:ExpandedNameScaleTitle" Text="展开后名称大小" />
-                                <controls:ConsoleSlider x:Name="ExpandedNameScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".6" Maximum="1" Value="1" AutomationProperties.AutomationId="ExpandedNameScaleSlider" ValueChanged="NameScaleSlider_ValueChanged" />
-                                <TextBlock x:Name="ExpandedNameScalePercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
-                            </Grid>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
-
-                <ScrollViewer
-                    x:Name="InteractionPage"
-                    Margin="0,22,0,0"
-                    Background="Transparent"
-                    VerticalScrollBarVisibility="Hidden"
-                    Visibility="Collapsed">
-                    <StackPanel Width="420" HorizontalAlignment="Left" Spacing="16">
-                        <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:InteractionTitle" Text="交互" />
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock FontSize="15" Tag="loc:CollapseOutsideTitle" Text="点击窗口外自动收缩" />
-                                <ToggleSwitch x:Name="CollapseOutsideToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="CollapseOutsideToggle_Toggled" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock FontSize="15" Tag="loc:WindowAlignmentTitle" Text="拖动窗口时自动对齐" />
-                                <ToggleSwitch x:Name="WindowAlignmentToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="WindowAlignmentToggle" Toggled="WindowAlignmentToggle_Toggled" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:RememberExpandedOrganizerPositionTitle" Text="记住收纳窗展开位置" />
-                                <ToggleSwitch x:Name="RememberExpandedOrganizerPositionToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="RememberExpandedOrganizerPositionToggle_Toggled" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12" RowSpacing="10">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <TextBlock FontSize="15" Tag="loc:ExpandOnHoverTitle" Text="鼠标悬浮时自动展开" />
-                                <ToggleSwitch x:Name="ExpandOnHoverToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="ExpandOnHoverToggle" Toggled="ExpandOnHoverToggle_Toggled" />
-                                <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /><ColumnDefinition Width="62" /></Grid.ColumnDefinitions>
-                                    <TextBlock VerticalAlignment="Center" Tag="loc:HoverExpandDelayLabel" Text="展开判定时间" />
-                                    <controls:ConsoleSlider x:Name="HoverExpandDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" AutomationProperties.AutomationId="HoverExpandDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged" />
-                                    <TextBlock x:Name="HoverExpandDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
-                                </Grid>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12" RowSpacing="10">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <TextBlock FontSize="15" Tag="loc:CollapseOnPointerLeaveTitle" Text="鼠标离开后自动收缩" />
-                                <ToggleSwitch x:Name="CollapseOnPointerLeaveToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="CollapseOnPointerLeaveToggle" Toggled="CollapseOnPointerLeaveToggle_Toggled" />
-                                <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /><ColumnDefinition Width="62" /></Grid.ColumnDefinitions>
-                                    <TextBlock VerticalAlignment="Center" Tag="loc:PointerLeaveCollapseDelayLabel" Text="收缩判定时间" />
-                                    <controls:ConsoleSlider x:Name="PointerLeaveCollapseDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" AutomationProperties.AutomationId="PointerLeaveCollapseDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged" />
-                                    <TextBlock x:Name="PointerLeaveCollapseDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
-                                </Grid>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="62" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:StationActivationDistanceTitle" Text="中转站触发距离" />
-                                <controls:ConsoleSlider x:Name="StationActivationDistanceSlider" Grid.Column="1" Minimum="4" Maximum="48" StepFrequency="4" AutomationProperties.AutomationId="StationActivationDistanceSlider" ValueChanged="HoverDelaySlider_ValueChanged" />
-                                <TextBlock x:Name="StationActivationDistanceValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="62" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:StationHoverExpandDelayTitle" Text="中转站展开等待时间" />
-                                <controls:ConsoleSlider x:Name="StationHoverExpandDelaySlider" Grid.Column="1" Minimum="0" Maximum="500" StepFrequency="20" AutomationProperties.AutomationId="StationHoverExpandDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged" />
-                                <TextBlock x:Name="StationHoverExpandDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="62" /></Grid.ColumnDefinitions>
-                                <TextBlock VerticalAlignment="Center" FontSize="15" Tag="loc:StationPointerLeaveCollapseDelayTitle" Text="中转站收缩时间" />
-                                <controls:ConsoleSlider x:Name="StationPointerLeaveCollapseDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" AutomationProperties.AutomationId="StationPointerLeaveCollapseDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged" />
-                                <TextBlock x:Name="StationPointerLeaveCollapseDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" />
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource GeneralRow}">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock FontSize="15" Tag="loc:ExclusiveExpansionTitle" Text="只允许展开一个收纳窗" />
-                                <ToggleSwitch x:Name="ExclusiveExpansionToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="ExclusiveExpansionToggle" Toggled="ExclusiveExpansionToggle_Toggled" />
-                            </Grid>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
-
-                <ScrollViewer
-                    x:Name="ThemePage"
-                    Margin="0,22,0,0"
-                    Background="Transparent"
-                    VerticalScrollBarVisibility="Hidden"
-                    Visibility="Collapsed">
-                    <StackPanel MaxWidth="720" HorizontalAlignment="Left" Spacing="16">
-                        <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:ThemeTitle" Text="主题" />
-                        <TextBlock FontSize="15" FontWeight="SemiBold" Tag="loc:ThemeTargetLabel" Text="修改目标" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <ToggleButton x:Name="SettingsThemeTargetButton" Width="132" Height="36" Tag="Settings" Click="ThemeTargetButton_Click">
-                                <TextBlock Tag="loc:ThemeTargetSettings" Text="设置界面" />
-                            </ToggleButton>
-                            <ToggleButton x:Name="OrganizerThemeTargetButton" Width="132" Height="36" Tag="Organizer" Click="ThemeTargetButton_Click">
-                                <TextBlock Tag="loc:ThemeTargetOrganizer" Text="收纳窗" />
-                            </ToggleButton>
-                        </StackPanel>
-                        <TextBlock FontSize="15" FontWeight="SemiBold" Tag="loc:ThemeColorLabel" Text="颜色" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <StackPanel x:Name="ColorSwatchesPanel" Orientation="Horizontal" Spacing="6">
-                                <ToggleButton Width="36" Height="36" Padding="0" Tag="#E2E5E9" Click="ThemeColorSwatch_Click"><Border Width="24" Height="24" Background="#FFE2E5E9" CornerRadius="12" /></ToggleButton>
-                                <ToggleButton Width="36" Height="36" Padding="0" Tag="#F5F6F8" Click="ThemeColorSwatch_Click"><Border Width="24" Height="24" Background="#FFF5F6F8" CornerRadius="12" /></ToggleButton>
-                                <ToggleButton Width="36" Height="36" Padding="0" Tag="#2F2D2D" Click="ThemeColorSwatch_Click"><Border Width="24" Height="24" Background="#FF2F2D2D" CornerRadius="12" /></ToggleButton>
-                                <ToggleButton Width="36" Height="36" Padding="0" Tag="#BFD7EA" Click="ThemeColorSwatch_Click"><Border Width="24" Height="24" Background="#FFBFD7EA" CornerRadius="12" /></ToggleButton>
-                                <ToggleButton Width="36" Height="36" Padding="0" Tag="#C9DFC5" Click="ThemeColorSwatch_Click"><Border Width="24" Height="24" Background="#FFC9DFC5" CornerRadius="12" /></ToggleButton>
-                                <ToggleButton Width="36" Height="36" Padding="0" Tag="#D3C7E6" Click="ThemeColorSwatch_Click"><Border Width="24" Height="24" Background="#FFD3C7E6" CornerRadius="12" /></ToggleButton>
-                                <ToggleButton Width="36" Height="36" Padding="0" Tag="#E8D9A7" Click="ThemeColorSwatch_Click"><Border Width="24" Height="24" Background="#FFE8D9A7" CornerRadius="12" /></ToggleButton>
-                                <ToggleButton Width="36" Height="36" Padding="0" Tag="#E7C7CF" Click="ThemeColorSwatch_Click"><Border Width="24" Height="24" Background="#FFE7C7CF" CornerRadius="12" /></ToggleButton>
+                            </Border>
+                            <StackPanel Spacing="8">
+                                <TextBlock Tag="loc:UpdateReleaseNotes" Text="版本说明" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                <TextBlock x:Name="UpdateNotesText" TextWrapping="Wrap" IsTextSelectionEnabled="True" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                <TextBlock x:Name="UpdateRecoveryText" FontSize="12" TextWrapping="Wrap" IsTextSelectionEnabled="True" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
                             </StackPanel>
-                            <Button x:Name="CustomThemeColorButton" Height="36" Tag="loc:ThemeCustomColor" Content="自定义" AutomationProperties.AutomationId="CustomThemeColorButton">
-                                <Button.Flyout><Flyout><ColorPicker x:Name="ThemeColorPicker" IsAlphaEnabled="False" IsAlphaSliderVisible="False" ColorChanged="ThemeColorPicker_ColorChanged" /></Flyout></Button.Flyout>
-                            </Button>
                         </StackPanel>
-                        <TextBlock FontSize="15" FontWeight="SemiBold" Tag="loc:ThemeModeLabel" Text="背景模式" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <ToggleButton x:Name="ThemeGlassModeButton" Width="110" Height="36" Tag="Glass" Click="ThemeModeButton_Click">
-                                <TextBlock Tag="loc:ThemeGlassMode" Text="玻璃模式" />
-                            </ToggleButton>
-                            <ToggleButton x:Name="ThemeSolidModeButton" Width="110" Height="36" Tag="Solid" Click="ThemeModeButton_Click">
-                                <TextBlock Tag="loc:ThemeSolidMode" Text="纯色模式" />
-                            </ToggleButton>
+                    </ScrollViewer>
+                    <ScrollViewer x:Name="SystemPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel HorizontalAlignment="Left" Spacing="20" MaxWidth="620" Width="{Binding ViewportWidth, ElementName=SystemPage}">
+                            <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:SystemTitle" Text="系统" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Tag="loc:DiagnosticsTitle" Text="本地诊断" FontSize="14" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        <TextBlock Tag="loc:DiagnosticsDescription" Text="导出脱敏运行记录以帮助排查问题。不包含文件正文，不会自动上传。" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                    </StackPanel>
+                                    <Button x:Name="ExportDiagnosticsButton" Grid.Column="1" VerticalAlignment="Center" Tag="loc:DiagnosticsExport" Content="导出诊断包" Click="ExportDiagnostics_Click" AutomationProperties.AutomationId="ExportDiagnosticsButton"/>
+                                </Grid>
+                                </Border>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock FontSize="14" Tag="loc:StartupTitle" Text="开机时启动 TuckPane" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="StartupToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="StartupToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12" RowSpacing="0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:FolderMenuTitle" Text="文件夹右键菜单" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="FolderMenuToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="FolderMenuToggle_Toggled"/>
+                                            <TextBlock x:Name="FolderMenuStatusText" Grid.Row="1" Grid.ColumnSpan="2" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,8,0,0" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                            <Button x:Name="FolderMenuRepairButton" Grid.Row="2" Grid.ColumnSpan="2" HorizontalAlignment="Left" Tag="loc:FolderMenuRepair" Content="修复关联" Click="FolderMenuRepairButton_Click" Visibility="Collapsed" Margin="0,8,0,0"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <Grid ColumnSpacing="12" RowSpacing="0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:DesktopMenuTitle" Text="桌面右键菜单" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="DesktopMenuToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="DesktopMenuToggle_Toggled"/>
+                                            <TextBlock x:Name="DesktopMenuStatusText" Grid.Row="1" Grid.ColumnSpan="2" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,8,0,0" Foreground="{StaticResource ConsoleSecondaryTextBrush}"/>
+                                            <Button x:Name="DesktopMenuRepairButton" Grid.Row="2" Grid.ColumnSpan="2" HorizontalAlignment="Left" Tag="loc:DesktopMenuRepair" Content="修复关联" Click="DesktopMenuRepairButton_Click" Visibility="Collapsed" Margin="0,8,0,0"/>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12" RowSpacing="6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:PerformanceProfileTitle" Text="性能档位" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ComboBox x:Name="PerformanceProfileCombo" Grid.Column="1" Width="150" Height="32" AutomationProperties.AutomationId="PerformanceProfileCombo" SelectionChanged="PerformanceProfileCombo_SelectionChanged">
+                                                <ComboBoxItem Tag="loc:PerformanceProfilePowerSaver" Content="节能"/>
+                                                <ComboBoxItem Tag="loc:PerformanceProfileBalanced" Content="平衡"/>
+                                                <ComboBoxItem Tag="loc:PerformanceProfileHighPerformance" Content="高性能"/>
+                                            </ComboBox>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:LanguageLabel" Text="语言" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ComboBox x:Name="LanguageCombo" Grid.Column="1" Width="150" Height="32" SelectionChanged="LanguageCombo_SelectionChanged">
+                                                <ComboBoxItem Tag="loc:LanguageChinese" Content="简体中文"/>
+                                                <ComboBoxItem Tag="loc:LanguageEnglish" Content="English"/>
+                                                <ComboBoxItem Tag="loc:LanguageJapanese" Content="日本語"/>
+                                            </ComboBox>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <Grid RowSpacing="10">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <StackPanel Spacing="2">
+                                                <TextBlock FontSize="14" Tag="loc:DefaultStorageDirectoryTitle" Text="默认存储与目录" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            </StackPanel>
+                                            <TextBox x:Name="DefaultStorageDirectoryBox" Grid.Row="1" Height="32" IsReadOnly="True" Style="{StaticResource FlatTextBoxStyle}" AutomationProperties.AutomationId="DefaultStorageDirectoryBox"/>
+                                            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+                                                <Button Height="30" Click="ChooseDefaultStorageDirectoryButton_Click" Content="选择目录" Tag="loc:ChooseFolder"/>
+                                                <Button Height="30" Click="ResetDefaultStorageDirectoryButton_Click" Content="恢复默认" Tag="loc:UseDefaultLocation"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
-                        <StackPanel x:Name="ThemeTransparencyRow">
-                            <TextBlock FontSize="15" FontWeight="SemiBold" Tag="loc:ThemeTransparencyLabel" Text="背景不透明度" />
-                            <Grid Width="460" HorizontalAlignment="Left" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="52" /></Grid.ColumnDefinitions>
-                            <controls:ConsoleSlider x:Name="ThemeTransparencySlider" Minimum="0" Maximum="1" StepFrequency=".01" Value=".35" ValueChanged="ThemeTransparencySlider_ValueChanged" />
-                            <TextBlock x:Name="ThemeTransparencyValue" Grid.Column="1" VerticalAlignment="Center" TextAlignment="Right" Text="35%" />
-                            </Grid>
+                    </ScrollViewer>
+                    <ScrollViewer x:Name="DisplayPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel HorizontalAlignment="Left" Spacing="20" MaxWidth="620" Width="{Binding ViewportWidth, ElementName=DisplayPage}">
+                            <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:DisplaySettingsTitle" Text="显示" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:HideCollapseIndicatorTitle" Text="隐藏右上角收缩标志" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="HideCollapseIndicatorToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="HideCollapseIndicatorToggle" Toggled="HideCollapseIndicatorToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:NoteAlwaysOnTopTitle" Text="便签与待办永远处于最高层" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="NoteAlwaysOnTopToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="NoteAlwaysOnTopToggle" Toggled="NoteAlwaysOnTopToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:EdgeGlowTitle" Text="显示边缘弧光" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="EdgeGlowToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="EdgeGlowToggle" Toggled="EdgeGlowToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="150"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="48"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:CompactNameScaleTitle" Text="收起名称大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <controls:ConsoleSlider x:Name="CompactNameScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".6" Maximum="1" Value="1" AutomationProperties.AutomationId="CompactNameScaleSlider" ValueChanged="NameScaleSlider_ValueChanged"/>
+                                            <TextBlock x:Name="CompactNameScalePercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="150"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="48"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:ExpandedNameScaleTitle" Text="展开后名称大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <controls:ConsoleSlider x:Name="ExpandedNameScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".6" Maximum="1" Value="1" AutomationProperties.AutomationId="ExpandedNameScaleSlider" ValueChanged="NameScaleSlider_ValueChanged"/>
+                                            <TextBlock x:Name="ExpandedNameScalePercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <StackPanel x:Name="OrganizerUniformSettings" HorizontalAlignment="Stretch" Margin="0" Spacing="12">
+                                <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:UniformEntrySizes" Text="统一入口大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                    <StackPanel Spacing="0">
+                                        <Border Style="{StaticResource GeneralRow}">
+                                            <Grid ColumnSpacing="12" RowSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+                                                <TextBlock FontSize="14" Tag="loc:UniformFloatingCompactScaleTitle" Text="统一悬浮模式入口大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <ToggleSwitch x:Name="UniformFloatingCompactScaleToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="UniformFloatingCompactScaleToggle" Toggled="UniformCompactScaleToggle_Toggled"/>
+                                                <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="48"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:CompactScaleLabel" Text="入口整体" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <controls:ConsoleSlider x:Name="UniformFloatingCompactScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1.2" Maximum="3" Value="1.56" AutomationProperties.AutomationId="UniformFloatingCompactScaleSlider" ValueChanged="UniformCompactScaleSlider_ValueChanged"/>
+                                                    <TextBlock x:Name="UniformFloatingCompactScalePercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                </Grid>
+                                            </Grid>
+                                        </Border>
+                                        <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                            <Grid ColumnSpacing="12" RowSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+                                                <TextBlock FontSize="14" Tag="loc:UniformPositionedCompactScaleTitle" Text="统一定位模式入口大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <ToggleSwitch x:Name="UniformPositionedCompactScaleToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="UniformPositionedCompactScaleToggle" Toggled="UniformCompactScaleToggle_Toggled"/>
+                                                <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="48"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:CompactScaleLabel" Text="入口整体" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <controls:ConsoleSlider x:Name="UniformPositionedCompactScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1.2" Maximum="1.8" Value="1.56" AutomationProperties.AutomationId="UniformPositionedCompactScaleSlider" ValueChanged="UniformCompactScaleSlider_ValueChanged"/>
+                                                    <TextBlock x:Name="UniformPositionedCompactScalePercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                </Grid>
+                                            </Grid>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
                         </StackPanel>
-                        <StackPanel x:Name="ThemeBlurStrengthRow">
-                            <TextBlock FontSize="15" FontWeight="SemiBold" Tag="loc:ThemeBlurStrengthLabel" Text="模糊强度" />
-                            <Grid Width="460" HorizontalAlignment="Left" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="52" /></Grid.ColumnDefinitions>
-                            <controls:ConsoleSlider x:Name="ThemeBlurStrengthSlider" Minimum=".05" Maximum="2" StepFrequency=".05" Value="1" ValueChanged="ThemeBlurStrengthSlider_ValueChanged" />
-                            <TextBlock x:Name="ThemeBlurStrengthValue" Grid.Column="1" VerticalAlignment="Center" TextAlignment="Right" Text="100%" />
-                            </Grid>
+                    </ScrollViewer>
+                    <ScrollViewer x:Name="MenuPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel HorizontalAlignment="Left" Spacing="20" MaxWidth="620" Width="{Binding ViewportWidth, ElementName=MenuPage}">
+                            <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:OrganizerMenuSettingsTitle" Text="右键菜单" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                            <Border Style="{StaticResource SettingsGroup}" x:Name="OrganizerMenuGroup" Loaded="SettingsGroup_Loaded">
+                                <StackPanel x:Name="OrganizerMenuOptions" Spacing="0"/>
+                            </Border>
                         </StackPanel>
-                    </StackPanel>
-                </ScrollViewer>
+                    </ScrollViewer>
+                    <ScrollViewer x:Name="InteractionPage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel HorizontalAlignment="Stretch" Spacing="20" MaxWidth="620">
+                            <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:InteractionTitle" Text="交互" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <StackPanel Spacing="10">
+                                            <Grid ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Tag="loc:CompactHoverMagnificationTitle" Text="精简模式悬浮放大" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <ToggleSwitch x:Name="CompactHoverMagnificationToggle" Toggled="HoverMagnificationToggle_Toggled" Grid.Column="1"/>
+                                            </Grid>
+                                            <Grid ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="48"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock VerticalAlignment="Center" Tag="loc:HoverMagnificationScaleLabel" Text="放大倍率" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <controls:ConsoleSlider x:Name="CompactHoverMagnificationSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1" Maximum="1.25" Value="1.25" AutomationProperties.AutomationId="CompactHoverMagnificationSlider" ValueChanged="HoverMagnificationSlider_ValueChanged"/>
+                                                <TextBlock x:Name="CompactHoverMagnificationValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <StackPanel Spacing="10">
+                                            <Grid ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Tag="loc:DockHoverMagnificationTitle" Text="Dock 悬浮放大" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <ToggleSwitch x:Name="DockHoverMagnificationToggle" Toggled="HoverMagnificationToggle_Toggled" Grid.Column="1"/>
+                                            </Grid>
+                                            <Grid ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="48"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock VerticalAlignment="Center" Tag="loc:HoverMagnificationScaleLabel" Text="放大倍率" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <controls:ConsoleSlider x:Name="DockHoverMagnificationSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1" Maximum="1.25" Value="1.25" AutomationProperties.AutomationId="DockHoverMagnificationSlider" ValueChanged="HoverMagnificationSlider_ValueChanged"/>
+                                                <TextBlock x:Name="DockHoverMagnificationValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock FontSize="14" Tag="loc:CollapseOutsideTitle" Text="点击窗口外自动收缩" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="CollapseOutsideToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="CollapseOutsideToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock FontSize="14" Tag="loc:WindowAlignmentTitle" Text="拖动窗口时自动对齐" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="WindowAlignmentToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="WindowAlignmentToggle" Toggled="WindowAlignmentToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:RememberExpandedOrganizerPositionTitle" Text="记住收纳窗展开位置" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="RememberExpandedOrganizerPositionToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="RememberExpandedOrganizerPositionToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12" RowSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <TextBlock FontSize="14" Tag="loc:ExpandOnHoverTitle" Text="鼠标悬浮时自动展开" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="ExpandOnHoverToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="ExpandOnHoverToggle" Toggled="ExpandOnHoverToggle_Toggled"/>
+                                            <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="92"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="62"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock VerticalAlignment="Center" Tag="loc:HoverExpandDelayLabel" Text="展开判定时间" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <controls:ConsoleSlider x:Name="HoverExpandDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" AutomationProperties.AutomationId="HoverExpandDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
+                                                <TextBlock x:Name="HoverExpandDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            </Grid>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12" RowSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <TextBlock FontSize="14" Tag="loc:CollapseOnPointerLeaveTitle" Text="鼠标离开后自动收缩" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="CollapseOnPointerLeaveToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="CollapseOnPointerLeaveToggle" Toggled="CollapseOnPointerLeaveToggle_Toggled"/>
+                                            <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="92"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="62"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock VerticalAlignment="Center" Tag="loc:PointerLeaveCollapseDelayLabel" Text="收缩判定时间" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <controls:ConsoleSlider x:Name="PointerLeaveCollapseDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" AutomationProperties.AutomationId="PointerLeaveCollapseDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
+                                                <TextBlock x:Name="PointerLeaveCollapseDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            </Grid>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="62"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:StationActivationDistanceTitle" Text="中转站触发距离" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <controls:ConsoleSlider x:Name="StationActivationDistanceSlider" Grid.Column="1" Minimum="4" Maximum="48" StepFrequency="4" AutomationProperties.AutomationId="StationActivationDistanceSlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
+                                            <TextBlock x:Name="StationActivationDistanceValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="62"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:StationHoverExpandDelayTitle" Text="中转站展开等待时间" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <controls:ConsoleSlider x:Name="StationHoverExpandDelaySlider" Grid.Column="1" Minimum="0" Maximum="500" StepFrequency="20" AutomationProperties.AutomationId="StationHoverExpandDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
+                                            <TextBlock x:Name="StationHoverExpandDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="0">
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="62"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:StationPointerLeaveCollapseDelayTitle" Text="中转站收缩时间" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <controls:ConsoleSlider x:Name="StationPointerLeaveCollapseDelaySlider" Grid.Column="1" Minimum="100" Maximum="2000" StepFrequency="50" AutomationProperties.AutomationId="StationPointerLeaveCollapseDelaySlider" ValueChanged="HoverDelaySlider_ValueChanged"/>
+                                            <TextBlock x:Name="StationPointerLeaveCollapseDelayValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock FontSize="14" Tag="loc:ExclusiveExpansionTitle" Text="只允许展开一个收纳窗" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="ExclusiveExpansionToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="ExclusiveExpansionToggle" Toggled="ExclusiveExpansionToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                    <ScrollViewer x:Name="ThemePage" Margin="0,22,0,0" Background="Transparent" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel MaxWidth="620" HorizontalAlignment="Left" Spacing="20" Width="{Binding ViewportWidth, ElementName=ThemePage}">
+                            <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:ThemeTitle" Text="主题" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                            <Border Style="{StaticResource SettingsGroup}" Padding="16" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="12">
+                                    <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeTargetLabel" Text="修改目标" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <ToggleButton x:Name="OrganizerThemeTargetButton" Width="132" Height="36" Tag="Organizer" Click="ThemeTargetButton_Click">
+                                            <TextBlock Tag="loc:ThemeTargetOrganizer" Text="收纳窗" TextWrapping="Wrap"/>
+                                        </ToggleButton>
+                                        <ToggleButton x:Name="StationThemeTargetButton" Width="132" Height="36" Tag="Station" Click="ThemeTargetButton_Click">
+                                            <TextBlock Tag="loc:NavStations" Text="中转站" TextWrapping="Wrap"/>
+                                        </ToggleButton>
+                                        <ToggleButton x:Name="DockThemeTargetButton" Width="132" Height="36" Tag="Dock" Click="ThemeTargetButton_Click">
+                                            <TextBlock Tag="loc:NavDocks" Text="Dock 栏" TextWrapping="Wrap"/>
+                                        </ToggleButton>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Padding="16" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="12">
+                                    <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeColorLabel" Text="颜色" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <StackPanel x:Name="ColorSwatchesPanel" Orientation="Horizontal" Spacing="6">
+                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#E2E5E9" Click="ThemeColorSwatch_Click">
+                                                <Border Width="24" Height="24" Background="#FFE2E5E9" CornerRadius="12"/>
+                                            </ToggleButton>
+                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#F5F6F8" Click="ThemeColorSwatch_Click">
+                                                <Border Width="24" Height="24" Background="#FFF5F6F8" CornerRadius="12"/>
+                                            </ToggleButton>
+                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#2F2D2D" Click="ThemeColorSwatch_Click">
+                                                <Border Width="24" Height="24" Background="#FF2F2D2D" CornerRadius="12"/>
+                                            </ToggleButton>
+                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#BFD7EA" Click="ThemeColorSwatch_Click">
+                                                <Border Width="24" Height="24" Background="#FFBFD7EA" CornerRadius="12"/>
+                                            </ToggleButton>
+                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#C9DFC5" Click="ThemeColorSwatch_Click">
+                                                <Border Width="24" Height="24" Background="#FFC9DFC5" CornerRadius="12"/>
+                                            </ToggleButton>
+                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#D3C7E6" Click="ThemeColorSwatch_Click">
+                                                <Border Width="24" Height="24" Background="#FFD3C7E6" CornerRadius="12"/>
+                                            </ToggleButton>
+                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#E8D9A7" Click="ThemeColorSwatch_Click">
+                                                <Border Width="24" Height="24" Background="#FFE8D9A7" CornerRadius="12"/>
+                                            </ToggleButton>
+                                            <ToggleButton Width="36" Height="36" Padding="0" Tag="#E7C7CF" Click="ThemeColorSwatch_Click">
+                                                <Border Width="24" Height="24" Background="#FFE7C7CF" CornerRadius="12"/>
+                                            </ToggleButton>
+                                        </StackPanel>
+                                        <Button x:Name="CustomThemeColorButton" Height="36" Tag="loc:ThemeCustomColor" Content="自定义" AutomationProperties.AutomationId="CustomThemeColorButton">
+                                            <Button.Flyout>
+                                                <Flyout>
+                                                    <ColorPicker x:Name="ThemeColorPicker" IsAlphaEnabled="False" IsAlphaSliderVisible="False" ColorChanged="ThemeColorPicker_ColorChanged"/>
+                                                </Flyout>
+                                            </Button.Flyout>
+                                        </Button>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Padding="16" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="12">
+                                    <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeModeLabel" Text="背景模式" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <ToggleButton x:Name="ThemeGlassModeButton" Width="110" Height="36" Tag="Glass" Click="ThemeModeButton_Click">
+                                            <TextBlock Tag="loc:ThemeGlassMode" Text="玻璃模式" TextWrapping="Wrap"/>
+                                        </ToggleButton>
+                                        <ToggleButton x:Name="ThemeSolidModeButton" Width="110" Height="36" Tag="Solid" Click="ThemeModeButton_Click">
+                                            <TextBlock Tag="loc:ThemeSolidMode" Text="纯色模式" TextWrapping="Wrap"/>
+                                        </ToggleButton>
+                                        <ToggleButton x:Name="ThemeTransparentModeButton" Width="110" Height="36" Tag="Transparent" Click="ThemeModeButton_Click" Visibility="Collapsed">
+                                            <TextBlock Tag="loc:ThemeFullyTransparent" Text="完全透明" TextWrapping="Wrap"/>
+                                        </ToggleButton>
+                                    </StackPanel>
+                                    <StackPanel x:Name="ThemeTransparencyRow">
+                                        <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeTransparencyLabel" Text="背景不透明度" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        <Grid Width="460" HorizontalAlignment="Left" ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="52"/>
+                                            </Grid.ColumnDefinitions>
+                                            <controls:ConsoleSlider x:Name="ThemeTransparencySlider" Minimum="0" Maximum="1" StepFrequency=".01" Value=".35" ValueChanged="ThemeTransparencySlider_ValueChanged"/>
+                                            <TextBlock x:Name="ThemeTransparencyValue" Grid.Column="1" VerticalAlignment="Center" TextAlignment="Right" Text="35%" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        </Grid>
+                                    </StackPanel>
+                                    <StackPanel x:Name="ThemeBlurStrengthRow">
+                                        <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeBlurStrengthLabel" Text="模糊强度" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        <Grid Width="460" HorizontalAlignment="Left" ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="52"/>
+                                            </Grid.ColumnDefinitions>
+                                            <controls:ConsoleSlider x:Name="ThemeBlurStrengthSlider" Minimum="0" Maximum="2" StepFrequency=".05" Value="1" ValueChanged="ThemeBlurStrengthSlider_ValueChanged"/>
+                                            <TextBlock x:Name="ThemeBlurStrengthValue" Grid.Column="1" VerticalAlignment="Center" TextAlignment="Right" Text="100%" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                        </Grid>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                    <Grid x:Name="ManagePage" Margin="0,22,0,0" Background="Transparent">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel>
+                            <TextBlock x:Name="ManagePageTitle" FontSize="28" FontWeight="SemiBold" Text="收纳窗" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                        </StackPanel>
+                        <Grid Grid.Row="1" Margin="0,12,0,0" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="190"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Background="{StaticResource ConsoleCardSurfaceBrush}" CornerRadius="12">
+                                <Grid>
+                                    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                    <ListView x:Name="ManageList" Margin="4" SelectionChanged="ManageList_SelectionChanged">
+                                        <ListView.ItemContainerStyle>
+                                            <Style TargetType="ListViewItem">
+                                                <Setter Property="Background" Value="{StaticResource ListViewItemBackground}"/>
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                            </Style>
+                                        </ListView.ItemContainerStyle>
+                                        <ListView.Resources>
+                                            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent"/>
+                                            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="Transparent"/>
+                                            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="Transparent"/>
+                                            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorDisabledBrush" Color="Transparent"/>
+                                        </ListView.Resources>
+                                    </ListView>
+                                    <StackPanel x:Name="ManageEmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                                        <TextBlock Tag="loc:ManageCategoryEmpty" Text="此类别还没有窗口" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
 
-                <Grid x:Name="AddPage" Margin="0,22,0,0" Background="Transparent" Visibility="Collapsed">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                    <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:AddTitle" Text="添加收纳窗" />
-                    <Grid x:Name="AddPageContentGrid" Grid.Row="1" Margin="0,12,0,0" ColumnSpacing="24">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="420" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                        <ScrollViewer HorizontalAlignment="Left" VerticalScrollBarVisibility="Hidden">
-                            <StackPanel x:Name="AddSettingsColumn" Width="420" HorizontalAlignment="Left">
-                                <Border x:Name="AddNameCard" Style="{StaticResource Row}"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:NameLabel" Text="名称" /><TextBox x:Name="AddNameBox" Grid.Column="1" Width="190" Height="32" HorizontalAlignment="Left" Style="{StaticResource FlatTextBoxStyle}" Text="收纳窗" TextChanged="AddNameBox_TextChanged" /></Grid></Border>
-                                <Border Style="{StaticResource Row}">
-                                    <Grid ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                        <TextBlock VerticalAlignment="Center" Tag="loc:StorageLocationLabel" Text="保存位置" />
-                                        <StackPanel Grid.Column="1" Spacing="5">
-                                            <TextBox x:Name="AddStoragePathBox" Height="32" IsReadOnly="True" Style="{StaticResource FlatTextBoxStyle}" />
-                                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                                <Button Height="30" Click="ChooseAddStorageButton_Click" Content="选择目录" Tag="loc:ChooseFolder" />
-                                                <Button Height="30" Click="ResetAddStorageButton_Click" Content="恢复默认" Tag="loc:UseDefaultLocation" />
+                                    </StackPanel>
+                                    <Button x:Name="ManageAddButton" Grid.Row="1" Margin="8" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="+" FontSize="22" Click="BeginCreationButton_Click"/>
+                                </Grid>
+                            </Border>
+                            <Border x:Name="ManageDetailCard" Grid.Column="1" Padding="0" Background="Transparent" CornerRadius="12">
+                                <Grid x:Name="ManageEditor">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                        <StackPanel Spacing="20">
+                                            <InfoBar x:Name="MissingStorageInfo" IsOpen="False" IsClosable="False" Severity="Warning" Title="实际目录不存在"/>
+                                            <Border x:Name="ManageIdentityGroup" Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                                <StackPanel Spacing="0">
+                                                    <Border x:Name="ManageNameCard" Style="{StaticResource ManageRow}">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:NameLabel" Text="名称" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <TextBox x:Name="ManageNameBox" Width="170" Height="32" HorizontalAlignment="Right" Style="{StaticResource FlatTextBoxStyle}" TextChanged="ManageNameBox_TextChanged" KeyDown="ManageNameBox_KeyDown" LostFocus="ManageNameBox_LostFocus" Grid.Column="1"/>
+                                                        </Grid>
+                                                    </Border>
+                                                    <TextBlock x:Name="ManageNameError" Margin="12,-4,0,6" Foreground="#FFC42B1C" FontSize="12" Tag="loc:NameRequired" Text="名称不能为空" Visibility="Collapsed" TextWrapping="Wrap"/>
+                                                    <Border x:Name="ManagePlacementModeCard" Style="{StaticResource ManageRow}" BorderThickness="0">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:ModeLabel" Text="模式" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <ComboBox x:Name="ManagePlacementModeCombo" Width="170" Height="32" HorizontalAlignment="Right" SelectionChanged="ManageEditor_Changed" Grid.Column="1">
+                                                                <ComboBoxItem x:Name="ManageFloatingModeItem" Tag="loc:ModeFloating" Content="悬浮窗模式"/>
+                                                                <ComboBoxItem x:Name="ManagePositionedModeItem" Tag="loc:ModePositioned" Content="定位模式"/>
+                                                            </ComboBox>
+                                                        </Grid>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                                <StackPanel Spacing="0">
+                                                    <Border x:Name="ManageDockSettingsCard" Style="{StaticResource Row}" Visibility="Collapsed">
+                                                        <StackPanel Spacing="8">
+                                                            <Grid ColumnSpacing="12">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock VerticalAlignment="Center" Tag="loc:DockOrientationLabel" Text="排列方向" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                                <ComboBox x:Name="ManageDockOrientationCombo" Width="170" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="ManageEditor_Changed" Grid.Column="1">
+                                                                    <ComboBoxItem Tag="loc:DockHorizontal" Content="横向"/>
+                                                                    <ComboBoxItem Tag="loc:DockVertical" Content="纵向"/>
+                                                                </ComboBox>
+                                                            </Grid>
+                                                            <TextBlock Tag="loc:DockSizeLabel" Text="Dock 大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <Grid ColumnSpacing="10">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="60"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <controls:ConsoleSlider x:Name="ManageDockIconSizeSlider" Style="{StaticResource Pct}" Minimum="32" Maximum="128" StepFrequency="4" Value="64" ValueChanged="ManageEditor_Changed"/>
+                                                                <TextBlock x:Name="ManageDockIconSizeValue" Grid.Column="1" VerticalAlignment="Center" Text="64 DIP" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            </Grid>
+                                                            <TextBlock Tag="loc:DockSpacingLabel" Text="图标间隔" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <Grid ColumnSpacing="10">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="60"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <controls:ConsoleSlider x:Name="ManageDockSpacingSlider" Style="{StaticResource Pct}" Minimum="0.5" Maximum="2" StepFrequency="0.05" Value="0.75" ValueChanged="ManageEditor_Changed"/>
+                                                                <TextBlock x:Name="ManageDockSpacingValue" Grid.Column="1" VerticalAlignment="Center" Text="0.75" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            </Grid>
+                                                        </StackPanel>
+                                                    </Border>
+                                                    <Border x:Name="ManageExpansionModeCard" Style="{StaticResource ManageRow}">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="92"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:ExpansionModeLabel" Text="展开行为" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <ComboBox x:Name="ManageExpansionModeCombo" Grid.Column="1" Width="170" Height="32" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="ManageExpansionMode_Changed">
+                                                                <ComboBoxItem Tag="loc:ExpansionModeCollapsible" Content="收缩模式"/>
+                                                                <ComboBoxItem Tag="loc:ExpansionModeAlwaysExpanded" Content="展开模式"/>
+                                                            </ComboBox>
+                                                        </Grid>
+                                                    </Border>
+                                                    <Border x:Name="ManageExpandedContentModeCard" Style="{StaticResource ManageRow}">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:ExpandedContentModeLabel" Text="内容展开方式" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <ComboBox x:Name="ManageExpandedContentModeCombo" Width="170" Height="32" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="ManageEditor_Changed" Grid.Column="1">
+                                                                <ComboBoxItem Tag="loc:ExpandedContentModeIcon" Content="图标模式"/>
+                                                                <ComboBoxItem Tag="loc:ExpandedContentModeCompactList" Content="精简模式"/>
+                                                            </ComboBox>
+                                                        </Grid>
+                                                    </Border>
+                                                    <Border x:Name="ManageDisplayCard" Style="{StaticResource ManageRow}" Visibility="Collapsed">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:DisplayLabel" Text="显示器" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <ComboBox x:Name="ManageDisplayCombo" Width="270" Height="32" HorizontalAlignment="Right" SelectionChanged="ManageEditor_Changed" Grid.Column="1"/>
+                                                        </Grid>
+                                                    </Border>
+                                                    <Border x:Name="ManageDockEdgeCard" Style="{StaticResource ManageRow}" Visibility="Collapsed">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:DockEdgeLabel" Text="贴靠边" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <ComboBox x:Name="ManageDockEdgeCombo" Width="170" Height="32" HorizontalAlignment="Right" SelectedIndex="2" SelectionChanged="ManageEditor_Changed" Grid.Column="1">
+                                                                <ComboBoxItem Tag="loc:DockLeft" Content="左侧"/>
+                                                                <ComboBoxItem Tag="loc:DockTop" Content="顶部"/>
+                                                                <ComboBoxItem Tag="loc:DockRight" Content="右侧"/>
+                                                                <ComboBoxItem Tag="loc:DockBottom" Content="底部"/>
+                                                            </ComboBox>
+                                                        </Grid>
+                                                    </Border>
+                                                    <Border x:Name="ManageRowsCard" Style="{StaticResource ManageRow}">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:RowsLabel" Text="行数" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <controls:ConsoleSlider x:Name="ManageRowsSlider" Width="170" HorizontalAlignment="Right" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="ManageEditor_Changed" Grid.Column="1"/>
+                                                        </Grid>
+                                                    </Border>
+                                                    <Border x:Name="ManageColumnsCard" Style="{StaticResource ManageRow}">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:ColumnsLabel" Text="列数" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <controls:ConsoleSlider x:Name="ManageColumnsSlider" Width="170" HorizontalAlignment="Right" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="ManageEditor_Changed" Grid.Column="1"/>
+                                                        </Grid>
+                                                    </Border>
+                                                    <Border x:Name="ManageCompactScaleCard" Style="{StaticResource ManageRow}">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="92"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="48"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:CompactScaleLabel" Text="入口整体" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <controls:ConsoleSlider x:Name="ManageCompactScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1.2" Maximum="3" Value="1.56" ValueChanged="ManageEditor_Changed"/>
+                                                            <TextBlock x:Name="ManageCompactPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                        </Grid>
+                                                    </Border>
+                                                    <Border x:Name="ManageCanvasScaleCard" Style="{StaticResource ManageRow}" Visibility="Collapsed">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="92"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="48"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:CanvasScaleLabel" Text="画布大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <controls:ConsoleSlider x:Name="ManageCanvasScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".1" Maximum="1.2" Value="1" ValueChanged="ManageEditor_Changed"/>
+                                                            <TextBlock x:Name="ManageCanvasPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                        </Grid>
+                                                    </Border>
+                                                    <Border Style="{StaticResource ManageRow}" Visibility="Collapsed" BorderThickness="0">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="92"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="48"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:ItemScaleLabel" Text="内容比例" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <controls:ConsoleSlider x:Name="ManageItemScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".5" Maximum="1.65" Value="1" ValueChanged="ManageEditor_Changed"/>
+                                                            <TextBlock x:Name="ManageItemPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                        </Grid>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                                <StackPanel Spacing="0">
+                                                    <Border Style="{StaticResource ManageRow}" BorderThickness="0">
+                                                        <Grid ColumnSpacing="12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center" Tag="loc:ActualLocation" Text="实际位置" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                            <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="6" Grid.Column="1">
+                                                                <TextBox x:Name="ManagePathBox" Width="210" Height="32" IsReadOnly="True" Style="{StaticResource FlatTextBoxStyle}"/>
+                                                                <Button Height="32" Click="OpenManagedFolderButton_Click" Content="打开" Tag="loc:Open"/>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Border>
+                                            <StackPanel Margin="0,6" Orientation="Horizontal" Spacing="8">
+                                                <Button x:Name="RecreateStorageButton" Click="RecreateStorageButton_Click" Content="重建目录" Tag="loc:RecreateStorage" Visibility="Collapsed"/>
+                                                <Button x:Name="DeleteOrganizerButton" Click="DeleteOrganizerButton_Click" Content="删除收纳窗" Tag="loc:DeleteOrganizer"/>
                                             </StackPanel>
                                         </StackPanel>
-                                    </Grid>
-                                </Border>
-                                <Border Style="{StaticResource Row}"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:ModeLabel" Text="模式" /><ComboBox x:Name="AddPlacementModeCombo" Grid.Column="1" Width="190" Height="32" HorizontalAlignment="Left" SelectedIndex="0" SelectionChanged="AddControl_Changed"><ComboBoxItem Tag="loc:ModeFloating" Content="悬浮窗模式" /><ComboBoxItem Tag="loc:ModePositioned" Content="定位模式" /><ComboBoxItem Tag="loc:ModeStation" Content="中转站模式" /></ComboBox></Grid></Border>
-                                <Border x:Name="AddExpandedContentModeCard" Style="{StaticResource Row}"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:ExpandedContentModeLabel" Text="内容展开方式" /><ComboBox x:Name="AddExpandedContentModeCombo" Grid.Column="1" Width="190" Height="32" HorizontalAlignment="Left" SelectedIndex="0" SelectionChanged="AddControl_Changed"><ComboBoxItem Tag="loc:ExpandedContentModeIcon" Content="图标模式" /><ComboBoxItem Tag="loc:ExpandedContentModeCompactList" Content="精简模式" /></ComboBox></Grid></Border>
-                                <Border x:Name="AddDisplayCard" Style="{StaticResource Row}" Visibility="Collapsed"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:DisplayLabel" Text="显示器" /><ComboBox x:Name="AddDisplayCombo" Grid.Column="1" Width="270" Height="32" HorizontalAlignment="Left" SelectionChanged="AddControl_Changed" /></Grid></Border>
-                                <Border x:Name="AddDockEdgeCard" Style="{StaticResource Row}" Visibility="Collapsed"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:DockEdgeLabel" Text="贴靠边" /><ComboBox x:Name="AddDockEdgeCombo" Grid.Column="1" Width="190" Height="32" HorizontalAlignment="Left" SelectedIndex="2" SelectionChanged="AddControl_Changed"><ComboBoxItem Tag="loc:DockLeft" Content="左侧" /><ComboBoxItem Tag="loc:DockTop" Content="顶部" /><ComboBoxItem Tag="loc:DockRight" Content="右侧" /><ComboBoxItem Tag="loc:DockBottom" Content="底部" /></ComboBox></Grid></Border>
-                                <Border x:Name="AddRowsCard" Style="{StaticResource Row}"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:RowsLabel" Text="行数" /><controls:ConsoleSlider x:Name="AddRowsSlider" Grid.Column="1" HorizontalAlignment="Stretch" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="AddControl_Changed" /></Grid></Border>
-                                <Border x:Name="AddColumnsCard" Style="{StaticResource Row}"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:ColumnsLabel" Text="列数" /><controls:ConsoleSlider x:Name="AddColumnsSlider" Grid.Column="1" HorizontalAlignment="Stretch" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="AddControl_Changed" /></Grid></Border>
-                                <Border x:Name="AddCompactScaleCard" Style="{StaticResource Row}"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:CompactScaleLabel" Text="入口整体" /><controls:ConsoleSlider x:Name="AddCompactScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1.2" Maximum="3" Value="1.56" ValueChanged="AddControl_Changed" /><TextBlock x:Name="AddCompactPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" /></Grid></Border>
-                                <Border x:Name="AddCanvasScaleCard" Style="{StaticResource Row}" Visibility="Collapsed"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:CanvasScaleLabel" Text="画布大小" /><controls:ConsoleSlider x:Name="AddCanvasScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".1" Maximum="1.2" Value="1" ValueChanged="AddControl_Changed" /><TextBlock x:Name="AddCanvasPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" /></Grid></Border>
-                                <Border Style="{StaticResource Row}" Visibility="Collapsed"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:ItemScaleLabel" Text="内容比例" /><controls:ConsoleSlider x:Name="AddItemScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".5" Maximum="1.65" Value="1" ValueChanged="AddControl_Changed" /><TextBlock x:Name="AddItemPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" /></Grid></Border>
-                            </StackPanel>
-                        </ScrollViewer>
-                        <StackPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top" Spacing="6">
-                            <Button x:Name="CreateOrganizerButton" Grid.Column="1" MinWidth="160" HorizontalAlignment="Right" VerticalAlignment="Top" Click="CreateOrganizerButton_Click" Content="创建收纳窗" Tag="loc:CreateOrganizer" Style="{StaticResource NeutralActionButtonStyle}" />
-                            <TextBlock x:Name="CreateLimitText" MaxWidth="190" Tag="loc:OrganizerLimit" Text="已达到 12 个收纳窗上限。" TextWrapping="Wrap" Visibility="Collapsed" />
-                        </StackPanel>
+                                    </ScrollViewer>
+                                </Grid>
+                            </Border>
+                            <Border x:Name="AddEditor" Grid.Column="1" Background="Transparent" Visibility="Collapsed">
+                                <ScrollViewer x:Name="CreationScrollViewer" HorizontalAlignment="Stretch" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <StackPanel x:Name="AddSettingsColumn" HorizontalAlignment="Stretch" Spacing="20">
+                                    <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                        <StackPanel Spacing="0">
+                                            <Border x:Name="AddNameCard" Style="{StaticResource Row}">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:NameLabel" Text="名称" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <TextBox x:Name="AddNameBox" Grid.Column="1" Width="190" Height="32" HorizontalAlignment="Right" Style="{StaticResource FlatTextBoxStyle}" Text="收纳窗" TextChanged="AddNameBox_TextChanged"/>
+                                                </Grid>
+                                            </Border>
+                                            <Border Style="{StaticResource Row}" BorderThickness="0">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:StorageLocationLabel" Text="保存位置" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <StackPanel Grid.Column="1" Spacing="5">
+                                                        <TextBox x:Name="AddStoragePathBox" Height="32" IsReadOnly="True" Style="{StaticResource FlatTextBoxStyle}"/>
+                                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                                            <Button Height="30" Click="ChooseAddStorageButton_Click" Content="选择目录" Tag="loc:ChooseFolder"/>
+                                                            <Button Height="30" Click="ResetAddStorageButton_Click" Content="恢复默认" Tag="loc:UseDefaultLocation"/>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                        <StackPanel Spacing="0">
+                                            <Border x:Name="AddPlacementModeCard" Style="{StaticResource Row}">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:ModeLabel" Text="模式" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <ComboBox x:Name="AddPlacementModeCombo" Grid.Column="1" Width="190" Height="32" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="AddControl_Changed">
+                                                        <ComboBoxItem Tag="loc:ModeFloating" Content="悬浮窗模式"/>
+                                                        <ComboBoxItem Tag="loc:ModePositioned" Content="定位模式"/>
+                                                    </ComboBox>
+                                                </Grid>
+                                            </Border>
+                                            <Border x:Name="AddDockSettingsCard" Style="{StaticResource Row}" Visibility="Collapsed">
+                                                <StackPanel Spacing="8">
+                                                    <Grid ColumnSpacing="12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock VerticalAlignment="Center" Tag="loc:DockOrientationLabel" Text="排列方向" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                        <ComboBox x:Name="AddDockOrientationCombo" Width="170" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="AddControl_Changed" Grid.Column="1">
+                                                            <ComboBoxItem Tag="loc:DockHorizontal" Content="横向"/>
+                                                            <ComboBoxItem Tag="loc:DockVertical" Content="纵向"/>
+                                                        </ComboBox>
+                                                    </Grid>
+                                                    <TextBlock Tag="loc:DockIconSizeLabel" Text="图标大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <Grid ColumnSpacing="10">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="60"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <controls:ConsoleSlider x:Name="AddDockIconSizeSlider" Style="{StaticResource Pct}" Minimum="32" Maximum="128" StepFrequency="4" Value="64" ValueChanged="AddControl_Changed"/>
+                                                        <TextBlock x:Name="AddDockIconSizeValue" Grid.Column="1" VerticalAlignment="Center" Text="64 DIP" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    </Grid>
+                                                    <TextBlock Tag="loc:DockSpacingLabel" Text="图标间隔" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <Grid ColumnSpacing="10">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="60"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <controls:ConsoleSlider x:Name="AddDockSpacingSlider" Style="{StaticResource Pct}" Minimum="0.5" Maximum="2" StepFrequency="0.05" Value="0.75" ValueChanged="AddControl_Changed"/>
+                                                        <TextBlock x:Name="AddDockSpacingValue" Grid.Column="1" VerticalAlignment="Center" Text="0.75" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+                                            <Border x:Name="AddExpansionModeCard" Style="{StaticResource Row}">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:ExpansionModeLabel" Text="展开行为" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <ComboBox x:Name="AddExpansionModeCombo" Grid.Column="1" Width="190" Height="32" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="AddControl_Changed">
+                                                        <ComboBoxItem Tag="loc:ExpansionModeCollapsible" Content="收缩模式"/>
+                                                        <ComboBoxItem Tag="loc:ExpansionModeAlwaysExpanded" Content="展开模式"/>
+                                                    </ComboBox>
+                                                </Grid>
+                                            </Border>
+                                            <Border x:Name="AddExpandedContentModeCard" Style="{StaticResource Row}">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:ExpandedContentModeLabel" Text="内容展开方式" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <ComboBox x:Name="AddExpandedContentModeCombo" Grid.Column="1" Width="190" Height="32" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="AddControl_Changed">
+                                                        <ComboBoxItem Tag="loc:ExpandedContentModeIcon" Content="图标模式"/>
+                                                        <ComboBoxItem Tag="loc:ExpandedContentModeCompactList" Content="精简模式"/>
+                                                    </ComboBox>
+                                                </Grid>
+                                            </Border>
+                                            <Border x:Name="AddDisplayCard" Style="{StaticResource Row}" Visibility="Collapsed">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:DisplayLabel" Text="显示器" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <ComboBox x:Name="AddDisplayCombo" Grid.Column="1" Width="270" Height="32" HorizontalAlignment="Right" SelectionChanged="AddControl_Changed"/>
+                                                </Grid>
+                                            </Border>
+                                            <Border x:Name="AddDockEdgeCard" Style="{StaticResource Row}" Visibility="Collapsed">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:DockEdgeLabel" Text="贴靠边" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <ComboBox x:Name="AddDockEdgeCombo" Grid.Column="1" Width="190" Height="32" HorizontalAlignment="Right" SelectedIndex="2" SelectionChanged="AddControl_Changed">
+                                                        <ComboBoxItem Tag="loc:DockLeft" Content="左侧"/>
+                                                        <ComboBoxItem Tag="loc:DockTop" Content="顶部"/>
+                                                        <ComboBoxItem Tag="loc:DockRight" Content="右侧"/>
+                                                        <ComboBoxItem Tag="loc:DockBottom" Content="底部"/>
+                                                    </ComboBox>
+                                                </Grid>
+                                            </Border>
+                                            <Border x:Name="AddRowsCard" Style="{StaticResource Row}">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:RowsLabel" Text="行数" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <controls:ConsoleSlider x:Name="AddRowsSlider" Grid.Column="1" HorizontalAlignment="Stretch" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="AddControl_Changed"/>
+                                                </Grid>
+                                            </Border>
+                                            <Border x:Name="AddColumnsCard" Style="{StaticResource Row}">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:ColumnsLabel" Text="列数" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <controls:ConsoleSlider x:Name="AddColumnsSlider" Grid.Column="1" HorizontalAlignment="Stretch" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="AddControl_Changed"/>
+                                                </Grid>
+                                            </Border>
+                                            <Border x:Name="AddCompactScaleCard" Style="{StaticResource Row}">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="48"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:CompactScaleLabel" Text="入口整体" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <controls:ConsoleSlider x:Name="AddCompactScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1.2" Maximum="3" Value="1.56" ValueChanged="AddControl_Changed"/>
+                                                    <TextBlock x:Name="AddCompactPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                </Grid>
+                                            </Border>
+                                            <Border x:Name="AddCanvasScaleCard" Style="{StaticResource Row}" Visibility="Collapsed">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="48"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:CanvasScaleLabel" Text="画布大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <controls:ConsoleSlider x:Name="AddCanvasScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".1" Maximum="1.2" Value="1" ValueChanged="AddControl_Changed"/>
+                                                    <TextBlock x:Name="AddCanvasPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                </Grid>
+                                            </Border>
+                                            <Border Style="{StaticResource Row}" Visibility="Collapsed" BorderThickness="0">
+                                                <Grid ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="48"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock VerticalAlignment="Center" Tag="loc:ItemScaleLabel" Text="内容比例" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                    <controls:ConsoleSlider x:Name="AddItemScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".5" Maximum="1.65" Value="1" ValueChanged="AddControl_Changed"/>
+                                                    <TextBlock x:Name="AddItemPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                </Grid>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+                                    <StackPanel Margin="0,6" Spacing="6">
+                                        <Button x:Name="CreateOrganizerButton" HorizontalAlignment="Left" MinWidth="100" Click="CreateOrganizerButton_Click" Content="创建" Tag="loc:Create" Style="{StaticResource NeutralActionButtonStyle}"/>
+                                        <TextBlock x:Name="CreateLimitText" TextWrapping="Wrap" Visibility="Collapsed" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </ScrollViewer>
+                            </Border>
+                        </Grid>
                     </Grid>
                 </Grid>
-
-                <Grid x:Name="ManagePage" Margin="0,22,0,0" Background="Transparent">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                    <TextBlock FontSize="28" FontWeight="SemiBold" Tag="loc:ManageTitle" Text="管理" />
-                    <Grid Grid.Row="1" Margin="0,12,0,0" ColumnSpacing="12">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="190" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                        <Border Background="{StaticResource ConsoleCardSurfaceBrush}" CornerRadius="12"><Grid><ListView x:Name="ManageList" Margin="4" SelectionChanged="ManageList_SelectionChanged"><ListView.Resources><SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent" /><SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="Transparent" /><SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="Transparent" /><SolidColorBrush x:Key="ListViewItemSelectionIndicatorDisabledBrush" Color="Transparent" /></ListView.Resources></ListView><StackPanel x:Name="ManageEmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"><TextBlock Tag="loc:ManageEmpty" Text="还没有收纳窗" /><Button Click="EmptyAddButton_Click" Content="创建" Tag="loc:Create" /></StackPanel></Grid></Border>
-                        <Border x:Name="ManageDetailCard" Grid.Column="1" Padding="12" Background="{StaticResource ConsoleCardSurfaceBrush}" CornerRadius="12">
-                            <Grid x:Name="ManageEditor"><ScrollViewer VerticalScrollBarVisibility="Hidden"><StackPanel>
-                                <InfoBar x:Name="MissingStorageInfo" IsOpen="False" IsClosable="False" Severity="Warning" Title="实际目录不存在" />
-                                <Border x:Name="ManageNameCard" Style="{StaticResource ManageRow}"><Grid><TextBlock VerticalAlignment="Center" Tag="loc:NameLabel" Text="名称" /><TextBox x:Name="ManageNameBox" Width="170" Height="32" HorizontalAlignment="Right" Style="{StaticResource FlatTextBoxStyle}" TextChanged="ManageEditor_Changed" /></Grid></Border><TextBlock x:Name="ManageNameError" Margin="12,-4,0,6" Foreground="#FFC42B1C" FontSize="12" Tag="loc:NameRequired" Text="名称不能为空" Visibility="Collapsed" />
-                                <Border Style="{StaticResource ManageRow}"><Grid><TextBlock VerticalAlignment="Center" Tag="loc:ModeLabel" Text="模式" /><ComboBox x:Name="ManagePlacementModeCombo" Width="170" Height="32" HorizontalAlignment="Right" SelectionChanged="ManageEditor_Changed"><ComboBoxItem x:Name="ManageFloatingModeItem" Tag="loc:ModeFloating" Content="悬浮窗模式" /><ComboBoxItem x:Name="ManagePositionedModeItem" Tag="loc:ModePositioned" Content="定位模式" /><ComboBoxItem x:Name="ManageStationModeItem" Tag="loc:ModeStation" Content="中转站模式" /></ComboBox></Grid></Border>
-                                <Border x:Name="ManageExpandedContentModeCard" Style="{StaticResource ManageRow}"><Grid><TextBlock VerticalAlignment="Center" Tag="loc:ExpandedContentModeLabel" Text="内容展开方式" /><ComboBox x:Name="ManageExpandedContentModeCombo" Width="170" Height="32" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="ManageEditor_Changed"><ComboBoxItem Tag="loc:ExpandedContentModeIcon" Content="图标模式" /><ComboBoxItem Tag="loc:ExpandedContentModeCompactList" Content="精简模式" /></ComboBox></Grid></Border>
-                                <Border x:Name="ManageDisplayCard" Style="{StaticResource ManageRow}" Visibility="Collapsed"><Grid><TextBlock VerticalAlignment="Center" Tag="loc:DisplayLabel" Text="显示器" /><ComboBox x:Name="ManageDisplayCombo" Width="270" Height="32" HorizontalAlignment="Right" SelectionChanged="ManageEditor_Changed" /></Grid></Border>
-                                <Border x:Name="ManageDockEdgeCard" Style="{StaticResource ManageRow}" Visibility="Collapsed"><Grid><TextBlock VerticalAlignment="Center" Tag="loc:DockEdgeLabel" Text="贴靠边" /><ComboBox x:Name="ManageDockEdgeCombo" Width="170" Height="32" HorizontalAlignment="Right" SelectedIndex="2" SelectionChanged="ManageEditor_Changed"><ComboBoxItem Tag="loc:DockLeft" Content="左侧" /><ComboBoxItem Tag="loc:DockTop" Content="顶部" /><ComboBoxItem Tag="loc:DockRight" Content="右侧" /><ComboBoxItem Tag="loc:DockBottom" Content="底部" /></ComboBox></Grid></Border>
-                                <Border x:Name="ManageRowsCard" Style="{StaticResource ManageRow}"><Grid><TextBlock VerticalAlignment="Center" Tag="loc:RowsLabel" Text="行数" /><controls:ConsoleSlider x:Name="ManageRowsSlider" Width="170" HorizontalAlignment="Right" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="ManageEditor_Changed" /></Grid></Border><Border x:Name="ManageColumnsCard" Style="{StaticResource ManageRow}"><Grid><TextBlock VerticalAlignment="Center" Tag="loc:ColumnsLabel" Text="列数" /><controls:ConsoleSlider x:Name="ManageColumnsSlider" Width="170" HorizontalAlignment="Right" Minimum="2" Maximum="6" StepFrequency="1" Value="3" ValueChanged="ManageEditor_Changed" /></Grid></Border>
-                                <Border x:Name="ManageCompactScaleCard" Style="{StaticResource ManageRow}"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:CompactScaleLabel" Text="入口整体" /><controls:ConsoleSlider x:Name="ManageCompactScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="1.2" Maximum="3" Value="1.56" ValueChanged="ManageEditor_Changed" /><TextBlock x:Name="ManageCompactPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" /></Grid></Border>
-                                <Border x:Name="ManageCanvasScaleCard" Style="{StaticResource ManageRow}" Visibility="Collapsed"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:CanvasScaleLabel" Text="画布大小" /><controls:ConsoleSlider x:Name="ManageCanvasScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".1" Maximum="1.2" Value="1" ValueChanged="ManageEditor_Changed" /><TextBlock x:Name="ManageCanvasPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" /></Grid></Border>
-                                <Border Style="{StaticResource ManageRow}" Visibility="Collapsed"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="92" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Tag="loc:ItemScaleLabel" Text="内容比例" /><controls:ConsoleSlider x:Name="ManageItemScaleSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum=".5" Maximum="1.65" Value="1" ValueChanged="ManageEditor_Changed" /><TextBlock x:Name="ManageItemPercent" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" /></Grid></Border>
-                                <Border Style="{StaticResource ManageRow}"><Grid><TextBlock VerticalAlignment="Center" Tag="loc:ActualLocation" Text="实际位置" /><StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="6"><TextBox x:Name="ManagePathBox" Width="210" Height="32" IsReadOnly="True" Style="{StaticResource FlatTextBoxStyle}" /><Button Height="32" Click="OpenManagedFolderButton_Click" Content="打开" Tag="loc:Open" /></StackPanel></Grid></Border><StackPanel Margin="0,6" Orientation="Horizontal" Spacing="8"><Button x:Name="RecreateStorageButton" Click="RecreateStorageButton_Click" Content="重建目录" Tag="loc:RecreateStorage" Visibility="Collapsed" /><Button x:Name="DeleteOrganizerButton" Click="DeleteOrganizerButton_Click" Content="导出并删除窗口" Tag="loc:ExportDelete" /></StackPanel>
-                            </StackPanel></ScrollViewer></Grid>
-                        </Border>
-                    </Grid>
-                </Grid>
-                <Grid
-                    x:Name="SettingsEdgeOverlay"
-                    Background="Transparent"
-                    Canvas.ZIndex="100"
-                    IsHitTestVisible="False"
-                    Margin="-18,-6,-18,-18" />
-            </Grid>
-        </NavigationView>
+            </NavigationView>
+        </Grid>
+        <Grid x:Name="SettingsEdgeOverlay" Grid.RowSpan="2" Background="Transparent" Canvas.ZIndex="100" IsHitTestVisible="False"/>
     </Grid>
 </Window>

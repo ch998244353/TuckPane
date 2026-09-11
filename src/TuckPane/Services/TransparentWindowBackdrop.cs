@@ -10,8 +10,8 @@ namespace TuckPane.Services;
 /// <summary>
 /// Makes a top-level WinUI window transparent. DWM blur-behind is enabled with
 /// an empty region only to activate per-pixel alpha composition; on Windows 8
-/// and later it does not add visual blur. ThemeBackdrop remains the sole owner
-/// of the visible Gaussian blur applied to local surfaces.
+/// and later it does not add visual blur. ThemeBackdrop owns the additional
+/// Gaussian blur; its HostBackdrop source can already contain system blur.
 /// </summary>
 internal sealed class TransparentWindowBackdrop : CompositionBrushBackdrop
 {

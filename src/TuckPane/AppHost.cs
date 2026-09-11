@@ -6,7 +6,7 @@ using Microsoft.UI.Xaml;
 
 namespace TuckPane;
 
-public sealed class AppHost : IDisposable
+public sealed partial class AppHost : IDisposable
 {
     private sealed record OrganizerReleasePlacement(
         OrganizerDefinition Organizer,
@@ -14,6 +14,9 @@ public sealed class AppHost : IDisposable
         double? RuntimeScale);
 
     private readonly StateStore _stateStore = new();
+    private readonly FolderOrganizerCreation _shellOrganizerCreation = new();
+    internal FolderContextMenuService FolderContextMenu { get; } = FolderContextMenuService.CreateForCurrentProcess();
+    internal FolderContextMenuService DesktopContextMenu { get; } = FolderContextMenuService.CreateForCurrentProcess(desktop: true);
     private readonly DesktopGridService _desktopGrid = new();
     private readonly Dictionary<Guid, MainWindow> _windows = [];
     private readonly Dictionary<Guid, NoteWindow> _noteWindows = [];
@@ -31,14 +34,18 @@ public sealed class AppHost : IDisposable
     private MainWindow? _organizerDragHoverSource;
     private MainWindow? _organizerDragHoverTarget;
     private Task? _organizerDragHoverTask;
+    private IDisposable? _organizerDragHoverHold;
     private NativeMethods.RECT _organizerDragHoverBounds;
     private bool _transparencyNoticeShown;
     private bool _gridFallbackNoticeShown;
-    private int _exiting;
+    private readonly ExitPreparation _exitPreparation = new();
 
     public AppStateV2 State { get; private set; } = new();
     public TransferQueue TransferQueue { get; } = new();
+    internal ShellLaunchService ShellLauncher { get; } = new();
     public ConsoleWindow Console { get; private set; } = null!;
+    internal AppUpdateService Updates { get; private set; } = null!;
+    internal bool IsPreparingUpdate { get; private set; }
     public IReadOnlyCollection<MainWindow> Windows => _windows.Values;
     internal event EventHandler? ThemeChanged;
 
@@ -65,7 +72,7 @@ public sealed class AppHost : IDisposable
         var targets = new List<WindowAlignmentTarget>(_windows.Count - 1);
         foreach (MainWindow window in _windows.Values.OrderBy(window => window.OrganizerId))
         {
-            if (ReferenceEquals(window, source) || !window.TryGetCollapsedFloatingAlignmentFrame(out NativeMethods.RECT bounds)) continue;
+            if (ReferenceEquals(window, source) || !window.TryGetWindowAlignmentFrame(out NativeMethods.RECT bounds)) continue;
             if (!string.Equals(DisplayPlacementService.ForBounds(bounds).Device, display.Device, StringComparison.OrdinalIgnoreCase)) continue;
             targets.Add(new(window.OrganizerId, bounds));
         }
@@ -105,22 +112,31 @@ public sealed class AppHost : IDisposable
         AppPaths.EnsureCreated();
         State = await _stateStore.LoadAsync();
         AppStrings.SetLanguage(State.GlobalSettings.Language);
+        try { FolderContextMenu.RepairIfOwned(AppStrings.Get("FolderMenuCommand")); }
+        catch (Exception ex) { AppLogger.Error("无法修复当前安装副本的文件夹菜单。", ex); }
+        try { DesktopContextMenu.InitializeDesktop(AppStrings.Get("DesktopMenuCommand"), FolderContextMenuService.IsInstalledCopy()); }
+        catch (Exception ex) { AppLogger.Error("无法初始化桌面右键菜单。", ex); }
+        RefreshFolderContextMenuLabel();
         await MigrateLegacyOrganizerNotesAsync();
         StartupService.Apply(State.GlobalSettings.StartWithWindows);
 
+        Updates = new AppUpdateService();
         Console = new ConsoleWindow(this);
         Console.InitializeHostWindow();
-        _tray = new TrayIconService(Console.Hwnd, () => State.GlobalSettings.StartWithWindows, () => TransferQueue.IsActive, HandleTrayCommand);
-        TransferQueue.StateChanged += (_, _) => Console.UpdateTransferState();
+        _tray = new TrayIconService(Console.Hwnd, () => State.GlobalSettings.StartWithWindows, () => TransferQueue.IsActive,
+            HandleTrayCommand, LifecycleWindowCounts);
+        TransferQueue.StateChanged += (_, _) => _dispatcher.TryEnqueue(() => Console.UpdateTransferState());
 
         if (NormalizePositionedPlacementsOnStartup() | NormalizeStationPlacementsOnStartup()) await SaveStateAsync();
         foreach (OrganizerDefinition organizer in State.Organizers) CreateWindow(organizer);
         Console.RefreshAll();
+        _ = Updates.CheckAsync(false);
     }
 
     public async Task<OrganizerDefinition> CreateOrganizerAsync(OrganizerDefinition draft, string? storagePath = null)
     {
         draft.ContainerOrganizerId = null;
+        OrganizerExpansion.Normalize(draft);
         if (draft.PlacementMode == OrganizerPlacementMode.Station)
             draft.ExpandedContentMode = OrganizerExpandedContentMode.Icon;
         if (draft.PlacementMode == OrganizerPlacementMode.Station)
@@ -128,9 +144,9 @@ public sealed class AppHost : IDisposable
             if (State.Organizers.Any(item => item.PlacementMode == OrganizerPlacementMode.Station && item.DockEdge == draft.DockEdge))
                 throw new InvalidOperationException(AppStrings.Get("StationEdgeOccupiedError"));
         }
-        else if (State.Organizers.Count(item => item.PlacementMode != OrganizerPlacementMode.Station) >= OrganizerLimits.MaximumOrganizers)
+        else if (!OrganizerKinds.CanCreate(draft.PlacementMode, State.Organizers))
         {
-            throw new InvalidOperationException(AppStrings.Get("MaximumOrganizersError"));
+            throw new ArgumentOutOfRangeException(nameof(draft.PlacementMode));
         }
         Guid id = draft.Id;
         if (id == Guid.Empty || State.Organizers.Any(item => item.Id == id))
@@ -149,10 +165,7 @@ public sealed class AppHost : IDisposable
         }
         else
         {
-            draft.StorageRelativePath = string.Empty;
-            draft.StorageAbsolutePath = ValidateStoragePath(storagePath);
-            draft.StorageOwnedByApp = false;
-            itemsPath = draft.StorageAbsolutePath;
+            itemsPath = FolderOrganizerCreation.BindExistingStorage(draft, storagePath, State.Organizers);
         }
 
         draft.CompactScale = State.GlobalSettings.ResolveCompactScale(draft.PlacementMode, draft.CompactScale);
@@ -218,13 +231,17 @@ public sealed class AppHost : IDisposable
     }
 
     public Task CreateDesktopOrganizerAsync()
-        => CreateShellOrganizerAsync(storagePath: null);
+        => CreateShellOrganizerAsync(static () => null);
 
     public Task CreateFolderOrganizerAsync(string storagePath)
-        => CreateShellOrganizerAsync(storagePath);
+        => CreateShellOrganizerAsync(() => storagePath);
+
+    internal Task CreateFolderOrganizerFromArgumentsAsync(string[] arguments)
+        => CreateShellOrganizerAsync(() => FolderOrganizerCreation.ParseArguments(arguments));
 
     internal async Task CreateExternalNoteAsync(string directory)
     {
+        if (IsPreparingUpdate) return;
         try
         {
             string targetDirectory = NoteStore.ValidatePortableDirectory(directory);
@@ -251,42 +268,41 @@ public sealed class AppHost : IDisposable
         catch (Exception ex)
         {
             AppLogger.Error($"无法在目标目录创建便签：{directory}", ex);
-            Notify(AppStrings.Get("PortableNoteCreateErrorTitle"), ex.Message, warning: true);
+            ReportOperationError(AppStrings.Get("PortableNoteCreateErrorTitle"), ex.Message);
         }
     }
 
-    private async Task CreateShellOrganizerAsync(string? storagePath)
+    private Task CreateShellOrganizerAsync(Func<string?> resolveStoragePath)
     {
-        try
-        {
-            string name = AppStrings.DefaultOrganizerName;
-            if (storagePath is not null)
+        return FolderOrganizerCreation.RunWithFeedbackAsync(
+            () => _shellOrganizerCreation.CreateAsync(resolveStoragePath(), State.GlobalSettings, State.Organizers, async (draft, path) =>
             {
-                if (string.IsNullOrWhiteSpace(storagePath) || !Path.IsPathFullyQualified(storagePath))
-                    throw new InvalidOperationException(AppStrings.Get("StorageAbsoluteRequired"));
-                name = Path.GetFileName(Path.TrimEndingDirectorySeparator(storagePath));
-            }
-            DisplayInfo display = NativeMethods.GetCursorPos(out NativeMethods.POINT cursor)
-                ? DisplayPlacementService.ForBounds(new NativeMethods.RECT
-                {
-                    Left = cursor.X,
-                    Top = cursor.Y,
-                    Right = cursor.X + 1,
-                    Bottom = cursor.Y + 1
-                })
-                : DisplayPlacementService.GetDisplay();
-            await CreateOrganizerAsync(new OrganizerDefinition
+                DisplayInfo display = NativeMethods.GetCursorPos(out NativeMethods.POINT cursor)
+                    ? DisplayPlacementService.ForBounds(new NativeMethods.RECT
+                    {
+                        Left = cursor.X,
+                        Top = cursor.Y,
+                        Right = cursor.X + 1,
+                        Bottom = cursor.Y + 1
+                    })
+                    : DisplayPlacementService.GetDisplay();
+                draft.Position = new WidgetPosition { MonitorDevice = display.Device };
+                await CreateOrganizerAsync(draft, path);
+            }),
+            ShowOrganizerCreationErrorAsync,
+            ex => AppLogger.Error("Shell 收纳窗创建或错误提示失败。", ex),
+            message => ReportOperationError(AppStrings.Get("CreateErrorTitle"), message));
+    }
+
+    private Task ShowOrganizerCreationErrorAsync(string message)
+    {
+        DisplayInfo display = NativeMethods.GetCursorPos(out NativeMethods.POINT cursor)
+            ? DisplayPlacementService.ForBounds(new NativeMethods.RECT
             {
-                Name = name,
-                PlacementMode = OrganizerPlacementMode.Floating,
-                Position = new WidgetPosition { MonitorDevice = display.Device }
-            }, storagePath);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("无法从 Shell 命令创建收纳窗。", ex);
-            Notify(AppStrings.Get("CreateErrorTitle"), ex.Message, warning: true);
-        }
+                Left = cursor.X, Top = cursor.Y, Right = cursor.X + 1, Bottom = cursor.Y + 1
+            })
+            : DisplayPlacementService.GetDisplay();
+        return ShowOperationErrorAsync(AppStrings.Get("CreateErrorTitle"), message, monitorDevice: display.Device);
     }
 
     public async Task<OrganizerDefinition> DuplicateOrganizerAsync(Guid id)
@@ -454,6 +470,7 @@ public sealed class AppHost : IDisposable
 
     internal void OpenNote(Guid organizerId, Guid noteId)
     {
+        if (IsPreparingUpdate) return;
         OrganizerDefinition organizer = State.Organizers.First(item => item.Id == organizerId);
         NoteDefinition note = organizer.Notes.First(item => item.Id == noteId);
         if (!_noteWindows.TryGetValue(noteId, out NoteWindow? window))
@@ -467,15 +484,17 @@ public sealed class AppHost : IDisposable
 
     internal async Task OpenExternalNoteAsync(string path)
     {
+        if (IsPreparingUpdate) return;
         string fullPath = Path.GetFullPath(path);
         if (!Path.GetExtension(fullPath).Equals(".tucknote", StringComparison.OrdinalIgnoreCase))
         {
-            Notify("TuckPane", AppStrings.Format("PortableNoteOpenErrorFormat", Path.GetFileName(fullPath), AppStrings.Get("PortableNoteExtensionError")), warning: true);
+            ReportOperationError("TuckPane", AppStrings.Format("PortableNoteOpenErrorFormat", Path.GetFileName(fullPath), AppStrings.Get("PortableNoteExtensionError")));
             return;
         }
         await _externalNoteOpenGate.WaitAsync();
         try
         {
+            if (IsPreparingUpdate) return;
             if (_externalNoteWindows.TryGetValue(fullPath, out NoteWindow? existing))
             {
                 _trayHiddenExternalNotes.Remove(fullPath);
@@ -488,6 +507,7 @@ public sealed class AppHost : IDisposable
                 portable.Theme = State.GlobalSettings.NoteTheme;
                 await _noteStore.SavePortableAsync(fullPath, portable);
             }
+            if (IsPreparingUpdate) return;
             var definition = new NoteDefinition
             {
                 Name = Path.GetFileNameWithoutExtension(fullPath),
@@ -504,7 +524,7 @@ public sealed class AppHost : IDisposable
         catch (Exception ex)
         {
             AppLogger.Error($"无法打开便携便签：{fullPath}", ex);
-            Notify("TuckPane", AppStrings.Format("PortableNoteOpenErrorFormat", Path.GetFileName(fullPath), ex.Message), warning: true);
+            ReportOperationError("TuckPane", AppStrings.Format("PortableNoteOpenErrorFormat", Path.GetFileName(fullPath), ex.Message));
         }
         finally
         {
@@ -514,15 +534,17 @@ public sealed class AppHost : IDisposable
 
     internal async Task OpenExternalTodoAsync(string path)
     {
+        if (IsPreparingUpdate) return;
         string fullPath = Path.GetFullPath(path);
         if (!Path.GetExtension(fullPath).Equals(".tucktodo", StringComparison.OrdinalIgnoreCase))
         {
-            Notify("TuckPane", AppStrings.Format("PortableTodoOpenErrorFormat", Path.GetFileName(fullPath), AppStrings.Get("PortableTodoExtensionError")), warning: true);
+            ReportOperationError("TuckPane", AppStrings.Format("PortableTodoOpenErrorFormat", Path.GetFileName(fullPath), AppStrings.Get("PortableTodoExtensionError")));
             return;
         }
         await _externalNoteOpenGate.WaitAsync();
         try
         {
+            if (IsPreparingUpdate) return;
             if (_externalTodoWindows.TryGetValue(fullPath, out TodoWindow? existing))
             {
                 _trayHiddenExternalTodos.Remove(fullPath);
@@ -535,6 +557,7 @@ public sealed class AppHost : IDisposable
                 document.Theme = State.GlobalSettings.NoteTheme;
                 await _noteStore.SaveTodoAsync(fullPath, document);
             }
+            if (IsPreparingUpdate) return;
             var window = new TodoWindow(this, _noteStore, fullPath, document);
             window.InitializeHostWindow();
             _externalTodoWindows[fullPath] = window;
@@ -543,7 +566,7 @@ public sealed class AppHost : IDisposable
         catch (Exception ex)
         {
             AppLogger.Error($"无法打开便携待办：{fullPath}", ex);
-            Notify("TuckPane", AppStrings.Format("PortableTodoOpenErrorFormat", Path.GetFileName(fullPath), ex.Message), warning: true);
+            ReportOperationError("TuckPane", AppStrings.Format("PortableTodoOpenErrorFormat", Path.GetFileName(fullPath), ex.Message));
         }
         finally
         {
@@ -987,7 +1010,7 @@ public sealed class AppHost : IDisposable
     public async Task<string?> ToggleOrganizerModeAsync(Guid id)
     {
         OrganizerDefinition current = State.Organizers.First(item => item.Id == id);
-        if (current.PlacementMode == OrganizerPlacementMode.Station) return AppStrings.Get("StationManageModeError");
+        if (!OrganizerKinds.IsRegular(current.PlacementMode)) return AppStrings.Get("StationManageModeError");
         if (_windows.TryGetValue(id, out MainWindow? window) && window.IsExpanded)
         {
             await window.CollapseForPeerAsync();
@@ -1035,12 +1058,6 @@ public sealed class AppHost : IDisposable
         {
             return AppStrings.Get("StationEdgeOccupiedError");
         }
-        if (current.PlacementMode == OrganizerPlacementMode.Station &&
-            edited.PlacementMode != OrganizerPlacementMode.Station &&
-            State.Organizers.Count(item => item.Id != edited.Id && item.PlacementMode != OrganizerPlacementMode.Station) >= OrganizerLimits.MaximumOrganizers)
-        {
-            return AppStrings.Get("MaximumOrganizersError");
-        }
         bool layoutChanged = current.Layout.Mode != edited.Layout.Mode ||
             current.Layout.Rows != edited.Layout.Rows ||
             current.Layout.Columns != edited.Layout.Columns;
@@ -1048,9 +1065,11 @@ public sealed class AppHost : IDisposable
         double previousCompactScale = current.CompactScale;
         WidgetPosition? previousPosition = current.Position;
         Guid[] previousContainmentChain = OrganizerContainment.GetAncestorIds(State.Organizers, current.Id).ToArray();
-        current.Name = string.IsNullOrWhiteSpace(edited.Name) ? current.Name : edited.Name.Trim();
+        // Display names are persisted only by RenameOrganizerAsync.
         current.PlacementMode = edited.PlacementMode;
         current.DockEdge = edited.DockEdge;
+        if (current.PlacementMode == OrganizerPlacementMode.Dock)
+            DockSettings.Apply(current, edited.DockOrientation, edited.DockIconSizeDip, edited.DockSpacingFactor);
         if (edited.PlacementMode == OrganizerPlacementMode.Station && edited.Position is not null)
             current.Position = edited.Position;
         current.Layout = new OrganizerLayout { Mode = edited.Layout.Mode, Rows = edited.Layout.Rows, Columns = edited.Layout.Columns };
@@ -1059,6 +1078,8 @@ public sealed class AppHost : IDisposable
         current.ItemScale = edited.ItemScale;
         current.NameScale = edited.NameScale;
         current.CompactListItemScale = edited.CompactListItemScale;
+        current.IconContentScale = edited.IconContentScale;
+        current.CompactListContentScale = edited.CompactListContentScale;
         current.ExpandedContentMode = edited.ExpandedContentMode;
         current.CompactListCanvasWidthDip = edited.CompactListCanvasWidthDip;
         current.CompactListCanvasHeightDip = edited.CompactListCanvasHeightDip;
@@ -1266,8 +1287,9 @@ public sealed class AppHost : IDisposable
         return true;
     }
 
-    public async Task<TransferOutcome> DeleteOrganizerAsync(Guid id)
+    public async Task<TransferOutcome> DeleteOrganizerAsync(Guid id, OrganizerDeleteDisposition disposition)
     {
+        if (!Enum.IsDefined(disposition)) throw new ArgumentOutOfRangeException(nameof(disposition));
         if (TransferQueue.IsActive) return new(string.Empty, null, TransferStatus.Failed, AppStrings.Get("TransferBeforeDelete"));
         OrganizerDefinition definition = State.Organizers.First(item => item.Id == id);
         if (!TryCreateOrganizerReleasePlan(definition, out IReadOnlyList<OrganizerReleasePlacement> releasePlan, out string? releaseError))
@@ -1318,13 +1340,13 @@ public sealed class AppHost : IDisposable
 
         string sourceRoot = Path.GetFullPath(AppPaths.ResolveStoragePath(definition));
         TransferOutcome outcome;
-        if (State.GlobalSettings.MoveOrganizerFilesToDesktopOnDelete)
+        if (disposition == OrganizerDeleteDisposition.MoveFolderToDesktop)
         {
             await _externalNoteOpenGate.WaitAsync();
-            try
-            {
             var movedNotes = new List<(string OldPath, NoteWindow Window, bool WasVisible, bool WasTrayHidden)>();
             var movedTodos = new List<(string OldPath, TodoWindow Window, bool WasVisible, bool WasTrayHidden)>();
+            try
+            {
             try
             {
                 foreach ((string path, NoteWindow noteWindow) in _externalNoteWindows.Where(pair =>
@@ -1355,6 +1377,15 @@ public sealed class AppHost : IDisposable
             outcome = await TransferQueue.RunAsync(token => storage.ExportToDesktopAsync(definition.Name, null, token));
             if (outcome.Status != TransferStatus.Moved)
             {
+                if (outcome is { Status: TransferStatus.CopiedSourceRetained, DestinationPath: not null })
+                {
+                    foreach (string oldPath in movedNotes.Select(item => item.OldPath).Concat(movedTodos.Select(item => item.OldPath)))
+                    {
+                        string? recovered = OrganizerNoteRules.RebaseTopLevelPortablePath(sourceRoot, outcome.DestinationPath, oldPath);
+                        if (!File.Exists(oldPath) && recovered is not null && File.Exists(recovered))
+                            RebindPortableWindowAfterMove(oldPath, recovered);
+                    }
+                }
                 foreach (var item in movedNotes.Where(item => item.WasVisible)) item.Window.RestoreAfterDrag();
                 foreach (var item in movedTodos.Where(item => item.WasVisible)) item.Window.RestoreAfterDrag();
                 return outcome;
@@ -1398,6 +1429,10 @@ public sealed class AppHost : IDisposable
             }
             finally
             {
+                foreach (var item in movedNotes.Where(item => item.WasVisible))
+                    try { item.Window.RestoreAfterDrag(); } catch (Exception ex) { AppLogger.Error("Restore exported note failed", ex); }
+                foreach (var item in movedTodos.Where(item => item.WasVisible))
+                    try { item.Window.RestoreAfterDrag(); } catch (Exception ex) { AppLogger.Error("Restore exported todo failed", ex); }
                 _externalNoteOpenGate.Release();
             }
         }
@@ -1470,22 +1505,19 @@ public sealed class AppHost : IDisposable
         double transparency,
         double blurStrength,
         bool solidColorMode = false,
-        double? solidOpacity = null)
+        double? solidOpacity = null,
+        bool? fullyTransparent = null)
     {
         GlobalSettings settings = State.GlobalSettings;
         ThemeValues previous = settings.GetTheme(target);
-        double inactiveGlassTransparency = target == ThemeTarget.Settings
-            ? settings.SettingsThemeTransparency
-            : settings.ThemeTransparency;
-        double effectiveTransparency = solidColorMode
-            ? (solidOpacity ?? (solidColorMode != previous.SolidColorMode ? previous.SolidOpacity : transparency))
-            : (solidColorMode != previous.SolidColorMode ? inactiveGlassTransparency : transparency);
-        ThemeValues theme = GlobalSettings.NormalizeTheme(new(
+        ThemeValues theme = GlobalSettings.ResolveThemeUpdate(
+            previous,
             colorArgb,
-            effectiveTransparency,
+            transparency,
             blurStrength,
             solidColorMode,
-            solidOpacity ?? previous.SolidOpacity));
+            solidOpacity,
+            fullyTransparent);
         if (settings.GetTheme(target) == theme) return;
         settings.SetTheme(target, theme);
         ThemeChanged?.Invoke(this, EventArgs.Empty);
@@ -1509,6 +1541,14 @@ public sealed class AppHost : IDisposable
         }
     }
 
+    private void RefreshFolderContextMenuLabel()
+    {
+        try { DesktopContextMenu.UpdateLabelIfOwned(AppStrings.Get("DesktopMenuCommand")); }
+        catch (Exception ex) { AppLogger.Error("无法更新桌面菜单文字。", ex); }
+        try { FolderContextMenu.UpdateLabelIfOwned(AppStrings.Get("FolderMenuCommand")); }
+        catch (Exception ex) { AppLogger.Error("无法更新文件夹右键菜单文字；可在系统设置中修复关联。", ex); }
+    }
+
     public async Task SetDefaultStorageDirectoryAsync(string? path)
     {
         string? normalized = string.IsNullOrWhiteSpace(path) ? null : AppPaths.ValidateCustomStoragePath(path);
@@ -1525,6 +1565,7 @@ public sealed class AppHost : IDisposable
             throw;
         }
         Console.RefreshAll();
+
     }
 
     public async Task SetLanguageAsync(AppLanguage language)
@@ -1548,6 +1589,7 @@ public sealed class AppHost : IDisposable
             AppStrings.SetLanguage(previous);
             throw;
         }
+        RefreshFolderContextMenuLabel();
         Console.ApplyLanguage();
         foreach (MainWindow window in _windows.Values) window.ApplyLanguage();
         foreach (NoteWindow window in _noteWindows.Values) window.ApplyLanguage();
@@ -1555,19 +1597,27 @@ public sealed class AppHost : IDisposable
         foreach (TodoWindow window in _externalTodoWindows.Values) window.ApplyLanguage();
         _tray?.ApplyLanguage();
         Console.RefreshAll();
+
     }
 
-    public async Task PrepareToExpandAsync(MainWindow source)
+    public async Task PrepareToExpandAsync(MainWindow source, Func<bool>? isCurrent = null)
     {
+        if (isCurrent?.Invoke() == false) return;
+        if (source.StaysExpanded) return;
         if (State.GlobalSettings.ExclusiveExpansion)
         {
             MainWindow[] unrelated = _windows.Values
-                .Where(window => !ReferenceEquals(window, source) && window.IsExpanded &&
+                .Where(window => !ReferenceEquals(window, source) && window.IsExpanded && !window.StaysExpanded &&
                     !IsContainedParentChildPair(window, source) && !window.IsShellDragActive)
                 .OrderBy(window => window.ContainerOrganizerId is null ? 1 : 0)
                 .ToArray();
-            foreach (MainWindow window in unrelated) await window.CollapseForPeerAsync();
+            foreach (MainWindow window in unrelated)
+            {
+                if (isCurrent?.Invoke() == false) return;
+                await window.CollapseForPeerAsync();
+            }
         }
+        if (isCurrent?.Invoke() == false) return;
         _expandedWindow = source;
     }
 
@@ -1578,13 +1628,14 @@ public sealed class AppHost : IDisposable
             source.RaiseActiveCompactOrganizerDrag();
     }
 
-    internal async Task CollapseContainedChildrenAsync(Guid containerId)
+    internal async Task CollapseContainedChildrenAsync(Guid containerId, Func<bool>? isCurrent = null)
     {
         foreach (MainWindow child in _windows.Values.Where(window =>
                      window.OrganizerId != containerId &&
                      OrganizerContainment.IsAncestor(State.Organizers, containerId, window.OrganizerId) &&
                      window.IsExpanded).ToArray())
         {
+            if (isCurrent?.Invoke() == false) return;
             await child.CollapseForPeerAsync();
         }
     }
@@ -1614,13 +1665,13 @@ public sealed class AppHost : IDisposable
     internal async Task ReconcileExclusiveExpansionAsync(MainWindow? preferred = null)
     {
         if (!State.GlobalSettings.ExclusiveExpansion) return;
-        MainWindow? keep = preferred is { IsExpanded: true } ? preferred :
-            _expandedWindow is { IsExpanded: true } ? _expandedWindow :
-            _windows.Values.FirstOrDefault(window => window.IsExpanded);
+        MainWindow? keep = preferred is { IsExpanded: true, StaysExpanded: false } ? preferred :
+            _expandedWindow is { IsExpanded: true, StaysExpanded: false } ? _expandedWindow :
+            _windows.Values.FirstOrDefault(window => window.IsExpanded && !window.StaysExpanded);
         _expandedWindow = keep;
         foreach (MainWindow window in _windows.Values.ToArray())
         {
-            if (!ReferenceEquals(window, keep) && window.IsExpanded && !window.IsShellDragActive &&
+            if (!ReferenceEquals(window, keep) && window.IsExpanded && !window.StaysExpanded && !window.IsShellDragActive &&
                 (keep is null || !IsContainedParentChildPair(window, keep)))
                 await window.CollapseForPeerAsync();
         }
@@ -1630,7 +1681,7 @@ public sealed class AppHost : IDisposable
     {
         if (!ReferenceEquals(_expandedWindow, source)) return;
         _expandedWindow = OrganizerContainment.GetAncestorIds(State.Organizers, source.OrganizerId)
-            .Select(id => _windows.TryGetValue(id, out MainWindow? ancestor) && ancestor.IsExpanded ? ancestor : null)
+            .Select(id => _windows.TryGetValue(id, out MainWindow? ancestor) && ancestor.IsExpanded && !ancestor.StaysExpanded ? ancestor : null)
             .FirstOrDefault(ancestor => ancestor is not null);
     }
 
@@ -1674,32 +1725,24 @@ public sealed class AppHost : IDisposable
         MainWindow? target = _windows.Values.FirstOrDefault(candidate =>
             !ReferenceEquals(candidate, source) &&
             candidate.OrganizerId != draggedOrganizerId &&
+            OrganizerKinds.IsRegular(candidate.DefinitionPlacementMode) &&
+            candidate.ContainerOrganizerId is null &&
             !OrganizerContainment.IsAncestor(State.Organizers, draggedOrganizerId, candidate.OrganizerId) &&
-            candidate.TryGetCompactDropBounds(out NativeMethods.RECT bounds) &&
-            DragBoundaryMath.Contains(bounds, point) &&
-            OrganizerInteractionMath.ShouldExpandForOrganizerDragHover(
-                dragActive: true,
-                sourceIsTarget: ReferenceEquals(source, candidate),
-                targetMode: candidate.DefinitionPlacementMode,
-                targetContained: candidate.ContainerOrganizerId is not null,
-                targetExpanded: candidate.IsExpanded && !candidate.IsAnimating,
-                targetAnimating: candidate.IsAnimating));
+            (candidate.IsExpanded && candidate.ContainsScreenPoint(point) ||
+             candidate.TryGetCompactDropBounds(out NativeMethods.RECT bounds) && DragBoundaryMath.Contains(bounds, point)));
+
 
         if (target is null)
         {
-            if (_organizerDragHoverSource == source)
-            {
-                _organizerDragHoverSource = null;
-                _organizerDragHoverTarget = null;
-                _organizerDragHoverTask = null;
-                _organizerDragHoverBounds = default;
-            }
+            EndOrganizerDragHover(source);
             return;
         }
 
         if (ReferenceEquals(_organizerDragHoverSource, source) &&
             ReferenceEquals(_organizerDragHoverTarget, target)) return;
 
+        _organizerDragHoverHold?.Dispose();
+        _organizerDragHoverHold = target.HoldIncomingDrop();
         _organizerDragHoverSource = source;
         _organizerDragHoverTarget = target;
         _ = target.TryGetCompactDropBounds(out _organizerDragHoverBounds);
@@ -1717,6 +1760,13 @@ public sealed class AppHost : IDisposable
             try { await task; }
             catch (Exception ex) { AppLogger.Error("收纳窗拖动悬停展开失败。", ex); }
         }
+    }
+
+    internal void EndOrganizerDragHover(MainWindow source)
+    {
+        if (!ReferenceEquals(_organizerDragHoverSource, source)) return;
+        _organizerDragHoverHold?.Dispose();
+        _organizerDragHoverHold = null;
         _organizerDragHoverSource = null;
         _organizerDragHoverTarget = null;
         _organizerDragHoverTask = null;
@@ -1733,6 +1783,7 @@ public sealed class AppHost : IDisposable
             if (target.OrganizerId == organizer.Id ||
                 OrganizerContainment.IsAncestor(State.Organizers, organizer.Id, target.OrganizerId)) continue;
             if (!target.TryGetOrganizerDropIndex(dropPoint, out int insertionIndex)) continue;
+            using var receivingDrop = target.HoldIncomingDrop();
             await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex);
             return true;
         }
@@ -1748,6 +1799,7 @@ public sealed class AppHost : IDisposable
             if (target.OrganizerId == organizer.Id ||
                 OrganizerContainment.IsAncestor(State.Organizers, organizer.Id, target.OrganizerId)) continue;
             if (!target.TryGetOrganizerDropIndex(dropPoint, out int insertionIndex)) continue;
+            using var receivingDrop = target.HoldIncomingDrop();
             await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex);
             return null;
         }
@@ -1889,6 +1941,7 @@ public sealed class AppHost : IDisposable
     {
         OrganizerContainmentFailure.SameOrganizer => AppStrings.Get("OrganizerContainmentSelfError"),
         OrganizerContainmentFailure.StationCannotBeContained => AppStrings.Get("OrganizerContainmentStationSourceError"),
+        OrganizerContainmentFailure.DockCannotBeContained => AppStrings.Get("DockCannotBeContained"),
         OrganizerContainmentFailure.TargetIsDescendant => AppStrings.Get("OrganizerContainmentTargetContainedError"),
         _ => AppStrings.Get("OrganizerContainmentMissingError")
     };
@@ -1905,18 +1958,11 @@ public sealed class AppHost : IDisposable
         _ = _dispatcher.TryEnqueue(() => Console.ShowAndActivate(organizerId));
     }
 
-    public void Notify(string title, string message, bool warning = false)
-    {
-        AppLogger.Info($"{title}: {message}");
-        _tray?.ShowNotification(title, message, warning);
-    }
-
     public void NotifyTransparencyFallback()
     {
         if (_transparencyNoticeShown) return;
         _transparencyNoticeShown = true;
-        Notify("TuckPane", AppStrings.Get("TransparencyNotification"));
-        Console.ShowTransparencyNotice();
+        LogStatus("TuckPane", AppStrings.Get("TransparencyNotification"));
     }
 
     private DesktopGridPlacement? FindPositionedPlacement(
@@ -1997,7 +2043,7 @@ public sealed class AppHost : IDisposable
         if (!snapshot.ExplorerPositionsAvailable && !_gridFallbackNoticeShown)
         {
             _gridFallbackNoticeShown = true;
-            Notify("TuckPane", AppStrings.Get("GridFallbackMessage"));
+            LogStatus("TuckPane", AppStrings.Get("GridFallbackMessage"));
         }
         return snapshot;
     }
@@ -2340,18 +2386,48 @@ public sealed class AppHost : IDisposable
         foreach (MainWindow window in _windows.Values) window.RefreshHoverDelays();
     }
 
-    public Task SaveStateAsync() => _stateStore.SaveAsync(State);
+    private string LifecycleWindowCounts() =>
+        $"organizers={_windows.Count} notes={_noteWindows.Count + _externalNoteWindows.Count} " +
+        $"todos={_externalTodoWindows.Count} exiting={_exitPreparation.IsActive}";
 
-    public async Task ExitAsync()
+    public Task ExitAsync(string source = "app") => ExitCoreAsync(source, null);
+    internal Task<bool> ExitForUpdateAsync(Func<Task> handoff) => ExitCoreAsync("update", handoff);
+    private async Task<bool> ExitCoreAsync(string source, Func<Task>? handoff)
     {
-        if (Interlocked.CompareExchange(ref _exiting, 1, 0) != 0) return;
-        if (TransferQueue.IsActive && !await Console.ConfirmCancelTransferAndExitAsync()) { Volatile.Write(ref _exiting, 0); return; }
-        if (!await Console.FlushPendingThemeSaveAsync()) { Volatile.Write(ref _exiting, 0); return; }
+        using ExitPreparation.Attempt? attempt = _exitPreparation.TryBegin(TransferQueue);
+        if (attempt is null) return false;
+        IsPreparingUpdate = handoff is not null;
+        UpdateWindowInput? frozen = null;
+        try
+        {
+        AppLogger.Lifecycle("exit-begin", $"source={source} {LifecycleWindowCounts()}");
+        if (TransferQueue.IsActive && !await Console.ConfirmCancelTransferAndExitAsync())
+        {
+            AppLogger.Lifecycle("exit-cancelled", $"source={source} reason=transfer-confirmation");
+            return false;
+        }
+        if (!await attempt.WaitForTransfersAsync(TimeSpan.FromSeconds(5)))
+        {
+            AppLogger.Lifecycle("exit-cancelled", "reason=transfer-timeout");
+            Console.ShowExitPending();
+            return false;
+        }
+        if (handoff is not null)
+        {
+            frozen = new UpdateWindowInput(_windows.Values.Cast<Window>().Concat(_noteWindows.Values).Concat(_externalNoteWindows.Values).Concat(_externalTodoWindows.Values).Append(Console).Distinct());
+            await _externalNoteOpenGate.WaitAsync();
+            _externalNoteOpenGate.Release();
+        }
+        if (!await Console.FlushPendingThemeSaveAsync())
+        {
+            AppLogger.Lifecycle("exit-cancelled", $"source={source} reason=theme-save");
+            return false;
+        }
         if (!await Console.FlushPendingManageChangesAsync())
         {
+            AppLogger.Lifecycle("exit-cancelled", $"source={source} reason=manage-save");
             Console.ShowAndActivate();
-            Volatile.Write(ref _exiting, 0);
-            return;
+            return false;
         }
 
         NoteWindow[] noteWindows = _noteWindows.Values
@@ -2361,22 +2437,28 @@ public sealed class AppHost : IDisposable
         foreach (NoteWindow window in noteWindows)
         {
             if (await window.FlushForExitAsync()) continue;
+            AppLogger.Lifecycle("exit-cancelled", $"source={source} reason=note-save");
             window.ShowAndActivate();
-            Volatile.Write(ref _exiting, 0);
-            return;
+            return false;
         }
         TodoWindow[] todoWindows = _externalTodoWindows.Values.Distinct().ToArray();
         foreach (TodoWindow window in todoWindows)
         {
             if (await window.FlushForExitAsync()) continue;
+            AppLogger.Lifecycle("exit-cancelled", $"source={source} reason=todo-save");
             window.ShowAndActivate();
-            Volatile.Write(ref _exiting, 0);
-            return;
+            return false;
         }
 
-        TransferQueue.CancelAll();
-        if (!await TransferQueue.WaitForIdleAsync(TimeSpan.FromSeconds(5)))
-            AppLogger.Error("退出时传输队列未能在 5 秒内结束，将继续关闭窗口。");
+        if (handoff is not null)
+        {
+            await SaveStateAsync();
+            await handoff();
+        }
+        AppLogger.Lifecycle("exit-commit", $"source={source} {LifecycleWindowCounts()}");
+        attempt.Commit();
+        Updates.Dispose();
+        ShellLauncher.Dispose();
         foreach (NoteWindow window in noteWindows) window.ClosePermanentlyWithoutSave();
         foreach (TodoWindow window in todoWindows) window.ClosePermanentlyWithoutSave();
         _noteWindows.Clear();
@@ -2386,24 +2468,53 @@ public sealed class AppHost : IDisposable
         _windows.Clear();
         _tray?.Dispose();
         Console.ClosePermanently();
-        await AppLogger.FlushAsync();
+        try { await AppLogger.FlushAsync().WaitAsync(TimeSpan.FromSeconds(2)); }
+        catch (TimeoutException) { }
+        AppLogger.Lifecycle("exit-application", $"source={source}");
         Application.Current.Exit();
+        return true;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Exit preparation failed", ex);
+            if (attempt.IsCommitted) Application.Current.Exit();
+            else if (handoff is not null) throw;
+            else Console.ShowExitPending();
+            return attempt.IsCommitted;
+        }
+        finally
+        {
+            if (!attempt.IsCommitted)
+            {
+                IsPreparingUpdate = false;
+                frozen?.Dispose();
+            }
+        }
     }
 
     private void CreateWindow(OrganizerDefinition organizer)
     {
+        if (IsPreparingUpdate) return;
         var window = new MainWindow(this, organizer);
         window.InitializeHostWindow();
         _windows.Add(organizer.Id, window);
-        window.Activate();
-        if (organizer.ContainerOrganizerId is not null) window.SetContained(true);
-        else if (organizer.PlacementMode == OrganizerPlacementMode.Station) window.SetVisible(true);
+        if (organizer.PlacementMode == OrganizerPlacementMode.Station)
+        {
+            _ = window.InitializeAsync();
+            window.SetVisible(true);
+        }
+        else
+        {
+            window.Activate();
+            if (organizer.ContainerOrganizerId is not null) window.SetContained(true);
+        }
     }
 
     private void HandleTrayCommand(TrayCommand command)
     {
         _ = _dispatcher.TryEnqueue(async () =>
         {
+            if (IsPreparingUpdate) return;
             try
             {
                 switch (command)
@@ -2461,19 +2572,24 @@ public sealed class AppHost : IDisposable
                         TransferQueue.CancelCurrent();
                         break;
                     case TrayCommand.Exit:
-                        await ExitAsync();
+                        await ExitAsync("tray");
                         break;
                 }
             }
             catch (Exception ex)
             {
                 AppLogger.Error($"托盘命令处理失败：{command}", ex);
+                if (command == TrayCommand.Exit)
+                    AppLogger.Lifecycle("exit-failed", $"source=tray type={ex.GetType().FullName} hresult=0x{ex.HResult:X8}");
             }
         });
     }
 
     public void Dispose()
     {
+        _feedbackDisposed = true;
+        DisposeDockRunningState();
+        AppLogger.Lifecycle("host-dispose", LifecycleWindowCounts());
         _tray?.Dispose();
         foreach (NoteWindow window in _noteWindows.Values) _ = window.ClosePermanentlyAsync();
         foreach (NoteWindow window in _externalNoteWindows.Values) _ = window.ClosePermanentlyAsync();
@@ -2481,3 +2597,5 @@ public sealed class AppHost : IDisposable
         foreach (MainWindow window in _windows.Values) window.ClosePermanently();
     }
 }
+
+

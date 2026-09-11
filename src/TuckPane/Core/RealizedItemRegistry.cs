@@ -4,6 +4,8 @@ internal sealed class RealizedItemRegistry<THost> where THost : class
 {
     private readonly Dictionary<string, THost> _hosts = new(StringComparer.OrdinalIgnoreCase);
 
+    internal int Count => _hosts.Count;
+
     internal void Register(string identity, THost host)
     {
         foreach ((string existingIdentity, THost existingHost) in _hosts.ToArray())

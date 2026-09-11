@@ -1,4 +1,5 @@
 using TuckPane.Services;
+using TuckPane.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
 using System.ComponentModel;
@@ -14,19 +15,41 @@ public static class Program
 {
     internal static string[] InitialArguments { get; private set; } = [];
     internal static AppInstance? PrimaryInstance { get; private set; }
+    internal static ActivationInbox<AppActivationArguments> Activations { get; } = new();
 
     [STAThread]
     public static int Main(string[] args)
     {
+        AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
+        {
+            AppLogger.Record(DiagnosticArea.Runtime, DiagnosticStage.Failed, exception: eventArgs.ExceptionObject as Exception);
+            try { AppLogger.FlushAsync().Wait(TimeSpan.FromMilliseconds(300)); } catch { }
+        };
+        TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
+            AppLogger.Record(DiagnosticArea.Runtime, DiagnosticStage.Failed, exception: eventArgs.Exception);
+        try { return Run(args); }
+        catch (Exception ex)
+        {
+            AppLogger.Record(DiagnosticArea.Runtime, DiagnosticStage.Failed, exception: ex);
+            try { AppLogger.FlushAsync().Wait(TimeSpan.FromMilliseconds(300)); } catch { }
+            return 1;
+        }
+    }
+
+    private static int Run(string[] args)
+    {
+        AppLogger.Record(DiagnosticArea.Lifecycle, DiagnosticStage.Started);
         InitialArguments = args;
         AppActivationArguments activation = AppInstance.GetCurrent().GetActivatedEventArgs();
         AppInstance registered = AppInstance.FindOrRegisterForKey(CreateInstanceKey());
         if (!registered.IsCurrent)
         {
+            AppLogger.Lifecycle("activation-redirect", "source=secondary-instance");
             RedirectActivation(registered, activation);
             return 0;
         }
         PrimaryInstance = registered;
+        registered.Activated += (_, activationArgs) => Activations.Enqueue(activationArgs);
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
         Application.Start(_ =>
@@ -36,6 +59,8 @@ public static class Program
             SynchronizationContext.SetSynchronizationContext(context);
             new App();
         });
+        AppLogger.Lifecycle("message-loop-ended", "source=Application.Start");
+        try { AppLogger.FlushAsync().Wait(TimeSpan.FromMilliseconds(300)); } catch { }
         return 0;
     }
 
@@ -66,11 +91,9 @@ public static class Program
 public partial class App : Application
 {
     private readonly SingleInstanceGuard _singleInstance = CreateSingleInstanceGuard();
-    private readonly Queue<AppActivationArguments> _pendingActivations = [];
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher =
         Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
     private AppHost? _host;
-    private bool _hostReady;
 
     public App()
     {
@@ -78,11 +101,11 @@ public partial class App : Application
         UnhandledException += (_, args) =>
         {
             AppLogger.Error("Unhandled UI exception", args.Exception);
+            AppLogger.Lifecycle("ui-exception", $"type={args.Exception.GetType().FullName} hresult=0x{args.Exception.HResult:X8} handled=true");
             // Keep recoverable async-void/UI callback failures from terminating
             // the process. Native fail-fast crashes are still handled by WER.
             args.Handled = true;
         };
-        if (Program.PrimaryInstance is not null) Program.PrimaryInstance.Activated += AppInstance_Activated;
     }
 
     protected override async void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
@@ -90,44 +113,28 @@ public partial class App : Application
         if (!_singleInstance.IsPrimary)
         {
             if (!_singleInstance.SignalPrimary()) SingleInstanceGuard.ShowLegacyInstanceMessage();
+            AppLogger.Lifecycle("exit-request", "source=OnLaunched reason=legacy-instance");
             Exit();
             return;
         }
 
         try
         {
+            AppLogger.Lifecycle("startup");
             _host = new AppHost();
             await _host.InitializeAsync();
             _singleInstance.Listen(() => _host.OpenConsole());
             await HandleArgumentsAsync(Program.InitialArguments, redirected: false);
-            _hostReady = true;
-            while (_pendingActivations.Count > 0) await HandleActivationAsync(_pendingActivations.Dequeue());
+            Program.Activations.Start(HandleActivationAsync,
+                work => _dispatcher.TryEnqueue(async () => await work()),
+                ex => AppLogger.Error("处理应用激活失败。", ex));
         }
         catch (Exception ex)
         {
             AppLogger.Error("TuckPane 初始化失败。", ex);
+            AppLogger.Lifecycle("exit-request", $"source=OnLaunched reason=initialization-failed type={ex.GetType().FullName} hresult=0x{ex.HResult:X8}");
             Exit();
         }
-    }
-
-    private void AppInstance_Activated(object? sender, AppActivationArguments args)
-    {
-        _ = _dispatcher.TryEnqueue(async () =>
-        {
-            try
-            {
-                if (!_hostReady)
-                {
-                    _pendingActivations.Enqueue(args);
-                    return;
-                }
-                await HandleActivationAsync(args);
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error("处理应用激活失败。", ex);
-            }
-        });
     }
 
     private async Task HandleActivationAsync(AppActivationArguments activation)
@@ -156,7 +163,7 @@ public partial class App : Application
             var values = new string[count];
             for (int index = 0; index < count; index++)
                 values[index] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv, index * IntPtr.Size)) ?? string.Empty;
-            int start = values.Length > 0 && IsCurrentExecutable(values[0]) ? 1 : 0;
+            int start = values.Length > 0 && IsActivationExecutable(values[0]) ? 1 : 0;
             return values[start..];
         }
         finally
@@ -165,12 +172,19 @@ public partial class App : Application
         }
     }
 
-    private static bool IsCurrentExecutable(string candidate)
+    private static bool IsActivationExecutable(string candidate)
     {
         try
         {
-            return Environment.ProcessPath is string executable &&
-                Path.GetFullPath(candidate).Equals(Path.GetFullPath(executable), StringComparison.OrdinalIgnoreCase);
+            string fullPath = Path.GetFullPath(candidate);
+            if (Environment.ProcessPath is string executable &&
+                fullPath.Equals(Path.GetFullPath(executable), StringComparison.OrdinalIgnoreCase)) return true;
+            // All copies share one instance key. A redirected launch may originate in
+            // a different installation/portable directory, including its launcher alias.
+            string name = Path.GetFileName(fullPath);
+            return Path.IsPathFullyQualified(candidate) &&
+                (name.Equals("TuckPane.exe", StringComparison.OrdinalIgnoreCase) ||
+                 name.Equals("00-启动 TuckPane.exe", StringComparison.OrdinalIgnoreCase));
         }
         catch
         {
@@ -180,21 +194,20 @@ public partial class App : Application
 
     private async Task HandleArgumentsAsync(IEnumerable<string> arguments, bool redirected)
     {
-        string[] values = arguments.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
+        if (_host?.IsPreparingUpdate == true) return;
+        string[] rawArguments = arguments.ToArray();
+        if (FolderOrganizerCreation.IsRequest(rawArguments))
+        {
+            await _host!.CreateFolderOrganizerFromArgumentsAsync(rawArguments);
+            return;
+        }
+        string[] values = rawArguments.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
         int noteFolderIndex = Array.FindIndex(values,
             value => value.Equals("--create-note-in", StringComparison.OrdinalIgnoreCase));
         if (noteFolderIndex >= 0)
         {
             string folderPath = noteFolderIndex + 1 < values.Length ? values[noteFolderIndex + 1] : string.Empty;
             await _host!.CreateExternalNoteAsync(folderPath);
-            return;
-        }
-        int folderIndex = Array.FindIndex(values,
-            value => value.Equals("--create-organizer-in", StringComparison.OrdinalIgnoreCase));
-        if (folderIndex >= 0)
-        {
-            string folderPath = folderIndex + 1 < values.Length ? values[folderIndex + 1] : string.Empty;
-            await _host!.CreateFolderOrganizerAsync(folderPath);
             return;
         }
         string[] notePaths = values

@@ -9,6 +9,7 @@ internal sealed class OutsideClickHook : IDisposable
     private readonly Action<NativeMethods.POINT> _outsideClick;
     private readonly NativeMethods.HookProc _callback;
     private IntPtr _hook;
+    private long _generation;
 
     internal OutsideClickHook(IntPtr window, DispatcherQueue dispatcher, Action<NativeMethods.POINT> outsideClick)
     {
@@ -51,7 +52,11 @@ internal sealed class OutsideClickHook : IDisposable
             if (outside)
             {
                 NativeMethods.POINT clickPoint = data.Point;
-                _ = _dispatcher.TryEnqueue(() => _outsideClick(clickPoint));
+                long generation = Volatile.Read(ref _generation);
+                _ = _dispatcher.TryEnqueue(() =>
+                {
+                    if (_hook != IntPtr.Zero && generation == Volatile.Read(ref _generation)) _outsideClick(clickPoint);
+                });
             }
         }
 
@@ -60,6 +65,8 @@ internal sealed class OutsideClickHook : IDisposable
 
     private void StopNow()
     {
+        // Retire callbacks already queued on the UI dispatcher, even if Start follows immediately.
+        Interlocked.Increment(ref _generation);
         if (_hook == IntPtr.Zero)
         {
             return;

@@ -36,24 +36,32 @@ public sealed class IconCacheService
         }
     }
 
-    public async Task<BitmapImage?> GetIconAsync(string path, bool refresh = false)
+    public Task<BitmapImage?> GetIconAsync(string path, bool refresh = false) =>
+        GetIconCoreAsync(path, refresh, dockPresentation: false);
+
+    internal Task<BitmapImage?> GetDockIconAsync(string path, bool refresh = false) =>
+        GetIconCoreAsync(path, refresh, dockPresentation: true);
+
+    private async Task<BitmapImage?> GetIconCoreAsync(string path, bool refresh, bool dockPresentation)
     {
         AppPaths.EnsureCreated();
         string key = Path.GetFullPath(path);
         string identity = await Task.Run(() => BuildCacheIdentity(key));
-        if (_memoryCache.TryGetValue(key, out var cached) &&
+        string memoryKey = dockPresentation ? $"dock-visible-v1|{key}" : key;
+        if (dockPresentation) identity = $"dock-visible-v1|{identity}";
+        if (_memoryCache.TryGetValue(memoryKey, out var cached) &&
             (!refresh || string.Equals(cached.Identity, identity, StringComparison.Ordinal)))
         {
             return cached.Image;
         }
-        _memoryCache.Remove(key);
+        _memoryCache.Remove(memoryKey);
 
         string cachePath = Path.Combine(AppPaths.IconCacheRoot, $"{Hash(identity)}.png");
         if (!File.Exists(cachePath))
         {
             try
             {
-                await RefreshAsync(key, cachePath);
+                await RefreshAsync(key, cachePath, dockPresentation);
             }
             catch (Exception ex)
             {
@@ -68,7 +76,7 @@ public sealed class IconCacheService
             using IRandomAccessStream stream = await file.OpenAsync(FileAccessMode.Read);
             var image = new BitmapImage();
             await image.SetSourceAsync(stream);
-            _memoryCache[key] = (identity, image);
+            _memoryCache[memoryKey] = (identity, image);
             return image;
         }
         catch (Exception ex)
@@ -143,10 +151,14 @@ public sealed class IconCacheService
         return Path.GetFullPath(normalized);
     }
 
-    private static async Task RefreshAsync(string path, string cachePath)
+    private static async Task RefreshAsync(string path, string cachePath, bool dockPresentation)
     {
-        IconSnapshot snapshot = await TryExtractImageThumbnailAsync(path)
-            ?? await Task.Run(() => ExtractShellIconPixels(path));
+        IconSnapshot? thumbnail = await TryExtractImageThumbnailAsync(path);
+        IconSnapshot snapshot = thumbnail ?? await Task.Run(() =>
+        {
+            IconSnapshot shellIcon = ExtractShellIconPixels(path);
+            return dockPresentation ? NormalizeDockIcon(shellIcon) : shellIcon;
+        });
         StorageFolder cacheFolder = await StorageFolder.GetFolderFromPathAsync(AppPaths.IconCacheRoot);
         string temporaryName = $"{Path.GetFileNameWithoutExtension(cachePath)}.{Guid.NewGuid():N}.tmp";
         StorageFile temporary = await cacheFolder.CreateFileAsync(temporaryName, CreationCollisionOption.FailIfExists);
@@ -397,28 +409,8 @@ public sealed class IconCacheService
         }
     }
 
-    private static bool TryReadShellLinkTarget(string shortcutPath, out string targetPath)
-    {
-        targetPath = string.Empty;
-        NativeMethods.IShellLinkW? shellLink = null;
-        try
-        {
-            shellLink = (NativeMethods.IShellLinkW)new NativeMethods.ShellLink();
-            ((System.Runtime.InteropServices.ComTypes.IPersistFile)shellLink).Load(shortcutPath, 0);
-            var value = new StringBuilder(32768);
-            if (shellLink.GetPath(value, value.Capacity, IntPtr.Zero, 0) < 0 || value.Length == 0) return false;
-            targetPath = value.ToString();
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-        finally
-        {
-            if (shellLink is not null && Marshal.IsComObject(shellLink)) _ = Marshal.FinalReleaseComObject(shellLink);
-        }
-    }
+    private static bool TryReadShellLinkTarget(string shortcutPath, out string targetPath) =>
+        ShellLinkTarget.TryRead(shortcutPath, out targetPath);
 
     private static bool TryExtractShellItemImage(string path, int size, out IconSnapshot snapshot)
     {
@@ -636,6 +628,18 @@ public sealed class IconCacheService
         }
         Marshal.Copy(pixels, 0, bits, pixels.Length);
         return bitmap;
+    }
+
+    internal static IconSnapshot NormalizeDockIcon(IconSnapshot snapshot)
+    {
+        if (!TryGetVisiblePixelBounds(snapshot, out IconVisibleBounds bounds) ||
+            bounds.Width == snapshot.Width && bounds.Height == snapshot.Height) return snapshot;
+        byte[] pixels = new byte[checked(bounds.Width * bounds.Height * 4)];
+        for (int y = 0; y < bounds.Height; y++)
+            System.Buffer.BlockCopy(snapshot.Pixels, ((bounds.Top + y) * snapshot.Width + bounds.Left) * 4,
+                pixels, y * bounds.Width * 4, bounds.Width * 4);
+        // Keep the actual aspect ratio. Image.Stretch=Uniform fits its longest edge to the Dock slot.
+        return new(pixels, bounds.Width, bounds.Height);
     }
 
     internal static bool TryGetVisiblePixelBounds(

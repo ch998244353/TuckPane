@@ -2,6 +2,7 @@ using System.Numerics;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Hosting;
+using TuckPane.Core;
 using TuckPane.Models;
 using Windows.UI;
 
@@ -14,6 +15,7 @@ namespace TuckPane.Services;
 internal sealed class ThemeEdgeSurface : IDisposable
 {
     private readonly FrameworkElement _host;
+    private readonly FrameworkElement _geometryHost;
     private readonly ShapeVisual _visual;
     private readonly CompositionRoundedRectangleGeometry _outerGeometry;
     private readonly CompositionRoundedRectangleGeometry _innerGeometry;
@@ -31,9 +33,10 @@ internal sealed class ThemeEdgeSurface : IDisposable
     private double _cornerRadius;
     private bool _disposed;
 
-    internal ThemeEdgeSurface(FrameworkElement host)
+    internal ThemeEdgeSurface(FrameworkElement host, FrameworkElement? geometryHost = null)
     {
         _host = host;
+        _geometryHost = geometryHost ?? host;
         Visual hostVisual = ElementCompositionPreview.GetElementVisual(host);
         Compositor compositor = hostVisual.Compositor;
         _visual = compositor.CreateShapeVisual();
@@ -75,9 +78,9 @@ internal sealed class ThemeEdgeSurface : IDisposable
         _visual.Opacity = ThemePalette.GlassEdgeMinimumOpacity;
 
         ElementCompositionPreview.SetElementChildVisual(host, _visual);
-        _host.Loaded += Host_Loaded;
-        _host.SizeChanged += Host_SizeChanged;
-        AttachXamlRoot(_host.XamlRoot);
+        _geometryHost.Loaded += Host_Loaded;
+        _geometryHost.SizeChanged += Host_SizeChanged;
+        AttachXamlRoot(_geometryHost.XamlRoot);
         RefreshGeometry();
     }
 
@@ -86,7 +89,7 @@ internal sealed class ThemeEdgeSurface : IDisposable
         // These brushes intentionally never read theme colour, opacity or
         // blur settings. A non-zero floor keeps the neutral edge visible in
         // transparent, solid-colour, zero-blur and fallback states.
-        if (!_disposed) _visual.Opacity = ThemePalette.GlassEdgeMinimumOpacity;
+        if (!_disposed) _visual.Opacity = ThemePalette.EdgeOpacity(theme);
     }
 
     internal void SetEnabled(bool enabled)
@@ -100,33 +103,42 @@ internal sealed class ThemeEdgeSurface : IDisposable
         RefreshGeometry();
     }
 
+    internal void SetRoundedGeometry(RoundedSurfaceGeometry geometry)
+    {
+        _cornerRadius = geometry.Radius;
+        ApplyGeometry(geometry);
+    }
+
     internal void RefreshGeometry()
     {
         if (_disposed) return;
-        double scale = Math.Max(1, _host.XamlRoot?.RasterizationScale ?? 1);
-        float width = PixelAligned(_host.ActualWidth > 0 ? _host.ActualWidth : _host.Width, scale);
-        float height = PixelAligned(_host.ActualHeight > 0 ? _host.ActualHeight : _host.Height, scale);
-        if (width <= 0 || height <= 0)
+        RoundedSurfaceGeometry surface = RoundedSurfaceGeometry.Create(
+            _geometryHost.ActualWidth, _geometryHost.ActualHeight, _cornerRadius, _geometryHost.XamlRoot?.RasterizationScale ?? 1);
+        ApplyGeometry(surface);
+    }
+
+    private void ApplyGeometry(RoundedSurfaceGeometry surface)
+    {
+        if (_disposed) return;
+        if (surface.Width <= 0 || surface.Height <= 0)
         {
             _visual.Size = Vector2.Zero;
             return;
         }
-        float radius = Math.Min(PixelAligned(_cornerRadius, scale), Math.Min(width, height) / 2);
-        _visual.Size = new Vector2(width, height);
-        ConfigureGeometry(_outerGeometry, width, height, radius,
-            ThemePalette.OrganizerGlassOuterEdgeThicknessDip / 2, scale);
-        ConfigureGeometry(_innerGeometry, width, height, radius,
-            ThemePalette.OrganizerGlassInnerEdgeInsetDip + ThemePalette.OrganizerGlassInnerEdgeThicknessDip / 2, scale);
-        ConfigureGeometry(_highlightGeometry, width, height, radius, 0, scale);
-        ConfigureGeometry(_textureGeometry, width, height, radius, 0, scale);
+        _visual.Size = new Vector2(surface.Width, surface.Height);
+        ConfigureGeometry(_outerGeometry, surface.InsetStroke(ThemePalette.OrganizerGlassOuterEdgeThicknessDip));
+        ConfigureGeometry(_innerGeometry, surface.InsetStroke(
+            ThemePalette.OrganizerGlassInnerEdgeThicknessDip, ThemePalette.OrganizerGlassInnerEdgeInsetDip));
+        ConfigureGeometry(_highlightGeometry, surface.InsetStroke(ThemePalette.GlassEdgeHighlightThicknessDip));
+        ConfigureGeometry(_textureGeometry, surface.InsetStroke(ThemePalette.GlassEdgeTextureThicknessDip));
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        _host.Loaded -= Host_Loaded;
-        _host.SizeChanged -= Host_SizeChanged;
+        _geometryHost.Loaded -= Host_Loaded;
+        _geometryHost.SizeChanged -= Host_SizeChanged;
         AttachXamlRoot(null);
         ElementCompositionPreview.SetElementChildVisual(_host, null);
         _outerBrush.Dispose();
@@ -159,7 +171,7 @@ internal sealed class ThemeEdgeSurface : IDisposable
 
     private void Host_Loaded(object sender, RoutedEventArgs e)
     {
-        AttachXamlRoot(_host.XamlRoot);
+        AttachXamlRoot(_geometryHost.XamlRoot);
         RefreshGeometry();
     }
 
@@ -175,29 +187,12 @@ internal sealed class ThemeEdgeSurface : IDisposable
 
     private void XamlRoot_Changed(XamlRoot sender, XamlRootChangedEventArgs args) => RefreshGeometry();
 
-    private static float PixelAligned(double dip, double scale)
-    {
-        // Grid overlays normally report NaN for Width/Height until their
-        // first arrange pass. Never forward that sentinel into Composition;
-        // a NaN Size can make the child visual fail to render permanently.
-        if (!double.IsFinite(dip) || dip <= 0 || !double.IsFinite(scale) || scale <= 0)
-            return 0;
-        return (float)(Math.Round(dip * scale) / scale);
-    }
-
     private static void ConfigureGeometry(
         CompositionRoundedRectangleGeometry geometry,
-        float width,
-        float height,
-        float radius,
-        float inset,
-        double scale)
+        RoundedStrokeGeometry stroke)
     {
-        float alignedInset = PixelAligned(inset, scale);
-        geometry.Offset = new Vector2(alignedInset);
-        geometry.Size = new Vector2(
-            Math.Max(0, width - alignedInset * 2),
-            Math.Max(0, height - alignedInset * 2));
-        geometry.CornerRadius = new Vector2(Math.Max(0, radius - alignedInset));
+        geometry.Offset = new Vector2(stroke.Offset);
+        geometry.Size = new Vector2(stroke.Width, stroke.Height);
+        geometry.CornerRadius = new Vector2(stroke.Radius);
     }
 }

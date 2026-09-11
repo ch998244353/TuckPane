@@ -42,7 +42,17 @@ public sealed partial class TodoWindow : Window
     private IntPtr _hwnd;
     private bool _initialized;
     private bool _permanentClose;
-    private bool _visible;
+    private bool _visibleValue;
+    private bool _visible
+    {
+        get => _visibleValue;
+        set
+        {
+            if (_visibleValue == value) return;
+            _visibleValue = value;
+            _host.NotifyDockOpenStateChanged();
+        }
+    }
     private bool _restoringPlacement;
     private bool _renaming;
     private bool _renameCommitInProgress;
@@ -55,7 +65,8 @@ public sealed partial class TodoWindow : Window
         _externalPath = Path.GetFullPath(path);
         _document = document;
         bool removedExpired = TodoRules.RemoveExpired(_document, DateTimeOffset.UtcNow) > 0;
-        _rows = new ObservableCollection<TodoRow>(_document.Tasks.Select(task => new TodoRow(task, _document.FontSize)));
+        _rows = new ObservableCollection<TodoRow>(_document.Tasks.Select(task =>
+            new TodoRow(task, _document.FontSize, _host.State.GlobalSettings.TodoShowSeparators)));
 
         InitializeComponent();
         ExtendsContentIntoTitleBar = true;
@@ -79,6 +90,7 @@ public sealed partial class TodoWindow : Window
         Closed += TodoWindow_Closed;
         ApplyLanguage();
         ApplyTheme();
+        ApplySeparatorSetting();
         RefreshCompletionTimer();
         if (removedExpired) ScheduleSave();
     }
@@ -218,6 +230,8 @@ public sealed partial class TodoWindow : Window
         AutomationProperties.SetName(NewTaskBox, AppStrings.Get("TodoAddPlaceholder"));
         AutomationProperties.SetName(ColorButton, AppStrings.Get("TodoColor"));
         ToolTipService.SetToolTip(ColorButton, AppStrings.Get("TodoColor"));
+        AutomationProperties.SetName(SeparatorsButton, AppStrings.Get("TodoSeparators"));
+        ToolTipService.SetToolTip(SeparatorsButton, AppStrings.Get("TodoSeparators"));
         AutomationProperties.SetName(CloseButton, AppStrings.Get("CloseTodo"));
         ToolTipService.SetToolTip(CloseButton, AppStrings.Get("CloseTodo"));
         foreach (TodoRow row in _rows) row.ApplyLanguage();
@@ -236,6 +250,31 @@ public sealed partial class TodoWindow : Window
     {
         _saveTimer.Stop();
         await _saveGate.WaitAsync();
+        try { return await FlushCoreAsync(); }
+        finally { _saveGate.Release(); }
+    }
+
+    internal async Task BeginDirectoryRenameAsync()
+    {
+        _saveTimer.Stop();
+        await _saveGate.WaitAsync();
+        if (await FlushCoreAsync())
+        {
+            WindowRoot.IsHitTestVisible = false;
+            return;
+        }
+        _saveGate.Release();
+        throw new IOException(AppStrings.Get("TodoDragSaveFailed"));
+    }
+
+    internal void EndDirectoryRename()
+    {
+        WindowRoot.IsHitTestVisible = true;
+        _saveGate.Release();
+    }
+
+    private async Task<bool> FlushCoreAsync()
+    {
         try
         {
             _document.Tasks = _rows.Select(row => row.Task).ToList();
@@ -247,10 +286,6 @@ public sealed partial class TodoWindow : Window
             AppLogger.Error($"无法保存待办：{_externalPath}", ex);
             ShowError(AppStrings.Format("TodoSaveErrorFormat", ex.Message));
             return false;
-        }
-        finally
-        {
-            _saveGate.Release();
         }
     }
 
@@ -267,7 +302,7 @@ public sealed partial class TodoWindow : Window
         try
         {
             PortableTodoTask task = TodoRules.Add(_document, NewTaskBox.Text);
-            _rows.Add(new TodoRow(task, _document.FontSize));
+            _rows.Add(new TodoRow(task, _document.FontSize, _host.State.GlobalSettings.TodoShowSeparators));
             NewTaskBox.Text = string.Empty;
             ScheduleSave();
         }
@@ -275,6 +310,17 @@ public sealed partial class TodoWindow : Window
         {
             // Empty input is intentionally ignored.
         }
+    }
+
+    private void TaskCheckTarget_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        // Native CheckBox taps already toggle themselves; only bridge the surrounding hit area.
+        if (sender is not Grid target || !ReferenceEquals(e.OriginalSource, target) ||
+            FindDescendant<CheckBox>(target, candidate => candidate.Tag is TodoRow) is not { IsEnabled: true } box) return;
+        _ = box.Focus(FocusState.Pointer);
+        box.IsChecked = box.IsChecked != true;
+        TaskCheckBox_Click(box, e);
+        e.Handled = true;
     }
 
     private void TaskCheckBox_Click(object sender, RoutedEventArgs e)
@@ -447,6 +493,30 @@ public sealed partial class TodoWindow : Window
         catch (Exception ex) { ShowError(AppStrings.Format("TodoSaveErrorFormat", ex.Message)); }
     }
 
+    internal void ApplySeparatorSetting()
+    {
+        bool enabled = _host.State.GlobalSettings.TodoShowSeparators;
+        SeparatorsButton.IsChecked = enabled;
+        foreach (TodoRow row in _rows) row.SetSeparators(enabled);
+    }
+
+    private async void SeparatorsButton_Click(object sender, RoutedEventArgs e)
+    {
+        bool enabled = SeparatorsButton.IsChecked == true;
+        SeparatorsButton.IsEnabled = false;
+        try { await _host.SetTodoShowSeparatorsAsync(enabled); }
+        catch (Exception ex)
+        {
+            AppLogger.Error("无法保存待办分隔线设置", ex);
+            ShowError(AppStrings.Format("TodoSaveErrorFormat", ex.Message));
+        }
+        finally
+        {
+            ApplySeparatorSetting();
+            SeparatorsButton.IsEnabled = true;
+        }
+    }
+
     private void ApplyTheme()
     {
         NoteThemeColors colors = NoteThemePalette.Get(_document.Theme);
@@ -456,10 +526,12 @@ public sealed partial class TodoWindow : Window
         var text = (SolidColorBrush)WindowRoot.Resources["TodoTextBrush"];
         var input = (SolidColorBrush)WindowRoot.Resources["TodoInputBrush"];
         var border = (SolidColorBrush)WindowRoot.Resources["TodoBorderBrush"];
+        var separator = (SolidColorBrush)WindowRoot.Resources["TodoSeparatorBrush"];
         var accent = new SolidColorBrush(colors.AccentColor);
         text.Color = colors.TextColor;
         input.Color = ColorHelper.FromArgb(24, colors.TextColor.R, colors.TextColor.G, colors.TextColor.B);
         border.Color = colors.BorderColor;
+        separator.Color = colors.BorderColor;
         WindowRoot.Resources["TextControlBackgroundPointerOver"] = input;
         WindowRoot.Resources["TextControlBackgroundFocused"] = input;
         WindowRoot.Resources["TextControlForegroundPointerOver"] = text;
@@ -472,6 +544,13 @@ public sealed partial class TodoWindow : Window
         TodoTitleText.Foreground = text;
         TodoTitleEditor.Foreground = text;
         ColorButton.Foreground = accent;
+        SeparatorsButton.Foreground = text;
+        SeparatorsButton.Resources["ToggleButtonBackgroundChecked"] = new SolidColorBrush(
+            ColorHelper.FromArgb(68, colors.AccentColor.R, colors.AccentColor.G, colors.AccentColor.B));
+        SeparatorsButton.Resources["ToggleButtonBackgroundCheckedPointerOver"] = new SolidColorBrush(
+            ColorHelper.FromArgb(88, colors.AccentColor.R, colors.AccentColor.G, colors.AccentColor.B));
+        SeparatorsButton.Resources["ToggleButtonForegroundChecked"] = text;
+        SeparatorsButton.Resources["ToggleButtonForegroundCheckedPointerOver"] = text;
         CloseButton.Foreground = text;
         TaskList.Foreground = text;
     }
@@ -666,11 +745,13 @@ public sealed partial class TodoWindow : Window
         private bool _isEditing;
         private string _editText;
         private double _opacity = 1;
+        private bool _showSeparators;
 
-        internal TodoRow(PortableTodoTask task, double fontSize)
+        internal TodoRow(PortableTodoTask task, double fontSize, bool showSeparators = false)
         {
             Task = task;
             _fontSize = fontSize;
+            _showSeparators = showSeparators;
             _editText = task.Text;
             RefreshVisual(DateTimeOffset.UtcNow);
         }
@@ -688,7 +769,15 @@ public sealed partial class TodoWindow : Window
         public Visibility TextVisibility => _isEditing ? Visibility.Collapsed : Visibility.Visible;
         public Visibility EditorVisibility => _isEditing ? Visibility.Visible : Visibility.Collapsed;
         public bool IsEditing => _isEditing;
-        public double CheckBoxSize => 20 + Math.Max(0, _fontSize - 14);
+        public double CheckBoxSize => _fontSize * .8;
+        public Thickness SeparatorThickness => new(0, 0, 0, _showSeparators ? 1 : 0);
+
+        internal void SetSeparators(bool enabled)
+        {
+            if (_showSeparators == enabled) return;
+            _showSeparators = enabled;
+            OnPropertyChanged(nameof(SeparatorThickness));
+        }
 
         public string EditText
         {

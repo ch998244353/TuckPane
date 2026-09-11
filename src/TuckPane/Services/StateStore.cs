@@ -20,17 +20,23 @@ public sealed class StateStore
     public async Task<AppStateV2> LoadAsync()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
+        // A damaged existing state is not a fresh installation. Preserve the
+        // existing recovery/migration defaults unless both files are absent.
+        bool newUser = !File.Exists(_statePath) && !File.Exists(_backupPath);
         LoadResult? loaded = await TryLoadAsync(_statePath) ?? await TryLoadAsync(_backupPath);
-        AppStateV2 state = Normalize(loaded?.State ?? new AppStateV2());
+        AppStateV2 state = Normalize(loaded?.State ?? (newUser ? NewUserDefaults.CreateState() : new AppStateV2()));
         if (loaded is { RequiresMigration: true }) await PersistMigrationAsync(state, loaded.SourcePath);
         return state;
     }
 
-    public async Task SaveAsync(AppStateV2 state)
+    public Task SaveAsync(AppStateV2 state) => SaveAsync(state, null);
+
+    internal async Task SaveAsync(AppStateV2 state, Action? snapshotCaptured)
     {
         await _saveGate.WaitAsync();
         try
         {
+            snapshotCaptured?.Invoke();
             Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
             string temporary = _statePath + ".tmp";
             string json = JsonSerializer.Serialize(Normalize(state), JsonOptions);
@@ -135,15 +141,21 @@ public sealed class StateStore
                 // are ignored, then this migration rewrites the state without
                 // those fields so Glass is the only possible treatment.
                 // Schema 14 adds independent solid-colour mode flags. Missing
-                // fields deserialize as false. Schema 15 unifies opacity
-                // semantics so solid colour honours the persisted 0..1 value
-                // and enforces the 5% minimum glass blur.
+                // fields deserialize as false. Schema 15 adds separate solid
+                // opacity slots. Updated Glass endpoints are normalized without
+                // a new migration or resetting either target's saved values.
                 if (schemaVersion < 15)
                 {
                     current.GlobalSettings.SolidThemeOpacity = 1;
                     current.GlobalSettings.SettingsSolidThemeOpacity = 1;
                 }
-                return new(current, schemaVersion < 15, path);
+                if (schemaVersion < 16)
+                {
+                    ThemeValues previous = current.GlobalSettings.GetTheme(ThemeTarget.Organizer);
+                    current.GlobalSettings.SetTheme(ThemeTarget.Station, previous);
+                    current.GlobalSettings.SetTheme(ThemeTarget.Dock, previous);
+                }
+                return new(current, schemaVersion < 16, path);
             }
 
             AppStateV1 legacy = JsonSerializer.Deserialize<AppStateV1>(json, JsonOptions) ?? new AppStateV1();
@@ -183,8 +195,13 @@ public sealed class StateStore
 
     internal static AppStateV2 Normalize(AppStateV2 state)
     {
-        state.SchemaVersion = 15;
+        state.SchemaVersion = 16;
         state.GlobalSettings ??= new GlobalSettings();
+        state.GlobalSettings.OrganizerMenuVisibility ??= new();
+        state.GlobalSettings.CompactHoverMagnificationScale = GlobalSettings.NormalizeHoverMagnificationScale(
+            state.GlobalSettings.CompactHoverMagnificationScale);
+        state.GlobalSettings.DockHoverMagnificationScale = GlobalSettings.NormalizeHoverMagnificationScale(
+            state.GlobalSettings.DockHoverMagnificationScale);
         state.GlobalSettings.OrganizerTextColor = GlobalSettings.NormalizeOrganizerTextColor(
             state.GlobalSettings.OrganizerTextColor);
         if (string.IsNullOrWhiteSpace(state.GlobalSettings.DefaultStorageDirectory))
@@ -212,6 +229,8 @@ public sealed class StateStore
         state.GlobalSettings.SetTheme(
             ThemeTarget.Settings,
             GlobalSettings.NormalizeTheme(state.GlobalSettings.GetTheme(ThemeTarget.Settings)));
+        foreach (ThemeTarget target in new[] { ThemeTarget.Station, ThemeTarget.Dock })
+            state.GlobalSettings.SetTheme(target, GlobalSettings.NormalizeTheme(state.GlobalSettings.GetTheme(target)));
         state.GlobalSettings.ThemeTransparency = GlobalSettings.NormalizeThemeTransparency(state.GlobalSettings.ThemeTransparency);
         state.GlobalSettings.SettingsThemeTransparency = GlobalSettings.NormalizeThemeTransparency(state.GlobalSettings.SettingsThemeTransparency);
         state.GlobalSettings.SolidThemeOpacity = GlobalSettings.NormalizeSolidThemeOpacity(state.GlobalSettings.SolidThemeOpacity);
@@ -243,15 +262,13 @@ public sealed class StateStore
         state.Organizers ??= [];
         var normalizedOrganizers = new List<OrganizerDefinition>();
         var stationEdges = new HashSet<OrganizerDockEdge>();
-        int regularCount = 0;
         foreach (OrganizerDefinition organizer in state.Organizers)
         {
             if (!Enum.IsDefined(organizer.PlacementMode)) organizer.PlacementMode = OrganizerPlacementMode.Floating;
             if (!Enum.IsDefined(organizer.DockEdge)) organizer.DockEdge = OrganizerDockEdge.Right;
             if (organizer.PlacementMode == OrganizerPlacementMode.Station && !stationEdges.Add(organizer.DockEdge))
                 organizer.PlacementMode = OrganizerPlacementMode.Floating;
-            if (organizer.PlacementMode == OrganizerPlacementMode.Station || regularCount++ < OrganizerLimits.MaximumOrganizers)
-                normalizedOrganizers.Add(organizer);
+            normalizedOrganizers.Add(organizer);
         }
         state.Organizers = normalizedOrganizers;
 
@@ -268,9 +285,14 @@ public sealed class StateStore
             if (organizer.CreatedAtUtc == default) organizer.CreatedAtUtc = DateTimeOffset.UtcNow;
             if (!Enum.IsDefined(organizer.PlacementMode)) organizer.PlacementMode = OrganizerPlacementMode.Floating;
             if (!Enum.IsDefined(organizer.DockEdge)) organizer.DockEdge = OrganizerDockEdge.Right;
+            if (!Enum.IsDefined(organizer.DockOrientation)) organizer.DockOrientation = DockOrientation.Horizontal;
+            organizer.DockIconSizeDip = DockLayoutMath.NormalizeIconSize(organizer.DockIconSizeDip);
+            organizer.DockSpacingFactor = DockLayoutMath.NormalizeSpacing(organizer.DockSpacingFactor);
+            if (organizer.DockCenter is { } center && (!double.IsFinite(center.XDip) || !double.IsFinite(center.YDip)))
+                organizer.DockCenter = null;
             organizer.Layout ??= new OrganizerLayout();
             bool station = organizer.PlacementMode == OrganizerPlacementMode.Station;
-            if (!Enum.IsDefined(organizer.ExpandedContentMode) || station)
+            if (!Enum.IsDefined(organizer.ExpandedContentMode) || station || organizer.PlacementMode == OrganizerPlacementMode.Dock)
                 organizer.ExpandedContentMode = OrganizerExpandedContentMode.Icon;
             organizer.CompactListCanvasWidthDip = double.IsFinite(organizer.CompactListCanvasWidthDip)
                 ? Math.Clamp(
@@ -304,6 +326,8 @@ public sealed class StateStore
             organizer.CompactScale = state.GlobalSettings.ResolveCompactScale(
                 organizer.PlacementMode,
                 organizer.CompactScale);
+            organizer.IconContentScale = OrganizerContentScale.Normalize(organizer.IconContentScale);
+            organizer.CompactListContentScale = OrganizerContentScale.Normalize(organizer.CompactListContentScale);
             organizer.CanvasScale = Math.Clamp(organizer.CanvasScale, .1, 1.2);
             organizer.ItemScale = Math.Clamp(organizer.ItemScale, .5, 1.65);
             organizer.NameScale = GlobalSettings.NormalizeCompactNameScale(organizer.NameScale);
@@ -408,7 +432,7 @@ public sealed class StateStore
         foreach (OrganizerDefinition organizer in state.Organizers)
         {
             if (requestedContainers[organizer.Id] is not Guid containerId) continue;
-            if (organizer.PlacementMode == OrganizerPlacementMode.Station ||
+            if (organizer.PlacementMode is OrganizerPlacementMode.Station or OrganizerPlacementMode.Dock ||
                 !state.Organizers.Any(candidate => candidate.Id == containerId) ||
                 organizer.Id == containerId)
                 continue;
@@ -446,6 +470,7 @@ public sealed class StateStore
                 string key = OrganizerContainment.ItemKey(child.Id);
                 if (!organizer.ItemOrder.Contains(key, StringComparer.OrdinalIgnoreCase)) organizer.ItemOrder.Add(key);
             }
+            OrganizerExpansion.Normalize(organizer);
         }
 
         if (state.ConsolePlacement is not null)

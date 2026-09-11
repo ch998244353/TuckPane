@@ -25,7 +25,7 @@
   <data name="OrganizerTextColorWhite" xml:space="preserve"><value>白</value></data>
   <data name="OrganizerTextColorBlack" xml:space="preserve"><value>黒</value></data>
   <data name="OrganizerTextColorErrorTitle" xml:space="preserve"><value>収納ウィンドウの文字色を保存できません</value></data>
-  <data name="WindowAlignmentTitle" xml:space="preserve"><value>ドラッグ中にウィンドウを整列</value></data>
+  <data name="WindowAlignmentTitle" xml:space="preserve"><value>移動・サイズ変更中にウィンドウを整列</value></data>
   <data name="RememberExpandedOrganizerPositionTitle" xml:space="preserve"><value>収納ウィンドウの展開位置を記憶</value></data>
   <data name="UniformFloatingCompactScaleTitle" xml:space="preserve"><value>フローティング入口サイズを統一</value></data>
   <data name="UniformPositionedCompactScaleTitle" xml:space="preserve"><value>配置モードの入口サイズを統一</value></data>
@@ -55,8 +55,10 @@
   <data name="ThemeSolidMode" xml:space="preserve"><value>単色モード</value></data>
   <data name="ThemeColorPresetFormat" xml:space="preserve"><value>テーマ色 {0}</value></data>
   <data name="ThemeCustomColor" xml:space="preserve"><value>カスタム</value></data>
-  <data name="ThemeTransparencyLabel" xml:space="preserve"><value>背景の透明度</value></data>
+  <data name="ThemeTransparencyLabel" xml:space="preserve"><value>背景の不透明度</value></data>
   <data name="ThemeBlurStrengthLabel" xml:space="preserve"><value>ぼかしの強さ</value></data>
+  <data name="ThemeOpacityDescription" xml:space="preserve"><value>0% では選択色を重ねず、100% ではウィンドウの背後を完全に覆います。</value></data>
+  <data name="ThemeBlurDescription" xml:space="preserve"><value>0% では背後が鮮明に透け、それ以外はすりガラスになります。値を上げるほど背景の細部がぼけます。</value></data>
   <data name="ThemeSaveErrorTitle" xml:space="preserve"><value>テーマを保存できません</value></data>
   <data name="AddTitle" xml:space="preserve"><value>収納ウィンドウを追加</value></data>
   <data name="NameLabel" xml:space="preserve"><value>名前</value></data>
@@ -80,7 +82,6 @@
   <data name="CanvasScaleLabel" xml:space="preserve"><value>キャンバスサイズ</value></data>
   <data name="ItemScaleLabel" xml:space="preserve"><value>内容の比率</value></data>
   <data name="CreateOrganizer" xml:space="preserve"><value>収納ウィンドウを作成</value></data>
-  <data name="OrganizerLimit" xml:space="preserve"><value>収納ウィンドウは最大 12 個です。</value></data>
   <data name="ManageTitle" xml:space="preserve"><value>管理</value></data>
   <data name="ManageEmpty" xml:space="preserve"><value>収納ウィンドウはありません</value></data>
   <data name="Create" xml:space="preserve"><value>作成</value></data>
@@ -100,10 +101,14 @@
   <data name="ContextManage" xml:space="preserve"><value>設定</value></data>
   <data name="ContextDuplicate" xml:space="preserve"><value>ウィンドウを複製</value></data>
   <data name="ContextSwitchMode" xml:space="preserve"><value>モードを切り替え</value></data>
-  <data name="ContextSwitchContentFormat" xml:space="preserve"><value>{0}に切り替え</value></data>
+  <data name="ContextSwitchToPositioned" xml:space="preserve"><value>固定位置モードに切り替え</value></data>
+  <data name="ContextSwitchToFloating" xml:space="preserve"><value>フローティングモードに切り替え</value></data>
+  <data name="ContextHideName" xml:space="preserve"><value>名前を非表示</value></data>
+  <data name="ContextSwitchToCompactList" xml:space="preserve"><value>簡易モードに切り替え</value></data>
+  <data name="ContextSwitchToIcon" xml:space="preserve"><value>アイコンモードに切り替え</value></data>
   <data name="ContextRename" xml:space="preserve"><value>名前を変更</value></data>
   <data name="ContextOpenStorage" xml:space="preserve"><value>保存先を開く</value></data>
-  <data name="ContextDeleteWindow" xml:space="preserve"><value>ウィンドウを削除</value></data>
+  <data name="ContextDeleteWindow" xml:space="preserve"><value>削除</value></data>
   <data name="CopyNameSuffix" xml:space="preserve"><value> - コピー</value></data>
   <data name="Collapse" xml:space="preserve"><value>折りたたむ</value></data>
   <data name="TransparencyTitle" xml:space="preserve"><value>透明効果を利用できません</value></data>
@@ -125,10 +130,9 @@
   <data name="DeleteErrorTitle" xml:space="preserve"><value>収納ウィンドウを削除できません</value></data>
   <data name="OpenFolderErrorTitle" xml:space="preserve"><value>フォルダーを開けません</value></data>
   <data name="MissingStorageMessage" xml:space="preserve"><value>保存先がありません。先にフォルダーを再作成してください。</value></data>
-  <data name="MaximumOrganizersError" xml:space="preserve"><value>収納ウィンドウは最大 12 個まで作成できます。</value></data>
   <data name="StationEdgeOccupiedError" xml:space="preserve"><value>この画面端には既にステーションがあります。別の端を選択してください。</value></data>
   <data name="StationDuplicateError" xml:space="preserve"><value>ステーションは複製できません。</value></data>
-  <data name="StationManageModeError" xml:space="preserve"><value>ステーションモードは、フローティングまたは配置モードとの間で切り替えできません。</value></data>
+  <data name="StationManageModeError" xml:space="preserve"><value>収納ウィンドウ、ステーション、Dock は相互に変換できません。通常の収納ウィンドウでは、フローティングと配置モードを引き続き切り替えられます。</value></data>
   <data name="OrganizerContainerDropError" xml:space="preserve"><value>収納ウィンドウを移動先の収納ウィンドウに配置できませんでした: {0}</value></data>
   <data name="OrganizerContainmentSelfError" xml:space="preserve"><value>収納ウィンドウをそのウィンドウ自身に入れることはできません。</value></data>
   <data name="OrganizerContainmentStationSourceError" xml:space="preserve"><value>ステーションを別の収納ウィンドウに入れることはできません。</value></data>
@@ -137,8 +141,10 @@
   <data name="OrganizerContainmentMissingError" xml:space="preserve"><value>移動元または移動先の収納ウィンドウが見つかりません。</value></data>
   <data name="OrganizerReleaseNoGridError" xml:space="preserve"><value>内部の配置モードの収納ウィンドウを戻すデスクトップグリッドに空きがないため、この収納ウィンドウは削除されませんでした。</value></data>
   <data name="ContainedOrganizerNoGridError" xml:space="preserve"><value>移動先のディスプレイに空きグリッドがないため、収納ウィンドウを元の収納先へ戻しました。</value></data>
-  <data name="MoveOrganizerFilesOnDeleteTitle" xml:space="preserve"><value>収納ウィンドウ削除時にファイルをデスクトップへ移動</value></data>
-  <data name="DeleteBehaviorErrorTitle" xml:space="preserve"><value>削除設定を保存できません</value></data>
+  <data name="DeleteChoiceMessageFormat" xml:space="preserve"><value>収納ウィンドウを削除する際の保存フォルダー「{0}」の扱いを選択してください。デスクトップへ移動すると、フォルダーとすべてのファイルをまとめて移動します。元の場所に残すと、収納ウィンドウのみ削除します。キャンセルすると何も変更しません。</value></data>
+  <data name="DeleteMoveFolderToDesktop" xml:space="preserve"><value>フォルダーごとデスクトップへ移動</value></data>
+  <data name="DeleteKeepFolderInPlace" xml:space="preserve"><value>ファイルを元の場所に残す</value></data>
+  <data name="DeleteOrganizer" xml:space="preserve"><value>収納ウィンドウを削除</value></data>
   <data name="CompactNameScaleTitle" xml:space="preserve"><value>収納時の名前サイズ</value></data>
   <data name="ExpandedNameScaleTitle" xml:space="preserve"><value>展開時の名前サイズ</value></data>
   <data name="UniformCompactNameScaleErrorTitle" xml:space="preserve"><value>名前サイズを保存できません</value></data>
@@ -310,6 +316,7 @@
   <data name="TodoFontSizeFormat" xml:space="preserve"><value>{0:0} DIP</value></data>
   <data name="TodoAddPlaceholder" xml:space="preserve"><value>To Do を入力して Enter キーを押す</value></data>
   <data name="TodoColor" xml:space="preserve"><value>To Do の色</value></data>
+  <data name="TodoSeparators" xml:space="preserve"><value>項目の区切り線（すべての To Do）</value></data>
   <data name="CloseTodo" xml:space="preserve"><value>To Do を閉じる</value></data>
   <data name="TodoRenameHint" xml:space="preserve"><value>タイトルをクリックして To Do の名前を変更します。</value></data>
   <data name="TodoDragSaveFailed" xml:space="preserve"><value>移動前に To Do を保存できませんでした。</value></data>
@@ -321,4 +328,108 @@
   <data name="TodoNameDuplicate" xml:space="preserve"><value>同じ名前の To Do がこの整理ウィンドウにあります。</value></data>
   <data name="PortableTodoOpenErrorFormat" xml:space="preserve"><value>「{0}」を開けません：{1}</value></data>
   <data name="PortableTodoExtensionError" xml:space="preserve"><value>.tucktodo ファイルだけを To Do として開けます。</value></data>
+  <data name="FolderMenuTitle" xml:space="preserve"><value>フォルダーの右クリックメニュー</value></data>
+  <data name="FolderMenuCommand" xml:space="preserve"><value>TuckPane で収納ウィンドウを作成</value></data>
+  <data name="FolderMenuRepair" xml:space="preserve"><value>関連付けを修復</value></data>
+  <data name="FolderMenuEnabled" xml:space="preserve"><value>有効です。Windows 11 では通常「その他のオプションを確認」に表示されます。</value></data>
+  <data name="FolderMenuDisabled" xml:space="preserve"><value>有効にすると、1つのフォルダーを右クリックして収納ウィンドウを作成できます。ポータブル版を削除する前に無効にしてください。</value></data>
+  <data name="FolderMenuBroken" xml:space="preserve"><value>関連付けが見つからないか無効です。修復して現在のアプリに関連付けてください。</value></data>
+  <data name="FolderMenuOtherCopy" xml:space="preserve"><value>メニューは別の TuckPane に関連付けられています。有効化または修復すると現在のアプリに切り替わります。</value></data>
+  <data name="FolderMenuErrorTitle" xml:space="preserve"><value>フォルダーの右クリックメニューを更新できません</value></data>
+  <data name="FolderMenuExecutableMissing" xml:space="preserve"><value>このディレクトリに TuckPane.exe がありません。全ファイルを展開するか再インストールしてください。</value></data>
+  <data name="FolderMenuInvalidArguments" xml:space="preserve"><value>作成コマンドには、フォルダーの絶対パスを1つだけ指定してください。</value></data>
+  <data name="FolderMenuAlreadyExists" xml:space="preserve"><value>このフォルダーには既に収納ウィンドウがあります。</value></data>
+  <data name="OrganizerRenameBusy" xml:space="preserve"><value>ファイル転送、ドラッグ、またはフォルダー名の変更中です。完了後に再試行してください。</value></data>
+  <data name="OrganizerRenameConflict" xml:space="preserve"><value>同じ場所に同名のファイルまたはフォルダーがあります。別の名前を指定してください。</value></data>
+  <data name="OrganizerRenameRecoveryFormat" xml:space="preserve"><value>フォルダー名の変更と復元に失敗しました。ファイルは次の場所に残っています：{0}。この場所を確認してください。</value></data>
+  <data name="OrganizerCreationAcknowledge" xml:space="preserve"><value>閉じる</value></data>
+  <data name="FolderMenuAlreadyExistsFormat" xml:space="preserve"><value>このフォルダーには既に収納ウィンドウが関連付けられているため、重複して作成できません。
+
+選択したパス：{0}
+既存の収納ウィンドウ：{1}
+保存先：{2}</value></data>
+  <data name="FolderMenuOverlapFormat" xml:space="preserve"><value>親フォルダーと子フォルダーに、それぞれ収納ウィンドウを関連付けることはできません。
+
+選択したパス：{0}
+競合する収納ウィンドウ：{1}
+保存先：{2}</value></data>
+  <data name="ExpansionModeLabel" xml:space="preserve"><value>展開動作</value></data>
+  <data name="ExpansionModeCollapsible" xml:space="preserve"><value>折りたたみモード</value></data>
+  <data name="ExpansionModeAlwaysExpanded" xml:space="preserve"><value>常時展開モード</value></data>
+  <data name="ContextSwitchToAlwaysExpanded" xml:space="preserve"><value>常時展開モードに切り替え</value></data>
+  <data name="ContextSwitchToCollapsible" xml:space="preserve"><value>折りたたみモードに切り替え</value></data>
+  <data name="ExpansionModeUnavailable" xml:space="preserve"><value>常時展開は収納されていないフローティング・固定ウィンドウで利用できます。先にコンテナから移動してください。</value></data>
+  <data name="ExpansionModeBusy" xml:space="preserve"><value>ウィンドウの切り替えやドラッグが完了してから変更してください。</value></data>
+  <data name="ContextAddItem" xml:space="preserve"><value>項目を追加</value></data>
+  <data name="AddItemSourceMissing" xml:space="preserve"><value>選択したファイルが見つかりません。もう一度選択してください。</value></data>
+  <data name="AddItemNameConflict" xml:space="preserve"><value>保存先の名前が使用されています。後でもう一度お試しください。元のファイルは保持されています。</value></data>
+  <data name="NavOrganizers" xml:space="preserve"><value>収納ウィンドウ</value></data>
+  <data name="NavStations" xml:space="preserve"><value>ステーション</value></data>
+  <data name="NavDocks" xml:space="preserve"><value>Dock</value></data>
+  <data name="ModeDock" xml:space="preserve"><value>Dock モード</value></data>
+  <data name="UniformEntrySizes" xml:space="preserve"><value>入口サイズの統一</value></data>
+  <data name="ThemeFullyTransparent" xml:space="preserve"><value>完全に透明</value></data>
+  <data name="DockOrientationLabel" xml:space="preserve"><value>配置方向</value></data>
+  <data name="DockHorizontal" xml:space="preserve"><value>横向き</value></data>
+  <data name="DockVertical" xml:space="preserve"><value>縦向き</value></data>
+  <data name="DockIconSizeLabel" xml:space="preserve"><value>アイコンサイズ</value></data>
+  <data name="DockSpacingLabel" xml:space="preserve"><value>アイコンの間隔</value></data>
+  <data name="DockEmptyHint" xml:space="preserve"><value>クリックして挿入するか、ファイルをドラッグしてください</value></data>
+  <data name="DockCannotBeContained" xml:space="preserve"><value>Dock を他のウィンドウに収納することはできません</value></data>
+  <data name="ManageCategoryEmpty" xml:space="preserve"><value>このカテゴリにはまだウィンドウがありません</value></data>
+  <data name="DockSizeLabel" xml:space="preserve"><value>Dock のサイズ</value></data>
+  <data name="OrganizerMenuSettingsTitle" xml:space="preserve"><value>ウィンドウの右クリックメニュー</value></data>
+  <data name="ContextSwitchPlacement" xml:space="preserve"><value>配置モードの切り替え</value></data>
+  <data name="ContextSwitchContent" xml:space="preserve"><value>表示モードの切り替え</value></data>
+  <data name="ContextSwitchExpansion" xml:space="preserve"><value>展開モードの切り替え</value></data>
+  <data name="CompactHoverMagnificationTitle" xml:space="preserve"><value>簡易表示のホバー拡大</value></data>
+  <data name="DockHoverMagnificationTitle" xml:space="preserve"><value>Dock のホバー拡大</value></data>
+  <data name="HoverMagnificationScaleLabel" xml:space="preserve"><value>拡大率</value></data>
+  <data name="DesktopMenuTitle" xml:space="preserve"><value>デスクトップ右クリックメニュー</value></data>
+  <data name="DesktopMenuCommand" xml:space="preserve"><value>収納ウィンドウを作成</value></data>
+  <data name="DesktopMenuEnabled" xml:space="preserve"><value>デスクトップメニューが有効です（Windows 11：その他のオプションを表示）。</value></data>
+  <data name="DesktopMenuDisabled" xml:space="preserve"><value>デスクトップメニューは無効です。</value></data>
+  <data name="DesktopMenuRepair" xml:space="preserve"><value>関連付けを修復</value></data>
+  <data name="DesktopMenuBroken" xml:space="preserve"><value>関連付けが見つからないか無効です。修復して現在のアプリに関連付けてください。</value></data>
+  <data name="DesktopMenuOtherCopy" xml:space="preserve"><value>メニューは別の TuckPane に関連付けられています。有効化または修復すると現在のアプリに切り替わります。</value></data>
+  <data name="DesktopMenuErrorTitle" xml:space="preserve"><value>フォルダーの右クリックメニューを更新できません</value></data>
+  <data name="NavMenus" xml:space="preserve"><value>右クリック</value></data>
+  <data name="HideCollapseIndicatorTitle" xml:space="preserve"><value>右上の折りたたみマークを隠す</value></data>
+  <data name="CreateInCategory" xml:space="preserve"><value>このカテゴリにウィンドウを作成</value></data>
+  <data name="DiagnosticsDescription" xml:space="preserve"><value>問題の調査用に匿名化した実行記録を出力します。ファイルの本文は含まず、自動送信しません。</value></data>
+  <data name="DiagnosticsExport" xml:space="preserve"><value>診断をエクスポート</value></data>
+  <data name="DiagnosticsExported" xml:space="preserve"><value>診断を保存しました。開発者と共有するかどうかはご自身で選択してください。</value></data>
+  <data name="DiagnosticsTitle" xml:space="preserve"><value>ローカル診断</value></data>
+  <data name="ExitPendingMessage" xml:space="preserve"><value>転送または保存が安全に完了していません。処理の完了後にもう一度終了してください。</value></data>
+  <data name="ExitPendingTitle" xml:space="preserve"><value>終了を保留しました</value></data>
+  <data name="LaunchPending" xml:space="preserve"><value>Windows が開く要求を処理中です。しばらくお待ちください。</value></data>
+  <data name="LaunchQueueFull" xml:space="preserve"><value>開く要求が多すぎます。現在の要求の完了をお待ちください。</value></data>
+  <data name="MoveParentCleanupWarning" xml:space="preserve"><value>移動は完了しましたが、空の親フォルダーを削除できませんでした。</value></data>
+  <data name="PublishedCopyRetained" xml:space="preserve"><value>完全なコピーを保存しました：{0}。元の場所は一部欠けている可能性があります。確認してから整理してください。削除は自動再試行しません。</value></data>
+  <data name="DiagnosticsExportFailed" xml:space="preserve"><value>診断を保存できませんでした。保存先の権限を確認して再試行してください。</value></data>
+  <data name="NavUpdate" xml:space="preserve"><value>更新</value></data>
+  <data name="UpdateReady" xml:space="preserve"><value>更新を確認できます</value></data>
+  <data name="UpdateChecking" xml:space="preserve"><value>更新を確認中…</value></data>
+  <data name="UpdateLatest" xml:space="preserve"><value>最新の正式版です</value></data>
+  <data name="UpdateAvailable" xml:space="preserve"><value>新しいバージョンがあります</value></data>
+  <data name="UpdateCheckFailed" xml:space="preserve"><value>確認に失敗しました。再試行できます</value></data>
+  <data name="UpdateTimeout" xml:space="preserve"><value>通信がタイムアウトまたはキャンセルされました。</value></data>
+  <data name="UpdateDownloading" xml:space="preserve"><value>更新をダウンロード中…</value></data>
+  <data name="UpdatePreparing" xml:space="preserve"><value>保存・バックアップ・更新準備中…</value></data>
+  <data name="UpdateExitCancelled" xml:space="preserve"><value>更新を延期しました。保存や転送の完了後に再試行してください。</value></data>
+  <data name="UpdateCancelled" xml:space="preserve"><value>ダウンロードをキャンセルしました。現在のバージョンを引き続き使えます。</value></data>
+  <data name="UpdateFailed" xml:space="preserve"><value>更新が完了しませんでした。詳細を確認して再試行してください。</value></data>
+  <data name="UpdatePreviousSuccess" xml:space="preserve"><value>前回の更新が完了し、このバージョンが起動しました。</value></data>
+  <data name="UpdateCurrentVersion" xml:space="preserve"><value>現在のバージョン {0} · {1}</value></data>
+  <data name="UpdateInstalledEdition" xml:space="preserve"><value>インストール版</value></data>
+  <data name="UpdatePortableEdition" xml:space="preserve"><value>ポータブル版</value></data>
+  <data name="UpdateLastCheck" xml:space="preserve"><value>最終確認：{0}</value></data>
+  <data name="UpdateNeverChecked" xml:space="preserve"><value>未確認</value></data>
+  <data name="UpdateDescription" xml:space="preserve"><value>GitHub の正式版を毎日確認し、ここだけに通知します。クリック後にダウンロード、設定の保存・バックアップを行い、ローカルデータを保持して再起動します。</value></data>
+  <data name="UpdateCheck" xml:space="preserve"><value>更新を確認</value></data>
+  <data name="UpdateInstall" xml:space="preserve"><value>更新して再起動</value></data>
+  <data name="UpdateCancel" xml:space="preserve"><value>ダウンロードを中止</value></data>
+  <data name="UpdateReleaseNotes" xml:space="preserve"><value>リリースノート</value></data>
+  <data name="UpdateNoNotes" xml:space="preserve"><value>新しいリリースノートはありません。</value></data>
+  <data name="UpdateBackupLocation" xml:space="preserve"><value>設定のバックアップ：{0}</value></data>
 </root>

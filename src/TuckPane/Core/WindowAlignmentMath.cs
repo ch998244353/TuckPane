@@ -57,7 +57,7 @@ internal readonly record struct WindowAlignmentInsets(int Left, int Top, int Rig
     };
 }
 
-internal static class WindowAlignmentMath
+internal static partial class WindowAlignmentMath
 {
     internal const double SnapDistanceDip = 12;
     internal const double ReleaseDistanceDip = 20;
@@ -113,7 +113,7 @@ internal static class WindowAlignmentMath
         IReadOnlyList<WindowAlignmentTarget> targets,
         bool vertical)
     {
-        var candidates = new List<Candidate>(2 + targets.Count * 2);
+        var candidates = new List<Candidate>(2 + targets.Count * 4);
         Add(candidates, moving, work, vertical, WindowAlignmentTargetKind.Screen, Guid.Empty,
             WindowAlignmentAnchor.Start, WindowAlignmentAnchor.Start);
         Add(candidates, moving, work, vertical, WindowAlignmentTargetKind.Screen, Guid.Empty,
@@ -125,6 +125,10 @@ internal static class WindowAlignmentMath
                 WindowAlignmentAnchor.Start, WindowAlignmentAnchor.Start);
             Add(candidates, moving, target.Bounds, vertical, WindowAlignmentTargetKind.Organizer, target.Id,
                 WindowAlignmentAnchor.End, WindowAlignmentAnchor.End);
+            Add(candidates, moving, target.Bounds, vertical, WindowAlignmentTargetKind.Organizer, target.Id,
+                WindowAlignmentAnchor.Start, WindowAlignmentAnchor.End);
+            Add(candidates, moving, target.Bounds, vertical, WindowAlignmentTargetKind.Organizer, target.Id,
+                WindowAlignmentAnchor.End, WindowAlignmentAnchor.Start);
         }
         return candidates;
     }

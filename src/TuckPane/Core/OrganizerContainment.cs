@@ -8,6 +8,8 @@ internal enum OrganizerContainmentFailure
     MissingOrganizer,
     SameOrganizer,
     StationCannotBeContained,
+    DockCannotBeContained,
+    PermanentWindowCannotBeContained,
     TargetIsDescendant
 }
 
@@ -88,8 +90,12 @@ internal static class OrganizerContainment
             return new(false, OrganizerContainmentFailure.MissingOrganizer, null);
         if (organizer.Id == container.Id)
             return new(false, OrganizerContainmentFailure.SameOrganizer, organizer.ContainerOrganizerId);
+        if (organizer.PlacementMode == OrganizerPlacementMode.Dock)
+            return new(false, OrganizerContainmentFailure.DockCannotBeContained, organizer.ContainerOrganizerId);
         if (organizer.PlacementMode == OrganizerPlacementMode.Station)
             return new(false, OrganizerContainmentFailure.StationCannotBeContained, organizer.ContainerOrganizerId);
+        if (OrganizerExpansion.IsPermanent(organizer))
+            return new(false, OrganizerContainmentFailure.PermanentWindowCannotBeContained, organizer.ContainerOrganizerId);
         if (IsAncestor(organizers, organizer.Id, container.Id))
             return new(false, OrganizerContainmentFailure.TargetIsDescendant, organizer.ContainerOrganizerId);
 

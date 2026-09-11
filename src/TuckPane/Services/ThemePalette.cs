@@ -15,6 +15,8 @@ internal readonly record struct ThemeEffectParameters(
 /// highlight semantics testable without creating a window or GPU graph.
 /// </summary>
 internal readonly record struct ThemeCompositionPlan(
+    // The sampled Glass result is already composited. Only colour-only
+    // branches have a translucent output; TintOpacity is the user's weight.
     float SurfaceOpacity,
     float TintOpacity,
     float DesktopOpacity,
@@ -37,9 +39,9 @@ internal static class ThemePalette
     internal const float GlassEdgeTextureThicknessDip = 1.25f;
     internal const float GlassEdgeMinimumOpacity = .92f;
 
-    private const float GlassBlurAmount = 10;
-    private const float GlassSaturation = 2;
-    private const float GlassLuminosityOpacity = .06f;
+    private const float GlassBlurAmount = 40;
+    private const float GlassSaturation = 1;
+    private const float GlassLuminosityOpacity = .35f;
 
     internal static Color SurfaceColor(ThemeValues theme) => FromArgb(theme.ColorArgb);
 
@@ -57,23 +59,7 @@ internal static class ThemePalette
     }
 
     internal static Color ResolveOrganizerTextColor(OrganizerTextColor mode, ThemeValues theme) =>
-        mode switch
-        {
-            OrganizerTextColor.White => Colors.White,
-            OrganizerTextColor.Black => Colors.Black,
-            _ => ResolveAutoOrganizerTextColor(theme)
-        };
-
-    private static Color ResolveAutoOrganizerTextColor(ThemeValues theme)
-    {
-        Color background = TintColor(theme);
-        double luminance = RelativeLuminance(background);
-        double blackContrast = (luminance + .05) / .05;
-        double whiteContrast = 1.05 / (luminance + .05);
-        return blackContrast >= whiteContrast
-            ? ColorHelper.FromArgb(255, 31, 31, 31)
-            : ColorHelper.FromArgb(255, 245, 245, 245);
-    }
+        Colors.White;
 
     internal static bool IsDark(ThemeValues theme) => ForegroundColor(theme).R > 128;
 
@@ -97,10 +83,10 @@ internal static class ThemePalette
             1);
 
     internal static float HighlightOpacity(ThemeValues theme) =>
-        theme.SolidColorMode ? 0f : 4f * TintOpacity(theme) * (1f - TintOpacity(theme)) * OpticalProgress(theme);
+        theme.SolidColorMode ? 0f : 4f * TintOpacity(theme) * (1f - TintOpacity(theme));
 
     internal static Color LuminosityColor(ThemeValues theme) =>
-        IsDark(theme) ? Colors.Black : Colors.White;
+        ColorHelper.FromArgb(255, 128, 128, 128);
 
     internal static ThemeEffectParameters Effect() =>
         new(GlassBlurAmount, GlassSaturation, GlassLuminosityOpacity);
@@ -113,42 +99,27 @@ internal static class ThemePalette
         ThemeValues theme,
         bool useEffects)
     {
+        if (theme.FullyTransparent)
+            return new ThemeCompositionPlan(0, 0, 1, 0, false, false, 1, 0, 0,
+                TintColor(theme), LuminosityColor(theme), useEffects);
         ThemeEffectParameters parameters = Effect();
-        float surfaceOpacity = TintOpacity(theme);
-        float desktopOpacity = 1f - surfaceOpacity;
+        float tintOpacity = TintOpacity(theme);
+        float desktopOpacity = DesktopOpacity(theme);
         float blurStrength = (float)GlobalSettings.NormalizeThemeBlurStrength(theme.BlurStrength);
-        if (theme.SolidColorMode)
-        {
-            return new ThemeCompositionPlan(
-                SurfaceOpacity: surfaceOpacity,
-                TintOpacity: surfaceOpacity,
-                DesktopOpacity: 0,
-                BlurAmount: 0,
-                UsesGaussianBlur: false,
-                RequiresHostBackdrop: false,
-                Saturation: 1,
-                LuminosityOpacity: 0,
-                HighlightOpacity: 0,
-                TintColor: TintColor(theme),
-                LuminosityColor: LuminosityColor(theme),
-                UseEffects: useEffects);
-        }
-        bool intermediateOpacity = surfaceOpacity > .0001f && surfaceOpacity < .9999f;
-        bool requiresHostBackdrop = useEffects && intermediateOpacity && blurStrength > .0001f;
-        float opticalProgress = requiresHostBackdrop ? Math.Min(blurStrength, 1f) : 0;
+        // Zero tint is still frosted when blur is positive. Fully opaque tint
+        // and clear/solid paths need no sampled background.
+        bool requiresHostBackdrop = useEffects && !theme.SolidColorMode && tintOpacity < 1 && blurStrength > 0;
         float blurAmount = requiresHostBackdrop ? parameters.BlurAmount * blurStrength : 0;
         return new ThemeCompositionPlan(
-            SurfaceOpacity: surfaceOpacity,
-            TintOpacity: surfaceOpacity,
+            SurfaceOpacity: requiresHostBackdrop ? 1 : tintOpacity,
+            TintOpacity: tintOpacity,
             DesktopOpacity: desktopOpacity,
             BlurAmount: blurAmount,
             UsesGaussianBlur: requiresHostBackdrop,
             RequiresHostBackdrop: requiresHostBackdrop,
-            Saturation: 1f + (parameters.Saturation - 1f) * opticalProgress,
-            LuminosityOpacity: parameters.LuminosityOpacity * opticalProgress,
-            HighlightOpacity: requiresHostBackdrop
-                ? 4f * surfaceOpacity * (1f - surfaceOpacity) * opticalProgress
-                : 0,
+            Saturation: parameters.Saturation,
+            LuminosityOpacity: requiresHostBackdrop ? parameters.LuminosityOpacity : 0,
+            HighlightOpacity: useEffects ? HighlightOpacity(theme) : 0,
             TintColor: TintColor(theme),
             LuminosityColor: LuminosityColor(theme),
             UseEffects: useEffects);
@@ -159,6 +130,8 @@ internal static class ThemePalette
         color.R,
         color.G,
         color.B);
+
+    internal static float EdgeOpacity(ThemeValues theme) => theme.FullyTransparent ? 0 : GlassEdgeMinimumOpacity;
 
     internal static IReadOnlyList<(float Offset, Color Color)> GlassHighlightStops { get; } =
     [

@@ -11,6 +11,7 @@
                 <SolidColorBrush x:Key="TodoTextBrush" Color="White" />
                 <SolidColorBrush x:Key="TodoInputBrush" Color="#18FFFFFF" />
                 <SolidColorBrush x:Key="TodoBorderBrush" Color="White" />
+                <SolidColorBrush x:Key="TodoSeparatorBrush" Color="White" Opacity="0.5" />
             </Grid.Resources>
             <Grid.RowDefinitions>
                 <RowDefinition Height="44" />
@@ -21,6 +22,7 @@
             <Grid x:Name="DragTitleBar" Padding="14,0,6,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
@@ -69,9 +71,22 @@
                     Click="ColorButton_Click">
                     <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="16" Glyph="&#xE790;" />
                 </Button>
+                <ToggleButton
+                    x:Name="SeparatorsButton"
+                    Grid.Column="2"
+                    Width="34"
+                    Height="34"
+                    Margin="0,0,2,0"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    Padding="0"
+                    Click="SeparatorsButton_Click">
+                    <SymbolIcon Symbol="Bullets" />
+                </ToggleButton>
                 <Button
                     x:Name="CloseButton"
-                    Grid.Column="2"
+                    Grid.Column="3"
                     Width="34"
                     Height="34"
                     Background="Transparent"
@@ -108,6 +123,44 @@
                 DragItemsCompleted="TaskList_DragItemsCompleted"
                 ReorderMode="Enabled"
                 SelectionMode="None">
+                <ListView.Resources>
+                    <ResourceDictionary>
+                        <ResourceDictionary.ThemeDictionaries>
+                            <!-- Keep each brush's color fixed to its dictionary; nested ThemeResource
+                                 colors can recolor shared brushes when another themed subtree loads. -->
+                            <ResourceDictionary x:Key="Light">
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUnchecked"
+                                    Color="#72000000" Opacity="0.5" />
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPointerOver"
+                                    Color="#72000000" Opacity="0.5" />
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPressed"
+                                    Color="#37000000" Opacity="0.5" />
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedDisabled"
+                                    Color="#37000000" Opacity="0.5" />
+                            </ResourceDictionary>
+                            <ResourceDictionary x:Key="Dark">
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUnchecked"
+                                    Color="#8BFFFFFF" Opacity="0.5" />
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPointerOver"
+                                    Color="#8BFFFFFF" Opacity="0.5" />
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPressed"
+                                    Color="#28FFFFFF" Opacity="0.5" />
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedDisabled"
+                                    Color="#28FFFFFF" Opacity="0.5" />
+                            </ResourceDictionary>
+                            <ResourceDictionary x:Key="HighContrast">
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUnchecked"
+                                    Color="{ThemeResource SystemColorButtonTextColor}" />
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPointerOver"
+                                    Color="{ThemeResource SystemColorHighlightColor}" />
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPressed"
+                                    Color="{ThemeResource SystemColorHighlightColor}" />
+                                <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedDisabled"
+                                    Color="{ThemeResource SystemColorGrayTextColor}" />
+                            </ResourceDictionary>
+                        </ResourceDictionary.ThemeDictionaries>
+                    </ResourceDictionary>
+                </ListView.Resources>
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -119,8 +172,9 @@
                     <DataTemplate>
                         <Border
                             Margin="6,0"
-                            Padding="8,8"
-                            CornerRadius="8"
+                            Padding="8,8,8,4"
+                            BorderBrush="{StaticResource TodoSeparatorBrush}"
+                            BorderThickness="{Binding SeparatorThickness}"
                             Opacity="{Binding Opacity}">
                             <Border.ContextFlyout>
                                 <MenuFlyout>
@@ -134,30 +188,40 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <Viewbox
+                                <Grid
                                     Grid.Column="0"
-                                    Width="{Binding CheckBoxSize}"
-                                    Height="{Binding CheckBoxSize}"
+                                    MinWidth="20"
+                                    MinHeight="20"
                                     Margin="0,1,8,0"
                                     VerticalAlignment="Top"
-                                    Stretch="Uniform">
-                                    <CheckBox
-                                        Width="20"
-                                        Height="20"
-                                        Padding="0"
-                                        MinWidth="0"
-                                        MinHeight="0"
-                                        Click="TaskCheckBox_Click"
-                                        DataContextChanged="TaskCheckBox_DataContextChanged"
-                                        IsChecked="False"
-                                        Tag="{Binding}" />
-                                </Viewbox>
+                                    Background="Transparent"
+                                    Tapped="TaskCheckTarget_Tapped">
+                                    <Viewbox
+                                        Width="{Binding CheckBoxSize}"
+                                        Height="{Binding CheckBoxSize}"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        Stretch="Uniform">
+                                        <CheckBox
+                                            Width="20"
+                                            Height="20"
+                                            Padding="0"
+                                            MinWidth="0"
+                                            MinHeight="0"
+                                            Click="TaskCheckBox_Click"
+                                            DataContextChanged="TaskCheckBox_DataContextChanged"
+                                            IsChecked="False"
+                                            Tag="{Binding}" />
+                                    </Viewbox>
+                                </Grid>
                                 <TextBlock
                                     Grid.Column="1"
                                     HorizontalAlignment="Stretch"
                                     VerticalAlignment="Center"
                                     DoubleTapped="TaskText_DoubleTapped"
-                                    FontFamily="Segoe UI Variable Text"
+                                    FontFamily="{ThemeResource ContentControlThemeFontFamily}"
+                                    FontStretch="Normal"
+                                    CharacterSpacing="0"
                                     FontSize="{Binding FontSize}"
                                     Foreground="{StaticResource TodoTextBrush}"
                                     Text="{Binding Text}"

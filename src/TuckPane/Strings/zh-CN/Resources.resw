@@ -25,7 +25,7 @@
   <data name="OrganizerTextColorWhite" xml:space="preserve"><value>白色</value></data>
   <data name="OrganizerTextColorBlack" xml:space="preserve"><value>黑色</value></data>
   <data name="OrganizerTextColorErrorTitle" xml:space="preserve"><value>无法保存收纳窗文字颜色</value></data>
-  <data name="WindowAlignmentTitle" xml:space="preserve"><value>拖动窗口时自动对齐</value></data>
+  <data name="WindowAlignmentTitle" xml:space="preserve"><value>移动及拉伸窗口时自动对齐</value></data>
   <data name="RememberExpandedOrganizerPositionTitle" xml:space="preserve"><value>记住收纳窗展开位置</value></data>
   <data name="UniformFloatingCompactScaleTitle" xml:space="preserve"><value>统一悬浮模式入口大小</value></data>
   <data name="UniformPositionedCompactScaleTitle" xml:space="preserve"><value>统一定位模式入口大小</value></data>
@@ -57,6 +57,8 @@
   <data name="ThemeCustomColor" xml:space="preserve"><value>自定义</value></data>
   <data name="ThemeTransparencyLabel" xml:space="preserve"><value>背景不透明度</value></data>
   <data name="ThemeBlurStrengthLabel" xml:space="preserve"><value>模糊强度</value></data>
+  <data name="ThemeOpacityDescription" xml:space="preserve"><value>0% 不叠加所选颜色；100% 完全遮住窗后内容。</value></data>
+  <data name="ThemeBlurDescription" xml:space="preserve"><value>0% 清晰透过；非零值使用磨砂背景。模糊越高，背景细节越柔和。</value></data>
   <data name="ThemeSaveErrorTitle" xml:space="preserve"><value>无法保存主题</value></data>
   <data name="AddTitle" xml:space="preserve"><value>添加收纳窗</value></data>
   <data name="NameLabel" xml:space="preserve"><value>名称</value></data>
@@ -80,7 +82,6 @@
   <data name="CanvasScaleLabel" xml:space="preserve"><value>画布大小</value></data>
   <data name="ItemScaleLabel" xml:space="preserve"><value>内容比例</value></data>
   <data name="CreateOrganizer" xml:space="preserve"><value>创建收纳窗</value></data>
-  <data name="OrganizerLimit" xml:space="preserve"><value>已达到 12 个收纳窗上限。</value></data>
   <data name="ManageTitle" xml:space="preserve"><value>管理</value></data>
   <data name="ManageEmpty" xml:space="preserve"><value>还没有收纳窗</value></data>
   <data name="Create" xml:space="preserve"><value>创建</value></data>
@@ -100,10 +101,14 @@
   <data name="ContextManage" xml:space="preserve"><value>设置</value></data>
   <data name="ContextDuplicate" xml:space="preserve"><value>窗口复制</value></data>
   <data name="ContextSwitchMode" xml:space="preserve"><value>模式切换</value></data>
-  <data name="ContextSwitchContentFormat" xml:space="preserve"><value>切换为{0}</value></data>
+  <data name="ContextSwitchToPositioned" xml:space="preserve"><value>改为定位</value></data>
+  <data name="ContextSwitchToFloating" xml:space="preserve"><value>改为悬浮</value></data>
+  <data name="ContextHideName" xml:space="preserve"><value>隐藏名称</value></data>
+  <data name="ContextSwitchToCompactList" xml:space="preserve"><value>改为精简</value></data>
+  <data name="ContextSwitchToIcon" xml:space="preserve"><value>改为图标</value></data>
   <data name="ContextRename" xml:space="preserve"><value>重命名</value></data>
   <data name="ContextOpenStorage" xml:space="preserve"><value>打开收纳目录</value></data>
-  <data name="ContextDeleteWindow" xml:space="preserve"><value>删除窗口</value></data>
+  <data name="ContextDeleteWindow" xml:space="preserve"><value>删除</value></data>
   <data name="CopyNameSuffix" xml:space="preserve"><value> - 副本</value></data>
   <data name="Collapse" xml:space="preserve"><value>收缩</value></data>
   <data name="TransparencyTitle" xml:space="preserve"><value>透明效果已降级</value></data>
@@ -125,10 +130,9 @@
   <data name="DeleteErrorTitle" xml:space="preserve"><value>无法删除收纳窗</value></data>
   <data name="OpenFolderErrorTitle" xml:space="preserve"><value>无法打开文件夹</value></data>
   <data name="MissingStorageMessage" xml:space="preserve"><value>实际目录不存在，请先使用“重建目录”。</value></data>
-  <data name="MaximumOrganizersError" xml:space="preserve"><value>最多只能创建 12 个收纳窗。</value></data>
   <data name="StationEdgeOccupiedError" xml:space="preserve"><value>这条屏幕边缘已经有一个中转站，请选择其他边。</value></data>
   <data name="StationDuplicateError" xml:space="preserve"><value>中转站不能复制。</value></data>
-  <data name="StationManageModeError" xml:space="preserve"><value>中转站模式不能与悬浮窗或定位模式互相切换。</value></data>
+  <data name="StationManageModeError" xml:space="preserve"><value>收纳窗、中转站和 Dock 栏之间不能互相转换；普通收纳窗的悬浮模式与定位模式仍可切换。</value></data>
   <data name="OrganizerContainerDropError" xml:space="preserve"><value>无法将收纳窗放入目标收纳窗：{0}</value></data>
   <data name="OrganizerContainmentSelfError" xml:space="preserve"><value>不能将收纳窗放入自身。</value></data>
   <data name="OrganizerContainmentStationSourceError" xml:space="preserve"><value>中转站不能放入其他收纳窗。</value></data>
@@ -137,8 +141,10 @@
   <data name="OrganizerContainmentMissingError" xml:space="preserve"><value>来源收纳窗或目标收纳窗不存在。</value></data>
   <data name="OrganizerReleaseNoGridError" xml:space="preserve"><value>没有足够的桌面网格位置来释放内部的定位收纳窗，未删除此收纳窗。</value></data>
   <data name="ContainedOrganizerNoGridError" xml:space="preserve"><value>目标显示器没有可用网格，收纳窗已返回原容器收纳窗。</value></data>
-  <data name="MoveOrganizerFilesOnDeleteTitle" xml:space="preserve"><value>删除收纳窗时将文件移到桌面</value></data>
-  <data name="DeleteBehaviorErrorTitle" xml:space="preserve"><value>无法保存删除设置</value></data>
+  <data name="DeleteChoiceMessageFormat" xml:space="preserve"><value>请选择删除收纳窗后如何处理保存文件夹“{0}”：移到桌面会移动整个文件夹及其中全部文件；留在原路径只删除收纳窗，文件夹和文件保持原位。取消将不作任何更改。</value></data>
+  <data name="DeleteMoveFolderToDesktop" xml:space="preserve"><value>整个文件夹移到桌面</value></data>
+  <data name="DeleteKeepFolderInPlace" xml:space="preserve"><value>文件留在原路径</value></data>
+  <data name="DeleteOrganizer" xml:space="preserve"><value>删除收纳窗</value></data>
   <data name="CompactNameScaleTitle" xml:space="preserve"><value>收起名称大小</value></data>
   <data name="ExpandedNameScaleTitle" xml:space="preserve"><value>展开后名称大小</value></data>
   <data name="UniformCompactNameScaleErrorTitle" xml:space="preserve"><value>无法保存名称大小</value></data>
@@ -310,6 +316,7 @@
   <data name="TodoFontSizeFormat" xml:space="preserve"><value>{0:0} DIP</value></data>
   <data name="TodoAddPlaceholder" xml:space="preserve"><value>输入待办并按 Enter</value></data>
   <data name="TodoColor" xml:space="preserve"><value>待办颜色</value></data>
+  <data name="TodoSeparators" xml:space="preserve"><value>条目分隔线（作用于所有待办）</value></data>
   <data name="CloseTodo" xml:space="preserve"><value>关闭待办</value></data>
   <data name="TodoRenameHint" xml:space="preserve"><value>单击标题可重命名待办。</value></data>
   <data name="TodoDragSaveFailed" xml:space="preserve"><value>移动前无法保存待办。</value></data>
@@ -321,4 +328,108 @@
   <data name="TodoNameDuplicate" xml:space="preserve"><value>这个收纳窗中已存在同名待办。</value></data>
   <data name="PortableTodoOpenErrorFormat" xml:space="preserve"><value>无法打开“{0}”：{1}</value></data>
   <data name="PortableTodoExtensionError" xml:space="preserve"><value>只有 .tucktodo 文件能作为待办打开。</value></data>
+  <data name="FolderMenuTitle" xml:space="preserve"><value>文件夹右键菜单</value></data>
+  <data name="FolderMenuCommand" xml:space="preserve"><value>使用 TuckPane 创建收纳窗</value></data>
+  <data name="FolderMenuRepair" xml:space="preserve"><value>修复关联</value></data>
+  <data name="FolderMenuEnabled" xml:space="preserve"><value>已启用。Windows 11 通常在“显示更多选项”中显示。</value></data>
+  <data name="FolderMenuDisabled" xml:space="preserve"><value>开启后可右键单个文件夹创建收纳窗。便携版删除前请先关闭。</value></data>
+  <data name="FolderMenuBroken" xml:space="preserve"><value>关联缺失或已失效。点击“修复关联”绑定当前程序。</value></data>
+  <data name="FolderMenuOtherCopy" xml:space="preserve"><value>菜单当前关联另一份 TuckPane。开启或修复将改为使用当前程序。</value></data>
+  <data name="FolderMenuErrorTitle" xml:space="preserve"><value>无法更新文件夹右键菜单</value></data>
+  <data name="FolderMenuExecutableMissing" xml:space="preserve"><value>当前目录缺少 TuckPane.exe，请完整解压或重新安装。</value></data>
+  <data name="FolderMenuInvalidArguments" xml:space="preserve"><value>创建收纳窗命令必须且只能包含一个文件夹的完整路径。</value></data>
+  <data name="FolderMenuAlreadyExists" xml:space="preserve"><value>该文件夹已经关联了收纳窗。</value></data>
+  <data name="OrganizerCreationAcknowledge" xml:space="preserve"><value>知道了</value></data>
+  <data name="FolderMenuAlreadyExistsFormat" xml:space="preserve"><value>该文件夹已经关联了收纳窗，不能重复创建。
+
+所选路径：{0}
+已有收纳窗：{1}
+保存路径：{2}</value></data>
+  <data name="FolderMenuOverlapFormat" xml:space="preserve"><value>不允许父子目录分别关联收纳窗。
+
+所选路径：{0}
+冲突收纳窗：{1}
+保存路径：{2}</value></data>
+  <data name="OrganizerRenameBusy" xml:space="preserve"><value>文件传输、拖放或目录改名正在进行，请完成后重试。</value></data>
+  <data name="OrganizerRenameConflict" xml:space="preserve"><value>原目录旁已存在同名文件或文件夹，请换一个名称。</value></data>
+  <data name="OrganizerRenameRecoveryFormat" xml:space="preserve"><value>目录改名失败，且无法完整回滚。文件当前保留在：{0}。请检查该位置。</value></data>
+  <data name="ExpansionModeLabel" xml:space="preserve"><value>展开行为</value></data>
+  <data name="ExpansionModeCollapsible" xml:space="preserve"><value>收缩模式</value></data>
+  <data name="ExpansionModeAlwaysExpanded" xml:space="preserve"><value>展开模式</value></data>
+  <data name="ContextSwitchToAlwaysExpanded" xml:space="preserve"><value>改为展开</value></data>
+  <data name="ContextSwitchToCollapsible" xml:space="preserve"><value>改为收缩</value></data>
+  <data name="ExpansionModeUnavailable" xml:space="preserve"><value>仅未被收纳的悬浮窗和定位窗可使用展开模式。请先将子窗移出。</value></data>
+  <data name="ExpansionModeBusy" xml:space="preserve"><value>窗口正在切换或拖动，请稍后再切换模式。</value></data>
+  <data name="ContextAddItem" xml:space="preserve"><value>添加项目</value></data>
+  <data name="AddItemSourceMissing" xml:space="preserve"><value>所选文件已不存在，请重新选择。</value></data>
+  <data name="AddItemNameConflict" xml:space="preserve"><value>目标名称持续被占用，请稍后重试。原文件已保留。</value></data>
+  <data name="NavOrganizers" xml:space="preserve"><value>收纳窗</value></data>
+  <data name="NavStations" xml:space="preserve"><value>中转站</value></data>
+  <data name="NavDocks" xml:space="preserve"><value>Dock 栏</value></data>
+  <data name="ModeDock" xml:space="preserve"><value>Dock 栏模式</value></data>
+  <data name="UniformEntrySizes" xml:space="preserve"><value>统一入口大小</value></data>
+  <data name="ThemeFullyTransparent" xml:space="preserve"><value>完全透明</value></data>
+  <data name="DockOrientationLabel" xml:space="preserve"><value>排列方向</value></data>
+  <data name="DockHorizontal" xml:space="preserve"><value>横向</value></data>
+  <data name="DockVertical" xml:space="preserve"><value>纵向</value></data>
+  <data name="DockIconSizeLabel" xml:space="preserve"><value>图标大小</value></data>
+  <data name="DockSpacingLabel" xml:space="preserve"><value>图标间隔</value></data>
+  <data name="DockEmptyHint" xml:space="preserve"><value>点击插入，或拖入文件</value></data>
+  <data name="DockCannotBeContained" xml:space="preserve"><value>Dock 栏不能放入其他窗口</value></data>
+  <data name="ManageCategoryEmpty" xml:space="preserve"><value>此类别还没有窗口</value></data>
+  <data name="DockSizeLabel" xml:space="preserve"><value>Dock 大小</value></data>
+  <data name="OrganizerMenuSettingsTitle" xml:space="preserve"><value>右键菜单</value></data>
+  <data name="ContextSwitchPlacement" xml:space="preserve"><value>放置模式切换</value></data>
+  <data name="ContextSwitchContent" xml:space="preserve"><value>内容模式切换</value></data>
+  <data name="ContextSwitchExpansion" xml:space="preserve"><value>展开模式切换</value></data>
+  <data name="CompactHoverMagnificationTitle" xml:space="preserve"><value>精简模式悬浮放大</value></data>
+  <data name="DockHoverMagnificationTitle" xml:space="preserve"><value>Dock 悬浮放大</value></data>
+  <data name="HoverMagnificationScaleLabel" xml:space="preserve"><value>放大倍率</value></data>
+  <data name="DesktopMenuTitle" xml:space="preserve"><value>桌面右键菜单</value></data>
+  <data name="DesktopMenuCommand" xml:space="preserve"><value>新建收纳窗</value></data>
+  <data name="DesktopMenuEnabled" xml:space="preserve"><value>已启用桌面空白处右键菜单（Windows 11：显示更多选项）。</value></data>
+  <data name="DesktopMenuDisabled" xml:space="preserve"><value>未启用桌面右键菜单。</value></data>
+  <data name="DesktopMenuRepair" xml:space="preserve"><value>修复关联</value></data>
+  <data name="DesktopMenuBroken" xml:space="preserve"><value>关联缺失或已失效。点击“修复关联”绑定当前程序。</value></data>
+  <data name="DesktopMenuOtherCopy" xml:space="preserve"><value>菜单当前关联另一份 TuckPane。开启或修复将改为使用当前程序。</value></data>
+  <data name="DesktopMenuErrorTitle" xml:space="preserve"><value>无法更新文件夹右键菜单</value></data>
+  <data name="NavMenus" xml:space="preserve"><value>右键菜单</value></data>
+  <data name="HideCollapseIndicatorTitle" xml:space="preserve"><value>隐藏右上角收缩标志</value></data>
+  <data name="CreateInCategory" xml:space="preserve"><value>新建当前类别的窗口</value></data>
+  <data name="DiagnosticsDescription" xml:space="preserve"><value>导出脱敏运行记录以帮助排查问题。不包含文件正文，不会自动上传。</value></data>
+  <data name="DiagnosticsExport" xml:space="preserve"><value>导出诊断包</value></data>
+  <data name="DiagnosticsExported" xml:space="preserve"><value>诊断包已保存。请自行选择是否分享给开发者。</value></data>
+  <data name="DiagnosticsTitle" xml:space="preserve"><value>本地诊断</value></data>
+  <data name="ExitPendingMessage" xml:space="preserve"><value>传输或保存尚未安全结束，程序已保留。请等待当前操作结束后再次退出。</value></data>
+  <data name="ExitPendingTitle" xml:space="preserve"><value>暂缓退出</value></data>
+  <data name="LaunchPending" xml:space="preserve"><value>Windows 仍在处理打开请求，请稍候。</value></data>
+  <data name="LaunchQueueFull" xml:space="preserve"><value>打开请求过多，请等待当前请求结束。</value></data>
+  <data name="MoveParentCleanupWarning" xml:space="preserve"><value>移动已完成，但空的父目录未能清理。</value></data>
+  <data name="PublishedCopyRetained" xml:space="preserve"><value>完整副本已保留在：{0}。源目录可能只剩部分内容；请核对后再整理，程序不会自动重试删除。</value></data>
+  <data name="DiagnosticsExportFailed" xml:space="preserve"><value>诊断包未能保存。请检查保存位置权限后重试。</value></data>
+  <data name="NavUpdate" xml:space="preserve"><value>更新</value></data>
+  <data name="UpdateReady" xml:space="preserve"><value>等待检查更新</value></data>
+  <data name="UpdateChecking" xml:space="preserve"><value>正在检查更新…</value></data>
+  <data name="UpdateLatest" xml:space="preserve"><value>已是最新正式版</value></data>
+  <data name="UpdateAvailable" xml:space="preserve"><value>发现新版本</value></data>
+  <data name="UpdateCheckFailed" xml:space="preserve"><value>检查失败，可以重试</value></data>
+  <data name="UpdateTimeout" xml:space="preserve"><value>网络请求已超时或取消，请稍后重试。</value></data>
+  <data name="UpdateDownloading" xml:space="preserve"><value>正在下载更新…</value></data>
+  <data name="UpdatePreparing" xml:space="preserve"><value>正在保存、备份并准备更新…</value></data>
+  <data name="UpdateExitCancelled" xml:space="preserve"><value>已暂缓更新，程序保持运行。请完成保存或传输后重试。</value></data>
+  <data name="UpdateCancelled" xml:space="preserve"><value>下载已取消，当前版本保持可用</value></data>
+  <data name="UpdateFailed" xml:space="preserve"><value>更新未完成，请查看下方详情后重试</value></data>
+  <data name="UpdatePreviousSuccess" xml:space="preserve"><value>上次更新成功，当前版本已启动。</value></data>
+  <data name="UpdateCurrentVersion" xml:space="preserve"><value>当前版本 {0} · {1}</value></data>
+  <data name="UpdateInstalledEdition" xml:space="preserve"><value>安装版</value></data>
+  <data name="UpdatePortableEdition" xml:space="preserve"><value>便携版</value></data>
+  <data name="UpdateLastCheck" xml:space="preserve"><value>最近检查：{0}</value></data>
+  <data name="UpdateNeverChecked" xml:space="preserve"><value>尚未检查</value></data>
+  <data name="UpdateDescription" xml:space="preserve"><value>每天自动检查 GitHub 正式版，只在此处提示。点击更新后下载，保存并备份配置，保留本地数据，完成后重新启动。</value></data>
+  <data name="UpdateCheck" xml:space="preserve"><value>检查更新</value></data>
+  <data name="UpdateInstall" xml:space="preserve"><value>更新并重启</value></data>
+  <data name="UpdateCancel" xml:space="preserve"><value>取消下载</value></data>
+  <data name="UpdateReleaseNotes" xml:space="preserve"><value>版本说明</value></data>
+  <data name="UpdateNoNotes" xml:space="preserve"><value>暂无新版本说明。</value></data>
+  <data name="UpdateBackupLocation" xml:space="preserve"><value>配置备份：{0}</value></data>
 </root>

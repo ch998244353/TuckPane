@@ -25,7 +25,7 @@
   <data name="OrganizerTextColorWhite" xml:space="preserve"><value>White</value></data>
   <data name="OrganizerTextColorBlack" xml:space="preserve"><value>Black</value></data>
   <data name="OrganizerTextColorErrorTitle" xml:space="preserve"><value>Could not save organizer text color</value></data>
-  <data name="WindowAlignmentTitle" xml:space="preserve"><value>Align windows while dragging</value></data>
+  <data name="WindowAlignmentTitle" xml:space="preserve"><value>Align windows while moving and resizing</value></data>
   <data name="RememberExpandedOrganizerPositionTitle" xml:space="preserve"><value>Remember expanded organizer positions</value></data>
   <data name="UniformFloatingCompactScaleTitle" xml:space="preserve"><value>Use one floating entry size</value></data>
   <data name="UniformPositionedCompactScaleTitle" xml:space="preserve"><value>Use one positioned entry size</value></data>
@@ -57,6 +57,8 @@
   <data name="ThemeCustomColor" xml:space="preserve"><value>Custom</value></data>
   <data name="ThemeTransparencyLabel" xml:space="preserve"><value>Background opacity</value></data>
   <data name="ThemeBlurStrengthLabel" xml:space="preserve"><value>Blur strength</value></data>
+  <data name="ThemeOpacityDescription" xml:space="preserve"><value>0% adds no selected colour; 100% fully covers the content behind the window.</value></data>
+  <data name="ThemeBlurDescription" xml:space="preserve"><value>0% is clear; higher values use a frosted background. Increasing blur softens background details.</value></data>
   <data name="ThemeSaveErrorTitle" xml:space="preserve"><value>Couldn't save theme</value></data>
   <data name="AddTitle" xml:space="preserve"><value>Add organizer</value></data>
   <data name="NameLabel" xml:space="preserve"><value>Name</value></data>
@@ -80,7 +82,6 @@
   <data name="CanvasScaleLabel" xml:space="preserve"><value>Canvas size</value></data>
   <data name="ItemScaleLabel" xml:space="preserve"><value>Content scale</value></data>
   <data name="CreateOrganizer" xml:space="preserve"><value>Create organizer</value></data>
-  <data name="OrganizerLimit" xml:space="preserve"><value>The 12-organizer limit has been reached.</value></data>
   <data name="ManageTitle" xml:space="preserve"><value>Manage</value></data>
   <data name="ManageEmpty" xml:space="preserve"><value>No organizers yet</value></data>
   <data name="Create" xml:space="preserve"><value>Create</value></data>
@@ -100,10 +101,14 @@
   <data name="ContextManage" xml:space="preserve"><value>Settings</value></data>
   <data name="ContextDuplicate" xml:space="preserve"><value>Duplicate window</value></data>
   <data name="ContextSwitchMode" xml:space="preserve"><value>Switch mode</value></data>
-  <data name="ContextSwitchContentFormat" xml:space="preserve"><value>Switch to {0}</value></data>
+  <data name="ContextSwitchToPositioned" xml:space="preserve"><value>Switch to positioned mode</value></data>
+  <data name="ContextSwitchToFloating" xml:space="preserve"><value>Switch to floating mode</value></data>
+  <data name="ContextHideName" xml:space="preserve"><value>Hide name</value></data>
+  <data name="ContextSwitchToCompactList" xml:space="preserve"><value>Switch to compact list mode</value></data>
+  <data name="ContextSwitchToIcon" xml:space="preserve"><value>Switch to icon mode</value></data>
   <data name="ContextRename" xml:space="preserve"><value>Rename</value></data>
   <data name="ContextOpenStorage" xml:space="preserve"><value>Open storage folder</value></data>
-  <data name="ContextDeleteWindow" xml:space="preserve"><value>Delete window</value></data>
+  <data name="ContextDeleteWindow" xml:space="preserve"><value>Delete</value></data>
   <data name="CopyNameSuffix" xml:space="preserve"><value> - Copy</value></data>
   <data name="Collapse" xml:space="preserve"><value>Collapse</value></data>
   <data name="TransparencyTitle" xml:space="preserve"><value>Transparency is unavailable</value></data>
@@ -125,10 +130,9 @@
   <data name="DeleteErrorTitle" xml:space="preserve"><value>Could not delete organizer</value></data>
   <data name="OpenFolderErrorTitle" xml:space="preserve"><value>Could not open folder</value></data>
   <data name="MissingStorageMessage" xml:space="preserve"><value>The storage folder is missing. Recreate it first.</value></data>
-  <data name="MaximumOrganizersError" xml:space="preserve"><value>You can create up to 12 organizers.</value></data>
   <data name="StationEdgeOccupiedError" xml:space="preserve"><value>A station already uses this screen edge. Choose another edge.</value></data>
   <data name="StationDuplicateError" xml:space="preserve"><value>Stations cannot be duplicated.</value></data>
-  <data name="StationManageModeError" xml:space="preserve"><value>Station mode cannot be changed to or from Floating or Positioned mode.</value></data>
+  <data name="StationManageModeError" xml:space="preserve"><value>Organizers, stations, and docks cannot be converted into one another. Regular organizers can still switch between Floating and Positioned modes.</value></data>
   <data name="OrganizerContainerDropError" xml:space="preserve"><value>Could not place the organizer in the target organizer: {0}</value></data>
   <data name="OrganizerContainmentSelfError" xml:space="preserve"><value>An organizer cannot be placed inside itself.</value></data>
   <data name="OrganizerContainmentStationSourceError" xml:space="preserve"><value>A Station cannot be placed inside another organizer.</value></data>
@@ -137,8 +141,10 @@
   <data name="OrganizerContainmentMissingError" xml:space="preserve"><value>The source or target organizer no longer exists.</value></data>
   <data name="OrganizerReleaseNoGridError" xml:space="preserve"><value>There are not enough Desktop grid positions to release the contained positioned organizers. The organizer was not deleted.</value></data>
   <data name="ContainedOrganizerNoGridError" xml:space="preserve"><value>No desktop grid position is available on the target display. The organizer was returned to its original container.</value></data>
-  <data name="MoveOrganizerFilesOnDeleteTitle" xml:space="preserve"><value>Move organizer files to Desktop when deleting</value></data>
-  <data name="DeleteBehaviorErrorTitle" xml:space="preserve"><value>Could not save delete setting</value></data>
+  <data name="DeleteChoiceMessageFormat" xml:space="preserve"><value>Choose what happens to the save folder “{0}” when deleting this organizer: moving to Desktop moves the whole folder and all its files; keeping files in place removes only the organizer. Cancel makes no changes.</value></data>
+  <data name="DeleteMoveFolderToDesktop" xml:space="preserve"><value>Move whole folder to Desktop</value></data>
+  <data name="DeleteKeepFolderInPlace" xml:space="preserve"><value>Keep files in place</value></data>
+  <data name="DeleteOrganizer" xml:space="preserve"><value>Delete organizer</value></data>
   <data name="CompactNameScaleTitle" xml:space="preserve"><value>Collapsed name size</value></data>
   <data name="ExpandedNameScaleTitle" xml:space="preserve"><value>Expanded name size</value></data>
   <data name="UniformCompactNameScaleErrorTitle" xml:space="preserve"><value>Could not save name size</value></data>
@@ -310,6 +316,7 @@
   <data name="TodoFontSizeFormat" xml:space="preserve"><value>{0:0} DIP</value></data>
   <data name="TodoAddPlaceholder" xml:space="preserve"><value>Type a to-do and press Enter</value></data>
   <data name="TodoColor" xml:space="preserve"><value>To-do color</value></data>
+  <data name="TodoSeparators" xml:space="preserve"><value>Task separators (all to-do windows)</value></data>
   <data name="CloseTodo" xml:space="preserve"><value>Close to-do</value></data>
   <data name="TodoRenameHint" xml:space="preserve"><value>Click the title to rename this to-do.</value></data>
   <data name="TodoDragSaveFailed" xml:space="preserve"><value>Could not save the to-do before moving it.</value></data>
@@ -321,4 +328,108 @@
   <data name="TodoNameDuplicate" xml:space="preserve"><value>A to-do with this name already exists in this organizer.</value></data>
   <data name="PortableTodoOpenErrorFormat" xml:space="preserve"><value>Could not open “{0}”: {1}</value></data>
   <data name="PortableTodoExtensionError" xml:space="preserve"><value>Only .tucktodo files can be opened as to-dos.</value></data>
+  <data name="FolderMenuTitle" xml:space="preserve"><value>Folder context menu</value></data>
+  <data name="FolderMenuCommand" xml:space="preserve"><value>Create organizer with TuckPane</value></data>
+  <data name="FolderMenuRepair" xml:space="preserve"><value>Repair association</value></data>
+  <data name="FolderMenuEnabled" xml:space="preserve"><value>Enabled. On Windows 11, usually available under Show more options.</value></data>
+  <data name="FolderMenuDisabled" xml:space="preserve"><value>Enable to create an organizer by right-clicking one folder. Disable before deleting a portable copy.</value></data>
+  <data name="FolderMenuBroken" xml:space="preserve"><value>The association is missing or broken. Repair it to use this copy.</value></data>
+  <data name="FolderMenuOtherCopy" xml:space="preserve"><value>The menu uses another copy of TuckPane. Enabling or repairing will switch it to this copy.</value></data>
+  <data name="FolderMenuErrorTitle" xml:space="preserve"><value>Could not update folder context menu</value></data>
+  <data name="FolderMenuExecutableMissing" xml:space="preserve"><value>TuckPane.exe is missing from this directory. Extract the complete archive or reinstall.</value></data>
+  <data name="FolderMenuInvalidArguments" xml:space="preserve"><value>The create-organizer command requires exactly one absolute folder path.</value></data>
+  <data name="FolderMenuAlreadyExists" xml:space="preserve"><value>This folder already has an organizer.</value></data>
+  <data name="OrganizerRenameBusy" xml:space="preserve"><value>A transfer, drag or directory rename is in progress. Try again when it finishes.</value></data>
+  <data name="OrganizerRenameConflict" xml:space="preserve"><value>A file or folder with that name already exists beside this directory. Choose another name.</value></data>
+  <data name="OrganizerRenameRecoveryFormat" xml:space="preserve"><value>The directory could not be renamed or fully rolled back. Your files remain at: {0}. Please check this location.</value></data>
+  <data name="OrganizerCreationAcknowledge" xml:space="preserve"><value>Got it</value></data>
+  <data name="FolderMenuAlreadyExistsFormat" xml:space="preserve"><value>This folder already has an organizer. A second organizer cannot be created for the same folder.
+
+Selected path: {0}
+Existing organizer: {1}
+Storage path: {2}</value></data>
+  <data name="FolderMenuOverlapFormat" xml:space="preserve"><value>Parent and child folders cannot have separate organizers.
+
+Selected path: {0}
+Conflicting organizer: {1}
+Storage path: {2}</value></data>
+  <data name="ExpansionModeLabel" xml:space="preserve"><value>Expansion behavior</value></data>
+  <data name="ExpansionModeCollapsible" xml:space="preserve"><value>Collapsible mode</value></data>
+  <data name="ExpansionModeAlwaysExpanded" xml:space="preserve"><value>Always expanded mode</value></data>
+  <data name="ContextSwitchToAlwaysExpanded" xml:space="preserve"><value>Switch to always expanded mode</value></data>
+  <data name="ContextSwitchToCollapsible" xml:space="preserve"><value>Switch to collapsible mode</value></data>
+  <data name="ExpansionModeUnavailable" xml:space="preserve"><value>Only uncontained floating or positioned windows can stay expanded. Move this window out of its container first.</value></data>
+  <data name="ExpansionModeBusy" xml:space="preserve"><value>Finish the current window transition or drag before switching modes.</value></data>
+  <data name="ContextAddItem" xml:space="preserve"><value>Add item</value></data>
+  <data name="AddItemSourceMissing" xml:space="preserve"><value>The selected file no longer exists. Select it again.</value></data>
+  <data name="AddItemNameConflict" xml:space="preserve"><value>The destination name is still in use. Try again later. The original file has been kept.</value></data>
+  <data name="NavOrganizers" xml:space="preserve"><value>Organizers</value></data>
+  <data name="NavStations" xml:space="preserve"><value>Stations</value></data>
+  <data name="NavDocks" xml:space="preserve"><value>Docks</value></data>
+  <data name="ModeDock" xml:space="preserve"><value>Dock mode</value></data>
+  <data name="UniformEntrySizes" xml:space="preserve"><value>Uniform entry sizes</value></data>
+  <data name="ThemeFullyTransparent" xml:space="preserve"><value>Fully transparent</value></data>
+  <data name="DockOrientationLabel" xml:space="preserve"><value>Orientation</value></data>
+  <data name="DockHorizontal" xml:space="preserve"><value>Horizontal</value></data>
+  <data name="DockVertical" xml:space="preserve"><value>Vertical</value></data>
+  <data name="DockIconSizeLabel" xml:space="preserve"><value>Icon size</value></data>
+  <data name="DockSpacingLabel" xml:space="preserve"><value>Icon spacing</value></data>
+  <data name="DockEmptyHint" xml:space="preserve"><value>Click to insert, or drag files here</value></data>
+  <data name="DockCannotBeContained" xml:space="preserve"><value>Docks cannot be placed inside other windows</value></data>
+  <data name="ManageCategoryEmpty" xml:space="preserve"><value>No windows in this category yet</value></data>
+  <data name="DockSizeLabel" xml:space="preserve"><value>Dock size</value></data>
+  <data name="OrganizerMenuSettingsTitle" xml:space="preserve"><value>Window context menu</value></data>
+  <data name="ContextSwitchPlacement" xml:space="preserve"><value>Switch placement mode</value></data>
+  <data name="ContextSwitchContent" xml:space="preserve"><value>Switch content mode</value></data>
+  <data name="ContextSwitchExpansion" xml:space="preserve"><value>Switch expansion mode</value></data>
+  <data name="CompactHoverMagnificationTitle" xml:space="preserve"><value>Compact list hover magnification</value></data>
+  <data name="DockHoverMagnificationTitle" xml:space="preserve"><value>Dock hover magnification</value></data>
+  <data name="HoverMagnificationScaleLabel" xml:space="preserve"><value>Magnification</value></data>
+  <data name="DesktopMenuTitle" xml:space="preserve"><value>Desktop context menu</value></data>
+  <data name="DesktopMenuCommand" xml:space="preserve"><value>New organizer</value></data>
+  <data name="DesktopMenuEnabled" xml:space="preserve"><value>Desktop background menu enabled (Windows 11: Show more options).</value></data>
+  <data name="DesktopMenuDisabled" xml:space="preserve"><value>Desktop context menu is disabled.</value></data>
+  <data name="DesktopMenuRepair" xml:space="preserve"><value>Repair association</value></data>
+  <data name="DesktopMenuBroken" xml:space="preserve"><value>The association is missing or broken. Repair it to use this copy.</value></data>
+  <data name="DesktopMenuOtherCopy" xml:space="preserve"><value>The menu uses another copy of TuckPane. Enabling or repairing will switch it to this copy.</value></data>
+  <data name="DesktopMenuErrorTitle" xml:space="preserve"><value>Could not update folder context menu</value></data>
+  <data name="NavMenus" xml:space="preserve"><value>Context menu</value></data>
+  <data name="HideCollapseIndicatorTitle" xml:space="preserve"><value>Hide collapse indicator</value></data>
+  <data name="CreateInCategory" xml:space="preserve"><value>Create a window in this category</value></data>
+  <data name="DiagnosticsDescription" xml:space="preserve"><value>Export redacted runtime records to help diagnose problems. File contents are excluded. Nothing is uploaded automatically.</value></data>
+  <data name="DiagnosticsExport" xml:space="preserve"><value>Export diagnostics</value></data>
+  <data name="DiagnosticsExported" xml:space="preserve"><value>Diagnostics saved. You can choose whether to share the archive with the developer.</value></data>
+  <data name="DiagnosticsTitle" xml:space="preserve"><value>Local diagnostics</value></data>
+  <data name="ExitPendingMessage" xml:space="preserve"><value>A transfer or save has not safely finished. The app remains open. Wait for the operation to finish, then exit again.</value></data>
+  <data name="ExitPendingTitle" xml:space="preserve"><value>Exit postponed</value></data>
+  <data name="LaunchPending" xml:space="preserve"><value>Windows is still processing the open request. Please wait.</value></data>
+  <data name="LaunchQueueFull" xml:space="preserve"><value>Too many open requests. Wait for the current requests to finish.</value></data>
+  <data name="MoveParentCleanupWarning" xml:space="preserve"><value>Move completed; the empty parent folder could not be removed.</value></data>
+  <data name="PublishedCopyRetained" xml:space="preserve"><value>A complete copy is retained at: {0}. The source may be incomplete. Review both locations; deletion will not be retried automatically.</value></data>
+  <data name="DiagnosticsExportFailed" xml:space="preserve"><value>Unable to save diagnostics. Check the destination permissions and try again.</value></data>
+  <data name="NavUpdate" xml:space="preserve"><value>Updates</value></data>
+  <data name="UpdateReady" xml:space="preserve"><value>Ready to check for updates</value></data>
+  <data name="UpdateChecking" xml:space="preserve"><value>Checking for updates…</value></data>
+  <data name="UpdateLatest" xml:space="preserve"><value>You have the latest stable version</value></data>
+  <data name="UpdateAvailable" xml:space="preserve"><value>An update is available</value></data>
+  <data name="UpdateCheckFailed" xml:space="preserve"><value>Could not check for updates. You can retry.</value></data>
+  <data name="UpdateTimeout" xml:space="preserve"><value>The request timed out or was cancelled. Please try again.</value></data>
+  <data name="UpdateDownloading" xml:space="preserve"><value>Downloading update…</value></data>
+  <data name="UpdatePreparing" xml:space="preserve"><value>Saving, backing up and preparing the update…</value></data>
+  <data name="UpdateExitCancelled" xml:space="preserve"><value>Update deferred. The app is still running. Finish saving or transferring files, then retry.</value></data>
+  <data name="UpdateCancelled" xml:space="preserve"><value>Download cancelled. Your current version is unchanged.</value></data>
+  <data name="UpdateFailed" xml:space="preserve"><value>Update did not complete. See the details below before retrying.</value></data>
+  <data name="UpdatePreviousSuccess" xml:space="preserve"><value>The previous update completed and this version has started.</value></data>
+  <data name="UpdateCurrentVersion" xml:space="preserve"><value>Current version {0} · {1}</value></data>
+  <data name="UpdateInstalledEdition" xml:space="preserve"><value>Installed edition</value></data>
+  <data name="UpdatePortableEdition" xml:space="preserve"><value>Portable edition</value></data>
+  <data name="UpdateLastCheck" xml:space="preserve"><value>Last checked: {0}</value></data>
+  <data name="UpdateNeverChecked" xml:space="preserve"><value>Not checked yet</value></data>
+  <data name="UpdateDescription" xml:space="preserve"><value>Checks GitHub stable releases daily without pop-ups. Click to download, save and back up settings, preserve local data, and restart after updating.</value></data>
+  <data name="UpdateCheck" xml:space="preserve"><value>Check for updates</value></data>
+  <data name="UpdateInstall" xml:space="preserve"><value>Update and restart</value></data>
+  <data name="UpdateCancel" xml:space="preserve"><value>Cancel download</value></data>
+  <data name="UpdateReleaseNotes" xml:space="preserve"><value>Release notes</value></data>
+  <data name="UpdateNoNotes" xml:space="preserve"><value>No new release notes.</value></data>
+  <data name="UpdateBackupLocation" xml:space="preserve"><value>Settings backup: {0}</value></data>
 </root>

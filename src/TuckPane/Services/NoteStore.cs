@@ -126,7 +126,7 @@ public sealed class NoteStore
         string directory = Path.Combine(AppPaths.NoteStagingRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         string path = Path.Combine(directory, CreatePortableFileName(noteName));
-        string temporary = Path.Combine(directory, $".{Guid.NewGuid():N}.tmp");
+        string temporary = Path.Combine(directory, $"{PortableDocumentCatalogChanges.TemporaryPrefix}{Guid.NewGuid():N}.tmp");
         try
         {
             await WritePortableTemporaryAsync(temporary, document);
@@ -154,7 +154,7 @@ public sealed class NoteStore
             for (int attempt = 0; attempt < 128; attempt++)
             {
                 string path = StorageService.GetUniquePath(requestedPath);
-                string temporary = Path.Combine(fullDirectory, $".{Guid.NewGuid():N}.tmp");
+                string temporary = Path.Combine(fullDirectory, $"{PortableDocumentCatalogChanges.TemporaryPrefix}{Guid.NewGuid():N}.tmp");
                 try
                 {
                     await WritePortableTemporaryAsync(temporary, document);
@@ -191,7 +191,7 @@ public sealed class NoteStore
             for (int attempt = 0; attempt < 128; attempt++)
             {
                 string path = StorageService.GetUniquePath(requestedPath);
-                string temporary = Path.Combine(fullDirectory, $".{Guid.NewGuid():N}.tmp");
+                string temporary = Path.Combine(fullDirectory, $"{PortableDocumentCatalogChanges.TemporaryPrefix}{Guid.NewGuid():N}.tmp");
                 try
                 {
                     await WritePortableTemporaryAsync(temporary, document);
@@ -247,7 +247,7 @@ public sealed class NoteStore
         string fullPath = Path.GetFullPath(path);
         string directory = Path.GetDirectoryName(fullPath) ?? throw new InvalidOperationException("The portable note has no parent directory.");
         if (!File.Exists(fullPath)) throw new FileNotFoundException("The portable note was moved or deleted.", fullPath);
-        string temporary = Path.Combine(directory, $".{Guid.NewGuid():N}.tmp");
+        string temporary = Path.Combine(directory, $"{PortableDocumentCatalogChanges.TemporaryPrefix}{Guid.NewGuid():N}.tmp");
         await _gate.WaitAsync();
         try
         {
@@ -293,7 +293,7 @@ public sealed class NoteStore
         string fullPath = Path.GetFullPath(path);
         string directory = Path.GetDirectoryName(fullPath) ?? throw new InvalidOperationException("The portable todo has no parent directory.");
         if (!File.Exists(fullPath)) throw new FileNotFoundException("The portable todo was moved or deleted.", fullPath);
-        string temporary = Path.Combine(directory, $".{Guid.NewGuid():N}.tmp");
+        string temporary = Path.Combine(directory, $"{PortableDocumentCatalogChanges.TemporaryPrefix}{Guid.NewGuid():N}.tmp");
         await _gate.WaitAsync();
         try
         {

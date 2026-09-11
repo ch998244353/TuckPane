@@ -20,13 +20,14 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <DefineConstants Condition="'$(UpdateValidation)' == 'true'">$(DefineConstants);TUCKPANE_UPDATE_VALIDATION</DefineConstants>
     <Product>TuckPane</Product>
     <AssemblyTitle>TuckPane</AssemblyTitle>
     <Authors>ch998244353</Authors>
     <Copyright>Copyright © 2026 ch998244353</Copyright>
-    <Version>3.0.2</Version>
-    <AssemblyVersion>3.0.2.0</AssemblyVersion>
-    <FileVersion>3.0.2.0</FileVersion>
+    <Version>4.0.0</Version>
+    <AssemblyVersion>4.0.0.0</AssemblyVersion>
+    <FileVersion>4.0.0.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -37,6 +38,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\TuckPane.Updates\TuckPane.Updates.csproj" />
     <InternalsVisibleTo Include="TuckPane.LogicChecks" />
   </ItemGroup>
 

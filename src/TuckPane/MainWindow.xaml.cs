@@ -44,7 +44,6 @@ public sealed partial class MainWindow : Window
     private const int LongPressMs = 350;
     private const double LongPressMoveLimitDip = 8;
     private const int NoteDragShellCompletionGraceMs = 750;
-    private const double CanvasResizeBorderDip = 28;
     private const double ItemGapDip = DisplayPlacementService.ItemGapDip;
     private const double CompactListItemHeightDip = 36;
     private const double CompactListIconSizeDip = 20;
@@ -52,7 +51,10 @@ public sealed partial class MainWindow : Window
     private static readonly long OleMouseMoveMinimumTicks = Math.Max(1, Stopwatch.Frequency / 120);
 
     private readonly AppHost _host;
-    private readonly StorageService _storage;
+    private StorageService _storage;
+    private IReadOnlySet<string> _knownPortableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private long _ignoredPortableSaveEvents;
+    private int _catalogScanActive;
     private readonly IconCacheService _iconCache = new();
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _longPressTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _externalHoverTimer;
@@ -86,8 +88,8 @@ public sealed partial class MainWindow : Window
     };
     private readonly NativeMethods.SubclassProc _gestureWindowProc;
     private readonly NativeMethods.WindowProc _canvasResizeWindowProc;
-    private readonly ThemeBackdrop _compactBackdrop = new();
-    private readonly ThemeBackdrop _expandedBackdrop = new();
+    private readonly ThemeBackdrop _compactBackdrop = new(ThemeTarget.Organizer, "compact", useRoundedMask: true);
+    private readonly ThemeBackdrop _expandedBackdrop;
     private readonly ThemeSurface _compactSurface;
     private readonly ThemeSurface _expandedSurface;
     private readonly ThemeEdgeSurface _compactEdgeSurface;
@@ -106,6 +108,7 @@ public sealed partial class MainWindow : Window
     private DesktopLayerService? _desktopLayer;
     private OutsideClickHook? _outsideClickHook;
     private FileSystemWatcher? _watcher;
+    private readonly WatcherRecovery _watcherRecovery = new();
     private NativeMethods.RECT _compactBounds;
     private NativeMethods.RECT _containedAnchorBounds;
     private DisplayInfo? _stationDisplay;
@@ -113,6 +116,12 @@ public sealed partial class MainWindow : Window
     private bool _animating;
     private bool _closing;
     private bool _stationVisible = true;
+    private bool _stationReady;
+    private readonly InteractionSession _widgetGesture = new();
+    private readonly InteractionSession _resizeGesture = new();
+    private Task? _initializationTask;
+    private Task? _stationContentTask;
+    private readonly CancellationTokenSource _windowLifetime = new();
     private bool _runtimeVisible = true;
     private bool _stationTransitionPending;
     private long _stationHotSince;
@@ -263,31 +272,35 @@ public sealed partial class MainWindow : Window
         NativeMethods.RECT StartBounds,
         bool CompactList,
         double StartCanvasScale,
+        double StartContentScale,
         double BaseWidthDip,
         double BaseHeightDip,
         double MinimumCanvasScale,
         double MaximumCanvasScale,
         double DisplayScale,
-        NativeMethods.RECT WorkArea);
+        NativeMethods.RECT WorkArea,
+        WindowAlignmentInsets? AlignmentInsets,
+        DisplayInfo Display);
 
     public MainWindow(AppHost host, OrganizerDefinition definition)
     {
         _host = host;
         _definition = definition;
+        _expandedBackdrop = new(ThemeTarget.Organizer, "expanded", useRoundedMask: IsDock);
         _storage = new StorageService(AppPaths.ResolveStoragePath(definition), createIfMissing: false);
         _gestureWindowProc = GestureWindowProc;
         _canvasResizeWindowProc = CanvasResizeWindowProc;
         _itemDragBoundaryHookProc = ItemDragBoundaryHookProc;
         InitializeComponent();
         SystemBackdrop = new TransparentWindowBackdrop();
-        CompactSurfaceHost.SystemBackdrop = _compactBackdrop;
-        ExpandedSurfaceHost.SystemBackdrop = _expandedBackdrop;
+        _compactBackdrop.Attach(CompactSurfaceHost);
+        _expandedBackdrop.Attach(ExpandedSurfaceHost);
         ApplyExpandedContentInset();
         ItemsRepeater.ItemsSource = _items;
-        _compactSurface = new ThemeSurface(CompactSurfaceHost);
-        _expandedSurface = new ThemeSurface(ExpandedSurfaceHost);
-        _compactEdgeSurface = new ThemeEdgeSurface(CompactEdgeOverlay);
-        _expandedEdgeSurface = new ThemeEdgeSurface(ExpandedEdgeOverlay);
+        _compactSurface = new ThemeSurface(CompactSurfaceHost, CompactThumbnailHost);
+        _expandedSurface = new ThemeSurface(ExpandedSurfaceHost, IsDock ? ExpandedPanel : null);
+        _compactEdgeSurface = new ThemeEdgeSurface(CompactEdgeOverlay, CompactThumbnailHost);
+        _expandedEdgeSurface = new ThemeEdgeSurface(ExpandedEdgeOverlay, IsDock ? ExpandedPanel : null);
         CompactThumbnailHost.SizeChanged += (_, _) => UpdateSurfaceClips();
         ExpandedPanel.SizeChanged += (_, _) => UpdateSurfaceClips();
         WindowRoot.SizeChanged += (_, _) => UpdateSurfaceClips();
@@ -352,7 +365,9 @@ public sealed partial class MainWindow : Window
         _itemTouchHoldTimer.Tick += ItemTouchHoldTimer_Tick;
 
         Activated += MainWindow_Activated;
+        Activated += OrganizerTitleWindow_Activated;
         Closed += MainWindow_Closed;
+        InitializeHoverWave();
     }
 
     public void ApplyLanguage()
@@ -367,32 +382,34 @@ public sealed partial class MainWindow : Window
     {
         FontFamily family = new(AppStrings.FontFamily);
         bool station = _definition.PlacementMode == OrganizerPlacementMode.Station;
-        bool expandedMenu = ReferenceEquals(flyout, ExpandedViewContextMenu);
         foreach (MenuFlyoutItem item in flyout.Items.OfType<MenuFlyoutItem>())
         {
+            // These two organizer menus have text-only commands. A toggle elsewhere
+            // in the same menu must not reserve a check column to their left.
+            if (item is not ToggleMenuFlyoutItem)
+                item.Resources["MenuFlyoutItemPlaceholderThemeThickness"] = new Thickness(0);
             if (item.Tag is not string key) continue;
             item.Text = AppStrings.Get(key);
             item.FontFamily = family;
             item.CharacterSpacing = AppStrings.CharacterSpacing;
             item.Visibility = key switch
             {
-                "ContextNewNote" or "ContextNewTodo" or "ContextPaste" or "ContextNewFolder" => expandedMenu ? Visibility.Visible : Visibility.Collapsed,
-                "ContextDuplicate" or "ContextSwitchMode" or "ContextRename" => station ? Visibility.Collapsed : Visibility.Visible,
+                "ContextDuplicate" or "ContextRename" => station ? Visibility.Collapsed : Visibility.Visible,
                 _ => Visibility.Visible
             };
         }
-        StationActionSeparator.Visibility = expandedMenu ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void UpdateContentModeMenuItems()
     {
-        Visibility visibility = _definition.PlacementMode == OrganizerPlacementMode.Station
+        UpdatePlacementModeMenuItems();
+        UpdateExpansionModeControls();
+        Visibility visibility = !OrganizerKinds.IsRegular(_definition.PlacementMode)
             ? Visibility.Collapsed
             : Visibility.Visible;
-        string targetMode = AppStrings.Get(_definition.ExpandedContentMode == OrganizerExpandedContentMode.Icon
-            ? "ExpandedContentModeCompactList"
-            : "ExpandedContentModeIcon");
-        string text = AppStrings.Format("ContextSwitchContentFormat", targetMode);
+        string text = AppStrings.Get(_definition.ExpandedContentMode == OrganizerExpandedContentMode.Icon
+            ? "ContextSwitchToCompactList"
+            : "ContextSwitchToIcon");
         FontFamily family = new(AppStrings.FontFamily);
         foreach (MenuFlyoutItem item in new[] { CompactToggleContentModeMenuItem, ExpandedToggleContentModeMenuItem })
         {
@@ -401,6 +418,7 @@ public sealed partial class MainWindow : Window
             item.FontFamily = family;
             item.CharacterSpacing = AppStrings.CharacterSpacing;
         }
+        RefreshOrganizerMenuVisibility();
     }
 
     private async void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
@@ -413,7 +431,7 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             AppLogger.Error("初始化失败。", ex);
-            _host.Notify(AppStrings.Get("AppStartupErrorTitle"), ex.Message, warning: true);
+            _host.ReportOperationError(AppStrings.Get("AppStartupErrorTitle"), ex.Message, _hwnd, _definition.Position?.MonitorDevice);
         }
     }
 
@@ -425,6 +443,23 @@ public sealed partial class MainWindow : Window
         _outsideClickHook = new OutsideClickHook(_hwnd, DispatcherQueue, HandleOutsideClick);
         WindowId windowId = Win32Interop.GetWindowIdFromWindow(_hwnd);
         _appWindow = AppWindow.GetFromWindowId(windowId);
+        _appWindow.Changed += (_, change) =>
+        {
+            if (change.DidVisibilityChange) _host.RefreshDockRunningSubscription();
+        };
+        _appWindow.Closing += (_, args) =>
+        {
+            try
+            {
+                _compactBackdrop.DetachAndClose();
+                _expandedBackdrop.DetachAndClose();
+            }
+            catch (Exception ex)
+            {
+                args.Cancel = true;
+                AppLogger.Error("Cannot close organizer backdrops safely.", ex);
+            }
+        };
         if (_appWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.SetBorderAndTitleBar(false, false);
@@ -438,17 +473,34 @@ public sealed partial class MainWindow : Window
         _ = NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWLP_HWNDPARENT, initialOwner);
     }
 
-    private async Task InitializeAsync()
+    internal Task InitializeAsync() => _initializationTask ??= InitializeAndReportAsync();
+
+    private async Task InitializeAndReportAsync()
+    {
+        try { await InitializeCoreAsync(); }
+        catch (OperationCanceledException) when (_closing) { }
+        catch (Exception ex)
+        {
+            _stationReady = false;
+            RefreshPerformanceSettings();
+            AppLogger.Error("初始化失败。", ex);
+            if (!_closing) _host.ReportOperationError(AppStrings.Get("AppStartupErrorTitle"), ex.Message, _hwnd, _definition.Position?.MonitorDevice);
+        }
+    }
+
+    private async Task InitializeCoreAsync()
     {
         AppPaths.EnsureCreated();
         InitializeHostWindow();
         _ = NativeMethods.SetWindowSubclass(_hwnd, _gestureWindowProc, GestureSubclassId, IntPtr.Zero);
 
-        await WaitForLoadedAsync();
+        if (IsDock)
+        {
+            await InitializeDockAsync();
+            return;
+        }
 
-        UpdateOrganizerName();
-        ApplyCompactScale();
-
+        // A Station starts hidden. Native readiness must not wait for its first XAML load.
         if (_definition.PlacementMode == OrganizerPlacementMode.Station)
         {
             DisplayInfo stationDisplay = DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
@@ -462,12 +514,16 @@ public sealed partial class MainWindow : Window
             _appWindow?.Hide();
             CompactView.Visibility = Visibility.Collapsed;
             ExpandedView.Visibility = Visibility.Collapsed;
-            if (correctedDisplay || stationScalesNormalized) await SaveStateAsync();
+            _stationReady = true;
             RefreshPerformanceSettings();
-            if (_storage.Exists) StartWatcher();
-            await RefreshCatalogAsync(notifyUnsupported: true, refreshIcons: true);
+            AppLogger.Performance($"station-ready id={OrganizerId} display={stationDisplay.Device}");
+            if (correctedDisplay || stationScalesNormalized) await SaveStateAsync();
             return;
         }
+
+        await WaitForLoadedAsync();
+        UpdateOrganizerName();
+        ApplyCompactScale();
 
         int initialWidth = DipToPx(GetCompactWidthDip(), 1);
         int initialHeight = DipToPx(GetCompactHeightDip(), 1);
@@ -526,7 +582,7 @@ public sealed partial class MainWindow : Window
         if (_storage.Exists) StartWatcher();
         await RefreshCatalogAsync(notifyUnsupported: true, refreshIcons: true);
         if (!IsContained) WindowRoot.Focus(FocusState.Programmatic);
-        if (Environment.GetEnvironmentVariable("GLASSFOLDER_TEST_EXPANDED") == "1")
+        if (IsPermanentlyExpanded || Environment.GetEnvironmentVariable("GLASSFOLDER_TEST_EXPANDED") == "1")
         {
             await ExpandAsync();
         }
@@ -554,18 +610,44 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private Task WaitForLoadedAsync()
+    private async Task WaitForLoadedAsync()
     {
-        if (WindowRoot.IsLoaded) return Task.CompletedTask;
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (WindowRoot.IsLoaded) return;
         RoutedEventHandler? handler = null;
-        handler = (_, _) =>
+        bool loaded = await UiEventAwaiter.WaitAsync(
+            complete => { handler = (_, _) => complete(); WindowRoot.Loaded += handler; },
+            _ => { if (handler is not null) WindowRoot.Loaded -= handler; },
+            TimeSpan.FromSeconds(5), _windowLifetime.Token);
+        if (!loaded) throw new TimeoutException("The organizer visual tree did not load within 5 seconds.");
+    }
+
+    private async Task PrepareStationContentAsync()
+    {
+        try
         {
-            WindowRoot.Loaded -= handler;
-            completion.TrySetResult();
-        };
-        WindowRoot.Loaded += handler;
-        return completion.Task;
+            // Show without activation before waiting for Loaded; initialization remains hidden.
+            _desktopLayer?.SetExpanded(true, stayTopmost: true);
+            ApplyBounds(CalculateExpandedBounds(_compactBounds), show: true);
+            await WaitForLoadedAsync();
+            _windowLifetime.Token.ThrowIfCancellationRequested();
+            UpdateOrganizerName();
+            ApplyCompactScale(repositionWindow: false);
+            // Slow directory enumeration must not hold the station's expand/collapse state.
+            _ = RunSafelyAsync(async () =>
+            {
+                if (_storage.Exists) StartWatcher();
+                await RefreshCatalogAsync(notifyUnsupported: true, refreshIcons: true);
+            }, "中转站目录刷新失败");
+        }
+        catch
+        {
+            if (!_closing)
+            {
+                _appWindow?.Hide();
+                _desktopLayer?.SetExpanded(false, showWindow: false);
+            }
+            throw;
+        }
     }
 
     private async Task RunItemReorderProbeAsync(int cycles)
@@ -579,6 +661,7 @@ public sealed partial class MainWindow : Window
                 Border? host = null;
                 for (int attempt = 0; attempt < 12 && host is null; attempt++)
                 {
+                    _animationTrace?.Metrics.RecordWork(AnimationTraceWork.UpdateLayout);
                     ItemsRepeater.UpdateLayout();
                     host = ItemsRepeater.TryGetElement(0) as Border ?? ItemsRepeater.GetOrCreateElement(0) as Border;
                     if (host is null) await WaitForNextRenderAsync(CancellationToken.None);
@@ -626,6 +709,7 @@ public sealed partial class MainWindow : Window
         try
         {
             ConfigureItemsLayout();
+            _animationTrace?.Metrics.RecordWork(AnimationTraceWork.UpdateLayout);
             ItemsRepeater.UpdateLayout();
             await WaitForNextRenderAsync(CancellationToken.None);
             var slotOrigins = new Point[expectedCount];
@@ -692,25 +776,77 @@ public sealed partial class MainWindow : Window
 
     private void StartWatcher()
     {
-        if (!_storage.Exists || _watcher is not null) return;
-        _watcher = new FileSystemWatcher(_storage.ItemsRoot)
+        if (_closing || !_storage.Exists || _watcher is not null) return;
+        try { CreateWatcher(); }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Directory watcher start failed", ex);
+            RecoverWatcher();
+        }
+    }
+
+    private void CreateWatcher()
+    {
+        var watcher = new FileSystemWatcher(_storage.ItemsRoot)
         {
             IncludeSubdirectories = false,
-            NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
-            EnableRaisingEvents = true
+            NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size
         };
-        _watcher.Changed += Watcher_Changed;
-        _watcher.Created += Watcher_Changed;
-        _watcher.Deleted += Watcher_Changed;
-        _watcher.Renamed += Watcher_Changed;
+        watcher.Changed += Watcher_Changed;
+        watcher.Created += Watcher_Changed;
+        watcher.Deleted += Watcher_Changed;
+        watcher.Renamed += Watcher_Changed;
+        watcher.Error += Watcher_Error;
+        _watcher = watcher;
+        try { watcher.EnableRaisingEvents = true; }
+        catch { _watcher = null; watcher.Dispose(); throw; }
+    }
+
+    private void Watcher_Error(object sender, ErrorEventArgs args)
+    {
+        if (_closing || !ReferenceEquals(sender, _watcher)) return;
+        AppLogger.Error("Directory watcher lost notifications", args.GetException());
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_closing && ReferenceEquals(sender, _watcher)) RecoverWatcher();
+        });
+    }
+
+    private void RecoverWatcher()
+    {
+        _ = _watcherRecovery.RequestAsync(() =>
+        {
+            if (_closing || !_storage.Exists) return false;
+            _watcher?.Dispose();
+            _watcher = null;
+            CreateWatcher();
+            return true;
+        }, () =>
+        {
+            if (!_closing) _ = RunSafelyAsync(() => RefreshCatalogAsync(false, true), "目录监听恢复刷新失败");
+        });
     }
 
     private void Watcher_Changed(object sender, FileSystemEventArgs args)
     {
+        if (_closing || !ReferenceEquals(sender, _watcher)) return;
+        if (!PortableDocumentCatalogChanges.ShouldRefresh(args.ChangeType, args.Name,
+                (args as RenamedEventArgs)?.OldName, Volatile.Read(ref _knownPortableNames),
+                Volatile.Read(ref _catalogScanActive) != 0))
+        {
+            if (AppLogger.PerformanceTraceEnabled && Interlocked.Increment(ref _ignoredPortableSaveEvents) % 32 == 1)
+                AppLogger.Performance($"note-catalog ignored-save-events={_ignoredPortableSaveEvents} organizer={_definition.Id}");
+            return;
+        }
+        Interlocked.Increment(ref _catalogRefreshGeneration);
         if (Interlocked.Exchange(ref _watcherRefreshPosted, 1) == 0)
         {
             if (!DispatcherQueue.TryEnqueue(() =>
             {
+                if (_closing) { Volatile.Write(ref _watcherRefreshPosted, 0); return; }
+                // The posted refresh represents all accumulated generations, including a new watcher.
+                // An obsolete sender must not discard changes coalesced behind its callback.
+                if (ReferenceEquals(sender, _watcher)) _watcherRecovery.HealthyChange();
                 _watcherDebounceTimer.Stop();
                 _watcherDebounceTimer.Start();
             }))
@@ -762,6 +898,7 @@ public sealed partial class MainWindow : Window
 
     private async Task FlushCatalogRefreshesAsync()
     {
+        Volatile.Write(ref _catalogScanActive, 1);
         _catalogRefreshCancellation?.Cancel();
         _catalogRefreshCancellation?.Dispose();
         CancellationTokenSource refreshCancellation = new();
@@ -786,6 +923,7 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
+            Volatile.Write(ref _catalogScanActive, 0);
             if (ReferenceEquals(_catalogRefreshCancellation, refreshCancellation))
             {
                 refreshCancellation.Dispose();
@@ -808,6 +946,7 @@ public sealed partial class MainWindow : Window
         long generation,
         CancellationToken cancellationToken)
     {
+        long traceStart = AppLogger.PerformanceTraceEnabled ? Stopwatch.GetTimestamp() : 0;
         WidgetItem[] containedOrganizers = _host.GetContainedOrganizerItems(_definition.Id).ToArray();
         var diskItemsTask = Task.Run(_storage.ReadItems, cancellationToken);
         var unsupportedTask = Task.Run(() => _storage.ReadUnsupportedNames(), cancellationToken);
@@ -815,6 +954,10 @@ public sealed partial class MainWindow : Window
         IReadOnlyList<string> unsupportedNames = await unsupportedTask;
         cancellationToken.ThrowIfCancellationRequested();
         if (_closing || generation != Volatile.Read(ref _catalogRefreshGeneration)) return;
+        long traceUiStart = traceStart == 0 ? 0 : Stopwatch.GetTimestamp();
+        Volatile.Write(ref _knownPortableNames, (IReadOnlySet<string>)diskItems
+            .Where(item => item.Kind is WidgetItemKind.PortableNote or WidgetItemKind.PortableTodo)
+            .Select(item => item.RelativeName).ToHashSet(StringComparer.OrdinalIgnoreCase));
         var byName = diskItems
             .Concat(_definition.Notes.Select(OrganizerNoteRules.CreateItem))
             .Concat(containedOrganizers)
@@ -841,6 +984,9 @@ public sealed partial class MainWindow : Window
         if (refreshIcons) RefreshRealizedIcons();
         _host.NotifyOrganizerPreviewChanged(_definition.Id);
 
+        if (traceStart != 0)
+            AppLogger.Performance($"note-catalog organizer={_definition.Id} readMs={Stopwatch.GetElapsedTime(traceStart, traceUiStart).TotalMilliseconds:F2} uiMs={Stopwatch.GetElapsedTime(traceUiStart).TotalMilliseconds:F2} items={ordered.Count}");
+
         var unsupported = unsupportedNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
         string[] addedUnsupported = unsupported.Except(_lastUnsupported, StringComparer.OrdinalIgnoreCase).ToArray();
         _lastUnsupported = unsupported;
@@ -857,6 +1003,7 @@ public sealed partial class MainWindow : Window
         try
         {
             CatalogCollectionSync.Apply(_items, desired);
+            if (IsDock) _host.RefreshDockRunningSubscription(invalidate: true);
         }
         finally
         {
@@ -875,10 +1022,9 @@ public sealed partial class MainWindow : Window
     {
         CompactNameText.Text = _definition.Name;
         ExpandedNameText.Text = _definition.Name;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ExpandedNameEditor, AppStrings.Get("ContextRename"));
         ExpandedNameText.FontSize = 42 * _host.State.GlobalSettings.ResolveExpandedNameScale(_definition.PlacementMode);
-        ExpandedNameText.Visibility = _definition.PlacementMode == OrganizerPlacementMode.Station
-            ? Visibility.Collapsed
-            : Visibility.Visible;
+        ApplyOrganizerNameVisibility();
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ExpandedNameText, _definition.Name);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CompactTile, _definition.Name);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(CompactTile, $"OrganizerCompact-{_definition.Id:N}");
@@ -889,7 +1035,7 @@ public sealed partial class MainWindow : Window
         bool storageExists = _storage.Exists;
         CompactWarningBadge.Visibility = storageExists ? Visibility.Collapsed : Visibility.Visible;
         string compactHelp = storageExists ? _definition.Name : AppStrings.Get("MissingStorage");
-        ToolTipService.SetToolTip(CompactTile, compactHelp);
+        ToolTipService.SetToolTip(CompactTile, storageExists && _definition.HideName ? null : compactHelp);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(CompactTile, storageExists ? string.Empty : compactHelp);
         UpdateCompactThumbnailMetrics();
         UpdateCompactPreviewItemScale();
@@ -942,7 +1088,7 @@ public sealed partial class MainWindow : Window
                 FindItemPart<FontIcon>(host, "ItemFallbackIcon") is FontIcon fallback)
             {
                 image.ClearValue(Image.SourceProperty);
-                _ = LoadIconAsync(image, item.FullPath, fallback, refresh: true);
+                _ = LoadIconAsync(image, item.FullPath, fallback, refresh: true, dockPresentation: IsDock);
             }
         }
     }
@@ -987,11 +1133,20 @@ public sealed partial class MainWindow : Window
 
     private void RenderItems()
     {
+        if (IsDock) { ApplyDockLayout(); return; }
         ConfigureItemsLayout();
     }
 
     private void ConfigureItemsLayout(bool updateItems = true)
     {
+        if (IsDock)
+        {
+            ApplyDockContentLayout();
+            if (updateItems) UpdateRealizedItems();
+            InvalidateHoverGeometry();
+            return;
+        }
+        _animationTrace?.Metrics.RecordWork(AnimationTraceWork.ConfigureLayout);
         Size viewport = GetItemsViewportSize();
         double width = viewport.Width;
         double height = viewport.Height;
@@ -1005,29 +1160,37 @@ public sealed partial class MainWindow : Window
         ItemsRepeater.Width = width;
         _gridLayout.MinItemWidth = cellWidth;
         _gridLayout.MinItemHeight = cellHeight;
-        _gridLayout.MinColumnSpacing = IsCompactList ? 0 : ItemGapDip;
-        _gridLayout.MinRowSpacing = IsCompactList ? 0 : ItemGapDip;
+        _gridLayout.MinColumnSpacing = GetItemLayoutGapDip();
+        _gridLayout.MinRowSpacing = GetItemLayoutGapDip();
         _gridLayout.MaximumRowsOrColumns = GetItemLayoutColumnCount();
         if (!ReferenceEquals(ItemsRepeater.Layout, _gridLayout)) ItemsRepeater.Layout = _gridLayout;
         if (updateItems) UpdateRealizedItems();
         ReconcileSmoothScrollBounds();
+        InvalidateHoverGeometry();
     }
 
     private void ApplyExpandedContentInset()
     {
+        if (IsDock) { ApplyDockContentLayout(); return; }
         bool station = _definition.PlacementMode == OrganizerPlacementMode.Station;
         ExpandedTitleRow.Height = new GridLength(
             station ? 0 : DisplayPlacementService.ExpandedTitleBandDip);
-        ExpandedNameText.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
-        CollapseButton.Visibility = station ? Visibility.Collapsed : Visibility.Visible;
+        ApplyOrganizerNameVisibility();
+        CollapseButton.Visibility = station || IsPermanentlyExpanded ? Visibility.Collapsed : Visibility.Visible;
+        RefreshCollapseIndicator();
         double side = DisplayPlacementService.ResolveExpandedSideInset(
             _definition.PlacementMode,
             _definition.ExpandedContentMode);
-        ItemsRepeater.Margin = new Thickness(
-            side,
-            station ? DisplayPlacementService.StationTopInsetDip : DisplayPlacementService.ExpandedTopInsetDip,
-            side,
-            station ? DisplayPlacementService.StationBottomInsetDip : DisplayPlacementService.ExpandedBottomInsetDip);
+        double scale = ContentScale;
+        var inset = new Thickness(
+            (IsCompactList ? OrganizerContentScale.CompactLeftInset(side, _definition.CompactListItemScale) : side) * scale,
+            (station ? DisplayPlacementService.StationTopInsetDip : DisplayPlacementService.ExpandedTopInsetDip) * scale,
+            side * scale,
+            (station ? DisplayPlacementService.StationBottomInsetDip : DisplayPlacementService.ExpandedBottomInsetDip) * scale);
+        // Icon rows must be clipped at the content edge, not at the panel edge.
+        // A margin inside the scroller lets the next row occupy its bottom inset.
+        ItemsScrollView.Margin = IsCompactList ? new Thickness(0) : inset;
+        ItemsRepeater.Margin = IsCompactList ? inset : new Thickness(0);
     }
 
     private Size GetItemsViewportSize()
@@ -1039,22 +1202,26 @@ public sealed partial class MainWindow : Window
     }
 
     private bool IsCompactList =>
-        _definition.PlacementMode != OrganizerPlacementMode.Station &&
+        OrganizerKinds.IsRegular(_definition.PlacementMode) &&
         _definition.ExpandedContentMode == OrganizerExpandedContentMode.CompactList;
 
-    private int GetItemLayoutColumnCount() => IsCompactList ? 1 : Math.Max(1, _definition.Layout.Columns);
+    private int GetItemLayoutColumnCount() => IsDock
+        ? (_definition.DockOrientation == DockOrientation.Horizontal ? Math.Max(1, _items.Count) : 1)
+        : IsCompactList ? 1 : Math.Max(1, _definition.Layout.Columns);
 
-    private double GetItemLayoutGapDip() => IsCompactList ? 0 : ItemGapDip;
+    private double GetItemLayoutGapDip() => IsDock ? _dockGeometry.Pitch - _dockGeometry.IconSize : IsCompactList ? 0 : ItemGapDip * ContentScale;
 
-    private (double Width, double Height) GetItemCellSizeDip(double width, double height) => IsCompactList
-        ? (width, CompactListItemHeightDip * _definition.CompactListItemScale)
-        : DisplayPlacementService.CalculateItemCellSizeDip(width, height, _definition.Layout);
+    private (double Width, double Height) GetItemCellSizeDip(double width, double height) => IsDock
+        ? (_dockGeometry.IconSize, _dockGeometry.IconSize) : IsCompactList
+        ? (width, CompactListItemHeightDip * _definition.CompactListItemScale * ContentScale)
+        : GetScaledGridCellSize(width, height);
 
     private void ItemsRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
     {
         if (args.Element is not Border host || host.DataContext is not WidgetItem item) return;
         _itemElementsPrepared++;
         _realizedItemHosts.Register(item.RelativeName, host);
+        RegisterHoverItem(host);
         PrepareItemElement(host, item, loadIcon: true);
         ResetItemMotion(host);
         int itemIndex = IndexOfItem(item.RelativeName);
@@ -1071,6 +1238,7 @@ public sealed partial class MainWindow : Window
         if (args.Element is not Border host) return;
         _itemElementsCleared++;
         _realizedItemHosts.Unregister(host);
+        UnregisterHoverItem(host);
         if (!_itemCollectionMoveInProgress && ReferenceEquals(host, _itemDragHost))
         {
             if (_shellDragActive) _itemDragHost = null;
@@ -1130,7 +1298,7 @@ public sealed partial class MainWindow : Window
     private void PrepareItemElement(Border host, WidgetItem item, bool loadIcon)
     {
         host.Tag = item.RelativeName;
-        ToolTipService.SetToolTip(host, IsDocumentItem(item) || item.Kind == WidgetItemKind.Organizer ? item.Name : item.FullPath);
+        SetItemToolTip(host, IsDock || IsDocumentItem(item) || item.Kind == WidgetItemKind.Organizer ? item.Name : item.FullPath);
         if (item.NoteId is Guid noteId)
         {
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(host, item.Name);
@@ -1167,15 +1335,15 @@ public sealed partial class MainWindow : Window
             FindItemPart<TextBlock>(host, "ItemNameText") is TextBlock name)
         {
             bool compactList = IsCompactList;
-            ConfigureItemInteractionTransitions(itemContent);
-            double compactListScale = _definition.CompactListItemScale;
+            double contentScale = ContentScale;
+            double compactListScale = _definition.CompactListItemScale * contentScale;
             bool organizerItem = item is { Kind: WidgetItemKind.Organizer, OrganizerId: not null };
             double iconMaximum = _definition.PlacementMode == OrganizerPlacementMode.Station
                 ? Math.Max(18, Math.Min(host.Width * .82, host.Height * .68))
-                : Math.Max(18, Math.Min(host.Width, host.Height) * .68);
-            double iconSize = compactList
+                : Math.Max(18 * contentScale, Math.Min(host.Width, host.Height) * .68);
+            double iconSize = IsDock ? _dockGeometry.IconSize : compactList
                 ? CompactListIconSizeDip * compactListScale
-                : Math.Clamp(72 * _definition.ItemScale, 18, iconMaximum);
+                : Math.Clamp(72 * _definition.ItemScale, 18, iconMaximum / contentScale) * contentScale;
             if (_definition.PlacementMode == OrganizerPlacementMode.Station) iconSize = SnapDip(iconSize);
             iconContainer.Width = iconSize;
             iconContainer.Height = iconSize;
@@ -1194,23 +1362,23 @@ public sealed partial class MainWindow : Window
                 _ => "\uE7C3"
             };
             fallback.Foreground = item.Kind == WidgetItemKind.Folder ? _folderFallbackBrush : _fileFallbackBrush;
-            host.CornerRadius = new CornerRadius(compactList ? 4 * compactListScale : 16);
-            host.Padding = compactList
+            host.CornerRadius = new CornerRadius(IsDock ? 0 : compactList ? 4 * compactListScale : 16 * contentScale);
+            host.Padding = IsDock ? new Thickness(0) : compactList
                 ? new Thickness(4 * compactListScale, 0, 4 * compactListScale, 0)
-                : new Thickness(Math.Max(2, 5 * _definition.ItemScale));
+                : new Thickness(Math.Max(2, 5 * _definition.ItemScale) * contentScale);
             itemContent.Orientation = compactList ? Orientation.Horizontal : Orientation.Vertical;
             itemContent.HorizontalAlignment = compactList ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
-            itemContent.Spacing = compactList ? 8 * compactListScale : Math.Max(2, 6 * _definition.ItemScale);
+            itemContent.Spacing = compactList ? 8 * compactListScale : Math.Max(2, 6 * _definition.ItemScale) * contentScale;
             name.FontSize = compactList
                 ? CompactListFontSizeDip * compactListScale
-                : Math.Min(Math.Max(8, 13 * _definition.ItemScale), Math.Max(8, host.Height * .15));
-            name.Width = compactList ? Math.Max(24, host.Width - iconSize - 20 * compactListScale) : double.NaN;
-            name.MaxWidth = compactList ? name.Width : Math.Max(24, host.Width - 10);
+                : Math.Min(Math.Max(8, 13 * _definition.ItemScale), Math.Max(8, host.Height / contentScale * .15)) * contentScale;
+            name.Width = compactList ? Math.Max(24 * contentScale, host.Width - iconSize - 20 * compactListScale) : double.NaN;
+            name.MaxWidth = compactList ? name.Width : Math.Max(24 * contentScale, host.Width - 10 * contentScale);
             name.HorizontalAlignment = compactList ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
             name.VerticalAlignment = VerticalAlignment.Center;
             name.TextAlignment = compactList ? TextAlignment.Left : TextAlignment.Center;
             name.Foreground = CreateOrganizerTextBrush();
-            name.Visibility = Visibility.Visible;
+            name.Visibility = IsDock ? Visibility.Collapsed : Visibility.Visible;
             bool showOrganizerPreview = organizerItem && !compactList;
             organizerPreview.Visibility = showOrganizerPreview ? Visibility.Visible : Visibility.Collapsed;
             image.Visibility = showOrganizerPreview ? Visibility.Collapsed : Visibility.Visible;
@@ -1237,7 +1405,7 @@ public sealed partial class MainWindow : Window
             {
                 organizerPreview.RequestToken = null;
                 if (IsDocumentItem(item)) image.Source = GetDocumentIcon(item);
-                else if (loadIcon && (itemChanged || image.Source is null)) _ = LoadIconAsync(image, item.FullPath, fallback);
+                else if (loadIcon && (itemChanged || image.Source is null)) _ = LoadIconAsync(image, item.FullPath, fallback, dockPresentation: IsDock);
             }
             bool iconLoadPending = _pendingIconLoads.TryGetValue(image, out string? pendingPath) &&
                 pendingPath.Equals(iconKey, StringComparison.OrdinalIgnoreCase);
@@ -1267,7 +1435,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         host.Tag = item.RelativeName;
-        ToolTipService.SetToolTip(host, IsDocumentItem(item) ? item.Name : item.FullPath);
+        SetItemToolTip(host, IsDock || IsDocumentItem(item) ? item.Name : item.FullPath);
         if (item.NoteId is Guid noteId)
         {
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(host, item.Name);
@@ -1308,7 +1476,7 @@ public sealed partial class MainWindow : Window
             }
             if (IsDocumentItem(item)) image.Source = GetDocumentIcon(item);
             else if (FindItemPart<FontIcon>(host, "ItemFallbackIcon") is FontIcon itemFallback)
-                _ = LoadIconAsync(image, item.FullPath, itemFallback);
+                _ = LoadIconAsync(image, item.FullPath, itemFallback, dockPresentation: IsDock);
             if (FindItemPart<FontIcon>(host, "ItemFallbackIcon") is FontIcon stateFallback)
             {
                 bool iconLoadPending = _pendingIconLoads.TryGetValue(image, out string? pendingPath) &&
@@ -1335,45 +1503,23 @@ public sealed partial class MainWindow : Window
         return null;
     }
 
-    private void ConfigureItemInteractionTransitions(StackPanel content)
-    {
-        TimeSpan duration = UseCustomAnimations ? TimeSpan.FromMilliseconds(120) : TimeSpan.Zero;
-        if (content.ScaleTransition is not null) content.ScaleTransition.Duration = duration;
-        if (content.TranslationTransition is not null) content.TranslationTransition.Duration = duration;
-        if (!UseCustomAnimations)
-        {
-            content.Scale = Vector3.One;
-            content.Translation = Vector3.Zero;
-        }
-    }
-
     private void SetItemInteractionVisual(Border host, bool pressed)
     {
-        host.Background = pressed ? _pressedItemBrush : _hoveredItemBrush;
-        if (FindItemPart<StackPanel>(host, "ItemContent") is not StackPanel content) return;
-        ConfigureItemInteractionTransitions(content);
-        content.CenterPoint = new Vector3((float)(content.ActualWidth / 2), (float)(content.ActualHeight / 2), 0);
-        if (!UseCustomAnimations || IsCompactList)
-        {
-            content.Scale = Vector3.One;
-            content.Translation = Vector3.Zero;
-            return;
-        }
-        content.Scale = pressed ? new Vector3(.97f, .97f, 1) : new Vector3(1.02f, 1.02f, 1);
-        content.Translation = pressed ? Vector3.Zero : new Vector3(0, -1, 0);
+        host.Background = IsDock || IsCompactList ? _transparentItemBrush : pressed ? _pressedItemBrush : _hoveredItemBrush;
+        SetHoverPressed(host, pressed);
+        if (IsCompactList) RefreshCompactRowHighlight();
     }
 
     private void ResetItemInteractionVisual(Border host)
     {
         host.Background = _transparentItemBrush;
-        ResetItemContentTransform(host);
+        SetHoverPressed(host, pressed: false);
+        if (IsCompactList) RefreshCompactRowHighlight();
     }
 
-    private static void ResetItemContentTransform(Border host)
+    private void ResetItemContentTransform(Border host)
     {
-        if (FindItemPart<StackPanel>(host, "ItemContent") is not StackPanel content) return;
-        content.Scale = Vector3.One;
-        content.Translation = Vector3.Zero;
+        if (_hoverItems.TryGetValue(host, out HoverItemVisual? item)) ResetHoverVisual(host, item);
     }
 
     private Border CreateIconHost(WidgetItem item, double iconSize, bool showName)
@@ -1433,7 +1579,8 @@ public sealed partial class MainWindow : Window
         Image image,
         string path,
         FontIcon? fallback = null,
-        bool refresh = false)
+        bool refresh = false,
+        bool dockPresentation = false)
     {
         _pendingIconLoads[image] = path;
         if (fallback is not null)
@@ -1445,7 +1592,7 @@ public sealed partial class MainWindow : Window
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
-        BitmapImage? bitmap = await GetIconThrottledAsync(path, refresh);
+        BitmapImage? bitmap = await GetIconThrottledAsync(path, refresh, dockPresentation);
         if (_closing) return;
         bool requestIsCurrent = _pendingIconLoads.TryGetValue(image, out string? pendingPath) &&
             pendingPath.Equals(path, StringComparison.OrdinalIgnoreCase);
@@ -1466,7 +1613,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task<BitmapImage?> GetIconThrottledAsync(string path, bool refresh = false)
+    private async Task<BitmapImage?> GetIconThrottledAsync(string path, bool refresh = false, bool dockPresentation = false)
     {
         BitmapImage? bitmap = null;
         await _iconLoadGate.WaitAsync();
@@ -1477,7 +1624,9 @@ public sealed partial class MainWindow : Window
                 // IconCacheService keeps BitmapImage creation on the current
                 // WinUI apartment; its pure Shell pixel fallback already
                 // moves CPU-bound extraction to a worker.
-                bitmap = await _iconCache.GetIconAsync(path, refresh);
+                bitmap = dockPresentation
+                    ? await _iconCache.GetDockIconAsync(path, refresh)
+                    : await _iconCache.GetIconAsync(path, refresh);
             }
             catch (Exception ex)
             {
@@ -1491,10 +1640,27 @@ public sealed partial class MainWindow : Window
         return bitmap;
     }
 
-    private async Task ExpandAsync(bool scrollToEnd = false)
+    private Task ExpandAsync(bool scrollToEnd = false) => ExpandTransitionAsync(scrollToEnd);
+
+    private async Task ExpandTransitionAsync(bool scrollToEnd = false, bool forMode = false, CancellationToken modeCancellation = default)
     {
-        if ((_expanded && !_animating) || _hwnd == IntPtr.Zero) return;
-        await _host.PrepareToExpandAsync(this);
+        if (IsDock) { if (_runtimeVisible) ApplyDockLayout(); return; }
+        if (_closing || (_changingExpansionMode && !forMode) ||
+            (_expanded && !_animating && _transitionProgress >= 1) || _hwnd == IntPtr.Zero ||
+            (!_runtimeVisible && !IsContained && _definition.PlacementMode != OrganizerPlacementMode.Station)) return;
+        long requestVersion = ++_transitionRequestVersion;
+        _transitionCancellation?.Cancel();
+        bool IsCurrent() => IsCurrentTransitionRequest(requestVersion, modeCancellation);
+        using AnimationTraceSession? trace = BeginAnimationTrace("expand");
+        if (_definition.PlacementMode == OrganizerPlacementMode.Station)
+        {
+            if (!_stationReady) return;
+            try { await (_stationContentTask ??= PrepareStationContentAsync()); }
+            catch { _stationContentTask = null; throw; }
+            if (!IsCurrent() || !_stationVisible) return;
+        }
+        await _host.PrepareToExpandAsync(this, IsCurrent);
+        if (!IsCurrent() || _definition.PlacementMode == OrganizerPlacementMode.Station && !_stationVisible) return;
         bool contained = IsContained;
         NativeMethods.RECT compactOrigin = contained ? _containedAnchorBounds : _compactBounds;
         WidgetPosition? rememberedPosition = ShouldRememberExpandedPosition()
@@ -1516,74 +1682,124 @@ public sealed partial class MainWindow : Window
             await SaveStateAsync();
         }
 
+        if (!IsCurrent()) return;
+        bool continuingPath = UseCustomAnimations && _collapseTransitionGeometry is not null && _transitionProgress > 0 && _transitionProgress < 1;
+        CancellationTokenSource transition = StartTransition(modeCancellation);
         _expanded = true;
         _animating = true;
-        RefreshPerformanceSettings();
-        CancellationTokenSource transition = StartTransition();
-        if (_definition.PlacementMode != OrganizerPlacementMode.Station && !contained) _desktopLayer?.SetExpanded(true);
-
-        NativeMethods.RECT currentBounds = compactOrigin;
-        if (_definition.PlacementMode != OrganizerPlacementMode.Station && !contained &&
-            !NativeMethods.GetWindowRect(_hwnd, out currentBounds))
-        {
-            currentBounds = compactOrigin;
-        }
-        if (_definition.PlacementMode != OrganizerPlacementMode.Station && !contained &&
-            RectsEqual(currentBounds, _compactBounds)) _compactBounds = currentBounds;
-        NativeMethods.RECT expandedBounds = CalculateExpandedBounds(
-            compactOrigin,
-            rememberedPosition is null ? null : targetDisplay);
-        if (rememberedPosition is not null)
-        {
-            expandedBounds = DisplayPlacementService.RestoreToDisplay(
-                rememberedPosition,
-                targetDisplay,
-                expandedBounds.Width,
-                expandedBounds.Height);
-            expandedBounds = DisplayPlacementService.Clamp(
-                expandedBounds,
-                DisplayPlacementService.GetExpandedWorkArea(targetDisplay));
-        }
-
-        double initialProgress = Math.Clamp(_transitionProgress, 0, 1);
-        bool reducedMotion = !UseCustomAnimations;
-        PrepareTransitionAnchor(expandedBounds, compactOrigin);
-        _collapseTransitionGeometry = null;
-        ExpandedView.Visibility = Visibility.Visible;
-        CompactView.Visibility = _definition.PlacementMode == OrganizerPlacementMode.Station || contained
-            ? Visibility.Collapsed
-            : Visibility.Visible;
-        ApplyTransitionFrame(initialProgress, reducedMotion);
-        if (_definition.PlacementMode == OrganizerPlacementMode.Station || contained)
-        {
-            _desktopLayer?.SetExpanded(true, stayTopmost: true);
-            if (_definition.PlacementMode == OrganizerPlacementMode.Station)
-                _host.RaiseActiveCompactOrganizerDrags(this);
-        }
-        ApplyBounds(expandedBounds, show: true);
         try
         {
+            RefreshPerformanceSettings();
+            if (_definition.PlacementMode != OrganizerPlacementMode.Station && !contained) _desktopLayer?.SetExpanded(true);
+
+            NativeMethods.RECT currentBounds = compactOrigin;
+            if (_definition.PlacementMode != OrganizerPlacementMode.Station && !contained &&
+                !TryGetLogicalWindowRect(out currentBounds))
+            {
+                currentBounds = compactOrigin;
+            }
+            if (_definition.PlacementMode != OrganizerPlacementMode.Station && !contained &&
+                RectsEqual(currentBounds, _compactBounds)) _compactBounds = currentBounds;
+            NativeMethods.RECT expandedBounds = CalculateExpandedBounds(
+                compactOrigin,
+                rememberedPosition is null ? null : targetDisplay);
+            if (rememberedPosition is not null)
+            {
+                expandedBounds = DisplayPlacementService.RestoreToDisplay(
+                    rememberedPosition,
+                    targetDisplay,
+                    expandedBounds.Width,
+                    expandedBounds.Height);
+                expandedBounds = DisplayPlacementService.Clamp(
+                    expandedBounds,
+                    DisplayPlacementService.GetExpandedWorkArea(targetDisplay));
+            }
+
+            if (continuingPath) expandedBounds = _collapseTransitionGeometry!.ExpandedBounds;
+            double initialProgress = Math.Clamp(_transitionProgress, 0, 1);
+            bool reducedMotion = !UseCustomAnimations;
+            if (!reducedMotion && _definition.PlacementMode != OrganizerPlacementMode.Station && !contained)
+            {
+                if (!continuingPath)
+                {
+                    PrepareTransitionAnchor(expandedBounds, compactOrigin, handoffAtCompactOrigin: true);
+                    _collapseTransitionGeometry = CreateCollapseTransitionGeometry(expandedBounds, compactOrigin);
+                }
+            }
+            else
+            {
+                PrepareTransitionAnchor(expandedBounds, compactOrigin);
+                _collapseTransitionGeometry = null;
+            }
+            trace?.Advance(AnimationTraceStage.Layout);
+            ExpandedView.Visibility = Visibility.Visible;
+            CompactView.Visibility = _definition.PlacementMode == OrganizerPlacementMode.Station || contained
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            ApplyTransitionFrame(initialProgress, reducedMotion);
+            if (_definition.PlacementMode == OrganizerPlacementMode.Station || contained)
+            {
+                _desktopLayer?.SetExpanded(true, stayTopmost: true);
+                if (_definition.PlacementMode == OrganizerPlacementMode.Station)
+                    _host.RaiseActiveCompactOrganizerDrags(this);
+            }
+            NativeMethods.RECT animationBounds = expandedBounds;
+            if (!reducedMotion && _collapseTransitionGeometry is { } path)
+            {
+                var position = new TransitionPositionPath(path.ExpandedBounds.Left, path.ExpandedBounds.Top,
+                    path.EndExpandedLeft, path.EndExpandedTop).PositionAt(initialProgress);
+                animationBounds = new NativeMethods.RECT
+                {
+                    Left = (int)Math.Round(position.X), Top = (int)Math.Round(position.Y),
+                    Right = (int)Math.Round(position.X) + expandedBounds.Width,
+                    Bottom = (int)Math.Round(position.Y) + expandedBounds.Height
+                };
+                _lastTransitionWindowLeft = animationBounds.Left;
+                _lastTransitionWindowTop = animationBounds.Top;
+            }
+            ApplyBounds(animationBounds, show: _runtimeVisible || contained || _stationVisible);
             ConfigureItemsLayout();
             await WaitForNextRenderAsync(transition.Token);
+            if (!IsCurrent() || transition.IsCancellationRequested) return;
             UpdateSurfaceClips();
             ApplyTransitionFrame(initialProgress, reducedMotion);
+            trace?.Advance(AnimationTraceStage.Animation);
             await RunVisualTransitionAsync(1, transition.Token);
         }
         catch (OperationCanceledException)
         {
+            if (trace is not null) trace.Outcome = "cancelled";
             return;
+        }
+        catch
+        {
+            if (!IsCurrent()) return;
+            if (trace is not null) trace.Outcome = "failed";
+            RecoverFailedTransition(transition);
+            throw;
         }
         finally
         {
-            if (_transitionCancellation == transition && !transition.IsCancellationRequested)
+            trace?.Advance(AnimationTraceStage.Handoff);
+            if (IsCurrent() && _transitionCancellation == transition && !transition.IsCancellationRequested)
             {
+                _animating = false;
+                _host.NotifyDockOpenStateChanged();
                 CompactView.Visibility = Visibility.Collapsed;
                 CompactView.Opacity = 1;
                 CompactView.Translation = Vector3.Zero;
                 ExpandedView.Opacity = 1;
                 GetExpandedCompositionVisual().Scale = Vector3.One;
                 ClearStationTransitionVisuals();
-                _animating = false;
+                if (IsPermanentlyExpanded && rememberedPosition is not null &&
+                    TryGetLogicalWindowRect(out NativeMethods.RECT restoredWindow) &&
+                    TryGetVisibleAlignmentFrame(ExpandedPanel, out NativeMethods.RECT restoredFrame))
+                {
+                    // Allow the title band outside the work area when the visible panel is aligned to its edge.
+                    ApplyBounds(DisplayPlacementService.RestoreToDisplay(rememberedPosition, targetDisplay,
+                        restoredWindow.Width, restoredWindow.Height,
+                        WindowAlignmentInsets.From(restoredWindow, restoredFrame)), show: _runtimeVisible);
+                }
                 ApplyOutsideClickSetting();
                 if (scrollToEnd) ScrollToEnd(animated: false);
                 if (_definition.PlacementMode != OrganizerPlacementMode.Station)
@@ -1591,52 +1807,78 @@ public sealed partial class MainWindow : Window
                 UpdateCanvasResizeEdgeWindows(show: true);
                 _canvasResizeLeftButtonDown = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_LBUTTON) & 0x8000) != 0;
                 _canvasResizeInputTimer.Start();
+                if (trace is not null) trace.Outcome = "completed";
             }
         }
     }
 
-    private async Task CollapseAsync()
+    private Task CollapseAsync() => _organizerTitleEdit.IsBusy || ReceivingDrop ? Task.CompletedTask : CollapseTransitionAsync();
+
+    private async Task CollapseTransitionAsync(bool forMode = false, CancellationToken modeCancellation = default)
     {
-        if ((!_expanded && !_animating) || _hwnd == IntPtr.Zero || _shellDragActive) return;
-        await _host.CollapseContainedChildrenAsync(_definition.Id);
+        if (StaysExpanded || _changingExpansionMode && !forMode || !_runtimeVisible && _pendingExpansionModeApply) return;
+        if (_closing || (!_expanded && !_animating && _transitionProgress <= 0) || _hwnd == IntPtr.Zero || _shellDragActive) return;
+        _compactClicks.Reset();
+        long requestVersion = ++_transitionRequestVersion;
+        _transitionCancellation?.Cancel();
+        bool IsCurrent() => IsCurrentTransitionRequest(requestVersion, modeCancellation);
+        using AnimationTraceSession? trace = BeginAnimationTrace("collapse");
+        await _host.CollapseContainedChildrenAsync(_definition.Id, IsCurrent);
+        if (!IsCurrent() || StaysExpanded || _changingExpansionMode && !forMode || !_runtimeVisible && _pendingExpansionModeApply) return;
         _outsideClickHook?.Stop();
         if (_itemReorderSession is not null) CancelItemReorder();
         ShutdownItemDragBoundaryHook();
 
-        _expanded = false;
-        _animating = true;
-        RefreshPerformanceSettings();
-        _canvasResizeInputTimer.Stop();
-        _canvasResizeLeftButtonDown = false;
-        UpdateCanvasResizeEdgeWindows(show: false);
-        CancellationTokenSource transition = StartTransition();
-        _externalHoverTimer.Stop();
         bool contained = IsContained;
         NativeMethods.RECT compactTarget = contained ? _containedAnchorBounds : _compactBounds;
-        if (!NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT expandedBounds)) expandedBounds = CalculateExpandedBounds(compactTarget);
-        PrepareTransitionAnchor(expandedBounds, compactTarget, handoffAtCompactOrigin: true);
-        _collapseTransitionGeometry = _definition.PlacementMode == OrganizerPlacementMode.Station
-            ? null
-            : CreateCollapseTransitionGeometry(expandedBounds, compactTarget);
-        _lastTransitionWindowLeft = expandedBounds.Left;
-        _lastTransitionWindowTop = expandedBounds.Top;
-        RenderCompactPreview();
-        CompactView.Visibility = _definition.PlacementMode == OrganizerPlacementMode.Station || contained
-            ? Visibility.Collapsed
-            : Visibility.Visible;
-
+        bool continuingPath = UseCustomAnimations && _collapseTransitionGeometry is not null && _transitionProgress > 0 && _transitionProgress < 1;
+        CancellationTokenSource transition = StartTransition(modeCancellation);
+        _expanded = false;
+        _animating = true;
         try
         {
+            RefreshPerformanceSettings();
+            _canvasResizeInputTimer.Stop();
+            _canvasResizeLeftButtonDown = false;
+            UpdateCanvasResizeEdgeWindows(show: false);
+            _externalHoverTimer.Stop();
+            if (!TryGetLogicalWindowRect(out NativeMethods.RECT expandedBounds)) expandedBounds = CalculateExpandedBounds(compactTarget);
+            if (!continuingPath)
+            {
+                PrepareTransitionAnchor(expandedBounds, compactTarget, handoffAtCompactOrigin: true);
+                _collapseTransitionGeometry = _definition.PlacementMode == OrganizerPlacementMode.Station
+                    ? null
+                    : CreateCollapseTransitionGeometry(expandedBounds, compactTarget);
+            }
+            _lastTransitionWindowLeft = expandedBounds.Left;
+            _lastTransitionWindowTop = expandedBounds.Top;
+            RenderCompactPreview();
+            CompactView.Visibility = _definition.PlacementMode == OrganizerPlacementMode.Station || contained
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+
+            trace?.Advance(AnimationTraceStage.Animation);
             await RunVisualTransitionAsync(0, transition.Token);
         }
         catch (OperationCanceledException)
         {
+            if (trace is not null) trace.Outcome = "cancelled";
             return;
+        }
+        catch
+        {
+            if (!IsCurrent()) return;
+            if (trace is not null) trace.Outcome = "failed";
+            RecoverFailedTransition(transition);
+            throw;
         }
         finally
         {
-            if (_transitionCancellation == transition && !transition.IsCancellationRequested)
+            trace?.Advance(AnimationTraceStage.Handoff);
+            if (IsCurrent() && _transitionCancellation == transition && !transition.IsCancellationRequested)
             {
+                _animating = false;
+                _host.NotifyDockOpenStateChanged();
                 CompactView.Opacity = 1;
                 if (_definition.PlacementMode == OrganizerPlacementMode.Station)
                 {
@@ -1659,13 +1901,39 @@ public sealed partial class MainWindow : Window
                     CommitCompactHandoff(compactTarget);
                 }
                 _collapseTransitionGeometry = null;
-                _animating = false;
                 if (_definition.PlacementMode == OrganizerPlacementMode.Station || contained) _appWindow?.Hide();
                 _desktopLayer?.SetExpanded(false, showWindow: false);
                 RefreshPerformanceSettings();
                 _host.NotifyCollapsed(this);
+                if (trace is not null) trace.Outcome = "completed";
             }
         }
+    }
+
+    private void RecoverFailedTransition(CancellationTokenSource transition)
+    {
+        if (_closing || !ReferenceEquals(_transitionCancellation, transition)) return;
+        // Clear logical locks before any native/XAML cleanup, which can itself fail or reenter.
+        _transitionCancellation = null;
+        transition.Cancel();
+        transition.Dispose();
+        _animating = false;
+        _host.NotifyDockOpenStateChanged();
+        _expanded = false;
+        _transitionProgress = 0;
+        _transitionVelocity = 0;
+        _collapseTransitionGeometry = null;
+        _canvasResizeInputTimer.Stop();
+        _outsideClickHook?.Stop();
+        UpdateCanvasResizeEdgeWindows(show: false);
+        ExpandedView.Visibility = Visibility.Collapsed;
+        bool hidden = IsContained || _definition.PlacementMode == OrganizerPlacementMode.Station;
+        CompactView.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        if (hidden) _appWindow?.Hide();
+        else ApplyBounds(_compactBounds, show: _runtimeVisible, preserveZOrder: true);
+        _desktopLayer?.SetExpanded(false, showWindow: false);
+        RefreshPerformanceSettings();
+        _host.NotifyCollapsed(this);
     }
 
     private void CommitCompactHandoff(NativeMethods.RECT compactTarget)
@@ -1678,15 +1946,17 @@ public sealed partial class MainWindow : Window
         ExpandedView.Visibility = Visibility.Collapsed;
         ExpandedView.Opacity = 0;
         expandedVisual.Scale = Vector3.One;
+        _animationTrace?.Metrics.RecordWork(AnimationTraceWork.UpdateLayout);
         WindowRoot.UpdateLayout();
         UpdateSurfaceClips();
     }
 
-    private CancellationTokenSource StartTransition()
+    private CancellationTokenSource StartTransition(CancellationToken modeCancellation = default)
     {
+        ResetHoverWave();
         _transitionCancellation?.Cancel();
         _transitionCancellation?.Dispose();
-        _transitionCancellation = new CancellationTokenSource();
+        _transitionCancellation = CancellationTokenSource.CreateLinkedTokenSource(modeCancellation, _windowLifetime.Token);
         return _transitionCancellation;
     }
 
@@ -1748,6 +2018,7 @@ public sealed partial class MainWindow : Window
 
     private void ApplyTransitionFrame(double progress, bool reducedMotion)
     {
+        _animationTrace?.Metrics.RecordWork(AnimationTraceWork.VisualFrame);
         if (_definition.PlacementMode == OrganizerPlacementMode.Station)
         {
             ApplyStationTransitionFrame(progress, reducedMotion);
@@ -1941,14 +2212,14 @@ public sealed partial class MainWindow : Window
     private void ApplyCollapseWindowPosition(double progress, bool reducedMotion)
     {
         if (reducedMotion || _collapseTransitionGeometry is not { } geometry) return;
-        double returnProgress = 1 - progress;
-        int left = (int)Math.Round(geometry.ExpandedBounds.Left +
-            (geometry.EndExpandedLeft - geometry.ExpandedBounds.Left) * returnProgress);
-        int top = (int)Math.Round(geometry.ExpandedBounds.Top +
-            (geometry.EndExpandedTop - geometry.ExpandedBounds.Top) * returnProgress);
+        var position = new TransitionPositionPath(geometry.ExpandedBounds.Left, geometry.ExpandedBounds.Top,
+            geometry.EndExpandedLeft, geometry.EndExpandedTop).PositionAt(progress);
+        int left = (int)Math.Round(position.X);
+        int top = (int)Math.Round(position.Y);
         if (left == _lastTransitionWindowLeft && top == _lastTransitionWindowTop) return;
         _lastTransitionWindowLeft = left;
         _lastTransitionWindowTop = top;
+        _animationTrace?.Metrics.RecordWork(AnimationTraceWork.CollapseMove);
         _ = NativeMethods.SetWindowPos(
             _hwnd,
             IntPtr.Zero,
@@ -1959,52 +2230,32 @@ public sealed partial class MainWindow : Window
             NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
     }
 
-    private static Task WaitForNextRenderAsync(CancellationToken cancellationToken)
+    private async Task WaitForNextRenderAsync(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        AnimationTraceSession? trace = _animationTrace;
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _windowLifetime.Token);
         EventHandler<object>? handler = null;
-        CancellationTokenRegistration registration = default;
-        handler = (_, _) =>
-        {
-            CompositionTarget.Rendering -= handler;
-            registration.Dispose();
-            completion.TrySetResult();
-        };
-        CompositionTarget.Rendering += handler;
-        if (cancellationToken.CanBeCanceled)
-        {
-            registration = cancellationToken.Register(() =>
+        bool completed = await UiEventAwaiter.WaitAsync(
+            complete =>
             {
-                CompositionTarget.Rendering -= handler;
-                completion.TrySetCanceled(cancellationToken);
-            });
-        }
-        return completion.Task;
+                handler = (_, _) => { trace?.Metrics.RecordRendering(Stopwatch.GetTimestamp()); complete(); };
+                CompositionTarget.Rendering += handler;
+            },
+            _ => { if (handler is not null) CompositionTarget.Rendering -= handler; },
+            TimeSpan.FromMilliseconds(100), linked.Token);
+        trace?.Metrics.RecordWait(rendered: false, completed);
     }
 
-    private static Task WaitForNextRenderedAsync(CancellationToken cancellationToken)
+    private async Task WaitForNextRenderedAsync(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        AnimationTraceSession? trace = _animationTrace;
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _windowLifetime.Token);
         EventHandler<RenderedEventArgs>? handler = null;
-        CancellationTokenRegistration registration = default;
-        handler = (_, _) =>
-        {
-            CompositionTarget.Rendered -= handler;
-            registration.Dispose();
-            completion.TrySetResult();
-        };
-        CompositionTarget.Rendered += handler;
-        if (cancellationToken.CanBeCanceled)
-        {
-            registration = cancellationToken.Register(() =>
-            {
-                CompositionTarget.Rendered -= handler;
-                completion.TrySetCanceled(cancellationToken);
-            });
-        }
-        return completion.Task;
+        bool completed = await UiEventAwaiter.WaitAsync(
+            complete => { handler = (_, _) => complete(); CompositionTarget.Rendered += handler; },
+            _ => { if (handler is not null) CompositionTarget.Rendered -= handler; },
+            TimeSpan.FromMilliseconds(100), linked.Token);
+        trace?.Metrics.RecordWait(rendered: true, completed);
     }
 
     private NativeMethods.RECT CalculateExpandedBounds(NativeMethods.RECT compact, DisplayInfo? targetDisplay = null)
@@ -2027,33 +2278,29 @@ public sealed partial class MainWindow : Window
                 _definition.ManualCanvasBaseWidthDip,
                 _definition.ManualCanvasBaseHeightDip);
         }
-        if (IsCompactList)
-        {
-            return DisplayPlacementService.CalculateExpandedBounds(
-                compact,
-                display,
-                _definition.Layout,
-                canvasScale: 1,
-                _definition.CompactListCanvasWidthDip,
-                _definition.CompactListCanvasHeightDip);
-        }
-        return DisplayPlacementService.CalculateExpandedBounds(
-            compact,
-            display,
-            _definition.Layout,
-            _definition.CanvasScale,
-            _definition.ManualCanvasBaseWidthDip,
-            _definition.ManualCanvasBaseHeightDip);
+        double? baseWidth = IsCompactList ? _definition.CompactListCanvasWidthDip : _definition.ManualCanvasBaseWidthDip;
+        double? baseHeight = IsCompactList ? _definition.CompactListCanvasHeightDip : _definition.ManualCanvasBaseHeightDip;
+        double canvas = IsCompactList ? 1 : _definition.CanvasScale;
+        NativeMethods.RECT result = DisplayPlacementService.CalculateExpandedBounds(
+            compact, display, _definition.Layout, canvas, baseWidth, baseHeight);
+        _contentDisplayFit = baseWidth is double w && baseHeight is double h
+            ? OrganizerContentScale.DisplayFit(w * canvas, h * canvas,
+                result.Width / display.Scale, (result.Height - GetExpandedTitleBandPx(display.Scale)) / display.Scale)
+            : 1;
+        ApplyExpandedContentInset();
+        return result;
     }
 
     private bool ShouldRememberExpandedPosition() =>
         OrganizerInteractionMath.ShouldRememberExpandedPosition(
             _host.State.GlobalSettings.RememberExpandedOrganizerPosition,
-            _definition.PlacementMode);
+            _definition.PlacementMode,
+            IsPermanentlyExpanded);
 
     private void CaptureExpandedPosition()
     {
-        if (ShouldRememberExpandedPosition() && NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds))
+        if (IsDock) { CaptureDockCenter(); return; }
+        if (ShouldRememberExpandedPosition() && TryGetLogicalWindowRect(out NativeMethods.RECT bounds))
             _definition.ExpandedPosition = DisplayPlacementService.Capture(bounds, _hwnd);
     }
 
@@ -2076,7 +2323,9 @@ public sealed partial class MainWindow : Window
 
     private void ExpandedView_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (_itemReorderProbeRunning || !_expanded || _animating) return;
+        if (CommitTitleOnOutsidePress(e)) return;
+        if (e.Handled) return; // Hover proxies have already established the logical item press.
+        if (_organizerTitleEdit.IsBusy || _itemReorderProbeRunning || !_expanded || _animating) return;
         PointerPoint point = e.GetCurrentPoint(ExpandedView);
         if (!point.Properties.IsLeftButtonPressed) return;
         if (e.Pointer.PointerDeviceType == PointerDeviceType.Mouse && TryBeginCanvasResize())
@@ -2085,16 +2334,28 @@ public sealed partial class MainWindow : Window
             return;
         }
         if (IsExpandedDragBlocked(e.OriginalSource as DependencyObject)) return;
+        _compactClicks.Reset();
+
+        // The hover visual can extend outside its unscaled XAML item host.
+        if (IsDock && DockItemAtPoint(point.Position) is { } dockItem)
+        {
+            Item_PointerPressed(dockItem, e);
+            e.Handled = true;
+            return;
+        }
 
         BeginWidgetPress(ExpandedView, e, point.Position, expanded: true);
+        _pressedOrganizerTitle = _pressActive && !IsDock && !_definition.HideName &&
+            ReferenceEquals(e.OriginalSource, ExpandedNameText);
     }
 
     private bool TryBeginCanvasResize(CanvasResizeEdge requestedEdge = CanvasResizeEdge.None)
     {
-        if (_definition.PlacementMode == OrganizerPlacementMode.Station || !_expanded || _animating ||
+        if (_organizerTitleEdit.IsBusy || _closing || _widgetGesture.IsCompleting || _resizeGesture.IsCompleting) return false;
+        if (IsDock || _definition.PlacementMode == OrganizerPlacementMode.Station || !_expanded || _animating ||
             _canvasResize is not null || _shellDragActive || _itemReorderSession is not null ||
             !NativeMethods.GetCursorPos(out NativeMethods.POINT cursor) ||
-            !NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds)) return false;
+            !TryGetLogicalWindowRect(out NativeMethods.RECT bounds)) return false;
         CanvasResizeEdge edge = requestedEdge == CanvasResizeEdge.None
             ? GetCanvasResizeEdge(cursor, bounds)
             : requestedEdge;
@@ -2105,53 +2366,51 @@ public sealed partial class MainWindow : Window
             Scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d)
         };
         bool compactList = IsCompactList;
-        double startScale = Math.Clamp(_definition.CanvasScale, .1, 1.2);
+        double startScale = 1;
         int titleHeightPx = GetExpandedTitleBandPx(display.Scale);
         int panelHeightPx = Math.Max(1, bounds.Height - titleHeightPx);
-        NativeMethods.RECT work = _definition.PlacementMode == OrganizerPlacementMode.Station
-            ? display.Work
+        WindowAlignmentInsets? alignmentInsets = OrganizerInteractionMath.ShouldUseWindowAlignment(
+                _host.State.GlobalSettings.WindowAlignmentEnabled, true, _definition.PlacementMode, false, IsPermanentlyExpanded) &&
+            TryGetWindowAlignmentFrame(out NativeMethods.RECT alignmentFrame)
+                ? WindowAlignmentInsets.From(bounds, alignmentFrame) : null;
+        NativeMethods.RECT work = alignmentInsets is WindowAlignmentInsets insets
+            ? insets.ToWindow(display.Work)
             : DisplayPlacementService.GetExpandedWorkArea(display);
-        double baseWidth = bounds.Width / display.Scale / (compactList ? 1 : startScale);
-        double baseHeight = panelHeightPx / display.Scale / (compactList ? 1 : startScale);
-        double minimumScale = startScale;
-        double maximumScale = startScale;
-        if (!compactList)
-        {
-            double sideInset = _definition.PlacementMode == OrganizerPlacementMode.Station
-                ? DisplayPlacementService.StationSideInsetDip
-                : DisplayPlacementService.ExpandedSideInsetDip;
-            (double minimumWidth, double minimumHeight) =
-                DisplayPlacementService.CalculateMinimumExpandedSizeDip(_definition.Layout, .5, sideInset);
-            minimumScale = Math.Min(startScale, Math.Min(1.2,
-                Math.Max(.1, Math.Max(minimumWidth / baseWidth, minimumHeight / baseHeight))));
-            int centerX = bounds.Left + bounds.Width / 2;
-            int centerY = bounds.Top + titleHeightPx + panelHeightPx / 2;
-            double maximumWidth = (_definition.PlacementMode == OrganizerPlacementMode.Station
-                ? work.Width
-                : Math.Max(1, 2d * Math.Min(centerX - work.Left, work.Right - centerX))) / display.Scale;
-            double maximumHeight = (_definition.PlacementMode == OrganizerPlacementMode.Station
-                ? work.Height
-                : Math.Max(1, 2d * Math.Min(centerY - work.Top - titleHeightPx, work.Bottom - centerY))) / display.Scale;
-            maximumScale = Math.Max(startScale, Math.Min(1.2,
-                Math.Min(maximumWidth / baseWidth, maximumHeight / baseHeight)));
-        }
+        double baseWidth = bounds.Width / display.Scale;
+        double baseHeight = panelHeightPx / display.Scale;
+        var minimumSize = compactList
+            ? (OrganizerLimits.MinimumCompactListCanvasWidthDip, OrganizerLimits.MinimumCompactListCanvasHeightDip)
+            : DisplayPlacementService.CalculateMinimumExpandedSizeDip(_definition.Layout, .5);
+        int centerX = bounds.Left + bounds.Width / 2;
+        int centerY = bounds.Top + titleHeightPx + panelHeightPx / 2;
+        double maximumWidth = Math.Max(1, 2d * Math.Min(centerX - work.Left, work.Right - centerX)) / display.Scale;
+        double maximumHeight = Math.Max(1, 2d * Math.Min(centerY - work.Top - titleHeightPx, work.Bottom - centerY)) / display.Scale;
+        (double minimumScale, double maximumScale) = OrganizerContentScale.FactorRange(
+            baseWidth, baseHeight, minimumSize.Item1, minimumSize.Item2, maximumWidth, maximumHeight,
+            ContentScale, compactList ? _definition.CompactListItemScale : _definition.ItemScale);
 
         _ = NativeMethods.SetCapture(_hwnd);
         if (NativeMethods.GetCapture() != _hwnd) return false;
         _dragCurrentBounds = bounds;
         _hasPendingCanvasResizeCursor = false;
+        if (!_resizeGesture.TryStart()) return false;
+        ClearWindowAlignment();
         _canvasResize = new(
             edge,
             cursor,
             bounds,
             compactList,
             startScale,
+            ContentScale,
             baseWidth,
             baseHeight,
             minimumScale,
             maximumScale,
             display.Scale,
-            work);
+            work,
+            alignmentInsets,
+            display);
+        ResetHoverWave();
         SetCanvasResizeCursor(edge);
         return true;
     }
@@ -2201,7 +2460,7 @@ public sealed partial class MainWindow : Window
     private void UpdateCanvasResizeEdgeWindows(bool show)
     {
         if (_hwnd == IntPtr.Zero || !NativeMethods.IsWindow(_hwnd)) return;
-        if (!show || _definition.PlacementMode == OrganizerPlacementMode.Station)
+        if (!show || IsDock || _definition.PlacementMode == OrganizerPlacementMode.Station)
         {
             foreach (IntPtr edgeWindow in _canvasResizeEdgeWindows)
             {
@@ -2243,14 +2502,8 @@ public sealed partial class MainWindow : Window
         if (_canvasResizeEdgeWindows.Count != 4 || !NativeMethods.GetClientRect(_hwnd, out NativeMethods.RECT client)) return;
         int width = Math.Max(1, client.Width);
         int height = Math.Max(1, client.Height);
-        int band = Math.Max(1, (int)Math.Ceiling(CanvasResizeBorderDip * NativeMethods.GetDpiForWindow(_hwnd) / 96d));
-        (int X, int Y, int Width, int Height)[] rectangles =
-        [
-            (0, 0, width, Math.Min(band, height)),
-            (0, Math.Max(0, height - band), width, Math.Min(band, height)),
-            (0, band, Math.Min(band, width), Math.Max(1, height - 2 * band)),
-            (Math.Max(0, width - band), band, Math.Min(band, width), Math.Max(1, height - 2 * band))
-        ];
+        var rectangles = CanvasResizeHitZones.EdgeRectangles(
+            width, height, NativeMethods.GetDpiForWindow(_hwnd) / 96d, IsCompactList);
         for (int index = 0; index < rectangles.Length; index++)
         {
             var rectangle = rectangles[index];
@@ -2275,18 +2528,20 @@ public sealed partial class MainWindow : Window
 
     private void BeginWidgetPress(UIElement captureTarget, PointerRoutedEventArgs e, Point point, bool expanded)
     {
+        if (_organizerTitleEdit.IsBusy || _closing || _pressActive || _resizeGesture.IsCompleting || !_widgetGesture.TryStart()) return;
         _pressedPointerId = e.Pointer.PointerId;
+        _widgetMousePress = e.Pointer.PointerDeviceType == PointerDeviceType.Mouse && OrganizerKinds.IsRegular(_definition.PlacementMode);
         _draggingExpanded = expanded;
         _pressPointDip = point;
         _longPressGesture.Press(point.X, point.Y);
         _pressActive = true;
+        ResetHoverWave();
         _widgetDragging = false;
         _pressStartedAt = Stopwatch.GetTimestamp();
         _ = NativeMethods.GetCursorPos(out _pressCursorPx);
-        _ = NativeMethods.GetWindowRect(_hwnd, out _pressWindowBounds);
-        _dragAlignmentInsets = !expanded &&
-            TryGetCompactAlignmentInsets(_pressWindowBounds, out WindowAlignmentInsets alignmentInsets)
-                ? alignmentInsets
+        _ = TryGetLogicalWindowRect(out _pressWindowBounds);
+        _dragAlignmentInsets = TryGetWindowAlignmentFrame(out NativeMethods.RECT alignmentFrame)
+                ? WindowAlignmentInsets.From(_pressWindowBounds, alignmentFrame)
                 : null;
         ClearWindowAlignment();
         _dragCurrentBounds = _pressWindowBounds;
@@ -2307,7 +2562,7 @@ public sealed partial class MainWindow : Window
         }
 
         StartDragClock();
-        _longPressTimer.Start();
+        if (!_widgetMousePress) _longPressTimer.Start();
         e.Handled = true;
     }
 
@@ -2315,7 +2570,7 @@ public sealed partial class MainWindow : Window
     {
         for (DependencyObject? current = source; current is not null; current = VisualTreeHelper.GetParent(current))
         {
-            if (current is Button || current is FrameworkElement { Name: "ItemHost" or "ItemContent" }) return true;
+            if (current is Button or TextBox || current is FrameworkElement { Name: "ItemHost" or "ItemContent" }) return true;
             if (current is Grid { Name: "ExpandedView" }) break;
         }
         return false;
@@ -2352,7 +2607,7 @@ public sealed partial class MainWindow : Window
         }
         if (_pressActive && _draggingExpanded && e.Pointer.PointerId == _pressedPointerId)
         {
-            await RunSafelyAsync(() => FinishCompactPressAsync(allowOpen: false), "展开窗口拖动取消失败");
+            await RunSafelyAsync(() => FinishCompactPressAsync(allowOpen: true), "展开窗口拖动取消失败");
             e.Handled = true;
         }
     }
@@ -2373,11 +2628,16 @@ public sealed partial class MainWindow : Window
 
     private void ExpandedView_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
     {
+        if (e.Handled) return; // A hover proxy also bubbles through ExpandedView's handled-events listener.
+        _compactClicks.Reset();
+        if (IsDock) { Dock_PointerWheelChanged(e); return; }
         Point pointerPosition = e.GetCurrentPoint(ItemsScrollView).Position;
         bool pointerInsideList = pointerPosition.X >= 0 && pointerPosition.Y >= 0 &&
             pointerPosition.X <= ItemsScrollView.ActualWidth &&
-            pointerPosition.Y <= ItemsScrollView.ActualHeight;
-        bool controlPressed = e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control);
+            pointerPosition.Y <= ItemsScrollView.ActualHeight || HoverItemAtViewportPoint(pointerPosition) is not null;
+        bool controlPressed = OrganizerInteractionMath.IsControlPressed(
+            e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control),
+            NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL));
         OrganizerWheelAction action = OrganizerInteractionMath.ResolveWheelAction(
             _expanded,
             _animating,
@@ -2399,12 +2659,14 @@ public sealed partial class MainWindow : Window
         e.Handled = true;
         if (action is OrganizerWheelAction.ScrollCompactList or OrganizerWheelAction.ScrollGrid)
         {
+            if (action == OrganizerWheelAction.ScrollCompactList) UpdateCompactScrollHover(pointerPosition);
+            else ResetHoverWave();
             _wheelDeltaRemainder = 0;
             SyncSmoothScrollIdleOffset();
             double rowExtent;
             if (action == OrganizerWheelAction.ScrollCompactList)
             {
-                rowExtent = CompactListItemHeightDip * _definition.CompactListItemScale;
+                rowExtent = CompactListItemHeightDip * _definition.CompactListItemScale * ContentScale;
                 _compactListScrollState = OrganizerScrollMath.ConsumeWheelDelta(
                     _compactListScrollState,
                     point.Properties.MouseWheelDelta,
@@ -2415,7 +2677,7 @@ public sealed partial class MainWindow : Window
             {
                 Size viewport = GetItemsViewportSize();
                 (_, double cellHeight) = GetItemCellSizeDip(viewport.Width, viewport.Height);
-                rowExtent = cellHeight + ItemGapDip;
+                rowExtent = cellHeight + GetItemLayoutGapDip();
                 _gridScrollState = OrganizerScrollMath.ConsumeWheelDelta(
                     _gridScrollState,
                     point.Properties.MouseWheelDelta,
@@ -2454,8 +2716,8 @@ public sealed partial class MainWindow : Window
                 _definition.Layout)
             : DisplayPlacementService.CalculateMaximumItemScaleForExpandedSize(
                 _definition.Layout,
-                Math.Max(1, ExpandedPanel.ActualWidth),
-                Math.Max(1, ExpandedPanel.ActualHeight));
+                Math.Max(1, ExpandedPanel.ActualWidth / ContentScale),
+                Math.Max(1, ExpandedPanel.ActualHeight / ContentScale));
         double next = OrganizerInteractionMath.ApplyWheelSteps(_definition.ItemScale, steps, .5, maximum);
         if (Math.Abs(next - _definition.ItemScale) < .0001) return;
         _definition.ItemScale = next;
@@ -2468,46 +2730,12 @@ public sealed partial class MainWindow : Window
     {
         if (_canvasResize is not { } session) return;
         ClearStationTransitionVisuals();
+        bool align = session.AlignmentInsets is not null &&
+            OrganizerInteractionMath.ShouldUseWindowAlignment(_host.State.GlobalSettings.WindowAlignmentEnabled,
+                true, _definition.PlacementMode, false, IsPermanentlyExpanded);
+        WindowAlignmentResult? alignment = null;
         int titleHeightPx = GetExpandedTitleBandPx(session.DisplayScale);
         int startPanelHeightPx = Math.Max(1, session.StartBounds.Height - titleHeightPx);
-        if (session.CompactList)
-        {
-            (int listLeft, int listTop, int listWidth, int listHeight) = OrganizerInteractionMath.ResizeFixedEdges(
-                session.Edge,
-                session.StartBounds.Left,
-                session.StartBounds.Top,
-                session.StartBounds.Width,
-                session.StartBounds.Height,
-                cursor.X - session.StartCursor.X,
-                cursor.Y - session.StartCursor.Y,
-                Math.Max(1, (int)Math.Round(OrganizerLimits.MinimumCompactListCanvasWidthDip * session.DisplayScale)),
-                Math.Max(1, titleHeightPx + (int)Math.Round(OrganizerLimits.MinimumCompactListCanvasHeightDip * session.DisplayScale)),
-                session.WorkArea.Left,
-                session.WorkArea.Top,
-                session.WorkArea.Right,
-                session.WorkArea.Bottom);
-            var compactListBounds = new NativeMethods.RECT
-            {
-                Left = listLeft,
-                Top = listTop,
-                Right = listLeft + listWidth,
-                Bottom = listTop + listHeight
-            };
-            if (RectsEqual(compactListBounds, _dragCurrentBounds)) return;
-            _definition.CompactListCanvasWidthDip = listWidth / session.DisplayScale;
-            _definition.CompactListCanvasHeightDip = Math.Max(1, listHeight - titleHeightPx) / session.DisplayScale;
-            _dragCurrentBounds = compactListBounds;
-            _ = NativeMethods.SetWindowPos(
-                _hwnd,
-                IntPtr.Zero,
-                compactListBounds.Left,
-                compactListBounds.Top,
-                compactListBounds.Width,
-                compactListBounds.Height,
-                NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
-            UpdateCanvasResizeEdgeWindows(show: true);
-            return;
-        }
         double factor = OrganizerInteractionMath.CalculateResizeFactor(
             session.Edge,
             cursor.X - session.StartCursor.X,
@@ -2532,61 +2760,83 @@ public sealed partial class MainWindow : Window
             Right = left + width,
             Bottom = top + height
         };
-        if (_definition.PlacementMode == OrganizerPlacementMode.Station)
+        if (align && session.AlignmentInsets is WindowAlignmentInsets scaleInsets)
         {
-            bounds = DisplayPlacementService.CalculateStationBounds(
-                DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice),
-                _definition.DockEdge,
-                _definition.Layout,
-                canvasScale,
-                _definition.ItemScale,
-                _definition.Position,
-                session.BaseWidthDip,
-                session.BaseHeightDip);
-            width = bounds.Width;
-            height = bounds.Height;
+            uint dpi = Math.Max(96u, NativeMethods.GetDpiForWindow(_hwnd));
+            WindowAlignmentScaleResult snapped = WindowAlignmentMath.AlignScale(centerX, centerY,
+                session.BaseWidthDip * session.DisplayScale, session.BaseHeightDip * session.DisplayScale,
+                canvasScale, session.MinimumCanvasScale, session.MaximumCanvasScale,
+                session.Display.Work, _host.GetWindowAlignmentTargets(this, session.Display), session.Edge,
+                WindowAlignmentMath.DipToPx(WindowAlignmentMath.SnapDistanceDip, dpi),
+                WindowAlignmentMath.DipToPx(WindowAlignmentMath.ReleaseDistanceDip, dpi), _windowAlignmentState);
+            canvasScale = snapped.Scale;
+            alignment = snapped.Alignment;
+            bounds = scaleInsets.ToWindow(snapped.Alignment.Bounds);
+            width = snapped.Alignment.Bounds.Width;
+            height = snapped.Alignment.Bounds.Height;
         }
-        if ((RectsEqual(bounds, _dragCurrentBounds) || RectsEqual(bounds, session.StartBounds)) &&
-            Math.Abs(canvasScale - _definition.CanvasScale) < .0001) return;
-
-        _definition.ManualCanvasBaseWidthDip = session.BaseWidthDip;
-        _definition.ManualCanvasBaseHeightDip = session.BaseHeightDip;
-        _definition.CanvasScale = canvasScale;
-        double previousItemScale = _definition.ItemScale;
-        double maximumItemScale = DisplayPlacementService.CalculateMaximumItemScaleForExpandedSize(
-            _definition.Layout,
-            width / session.DisplayScale,
-            height / session.DisplayScale,
-            _definition.PlacementMode == OrganizerPlacementMode.Station
-                ? DisplayPlacementService.StationSideInsetDip
-                : DisplayPlacementService.ExpandedSideInsetDip);
-        _definition.ItemScale = Math.Clamp(Math.Min(previousItemScale, maximumItemScale), .5, DisplayPlacementService.MaximumItemScale);
-        _dragCurrentBounds = bounds;
-        _ = NativeMethods.SetWindowPos(
-            _hwnd,
-            IntPtr.Zero,
-            bounds.Left,
-            bounds.Top,
-            bounds.Width,
-            bounds.Height,
-            NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
+        bool unchangedCanvas = RectsEqual(bounds, _dragCurrentBounds);
+        if (unchangedCanvas) return;
+        double previousFit = _contentDisplayFit;
+        double previousStoredScale = session.CompactList ? _definition.CompactListContentScale : _definition.IconContentScale;
+        _contentDisplayFit = 1;
+        double nextScale = session.StartContentScale * canvasScale;
+        if (session.CompactList) _definition.CompactListContentScale = nextScale;
+        else _definition.IconContentScale = nextScale;
+        // SizeChanged may run inside SetWindowPos: expose matching metrics first.
+        ApplyExpandedContentInset();
+        if (!ApplyCanvasResizeBounds(bounds, alignment))
+        {
+            if (session.CompactList) _definition.CompactListContentScale = previousStoredScale;
+            else _definition.IconContentScale = previousStoredScale;
+            _contentDisplayFit = previousFit;
+            ApplyExpandedContentInset();
+            return;
+        }
+        if (session.CompactList)
+        {
+            _definition.CompactListCanvasWidthDip = width / session.DisplayScale;
+            _definition.CompactListCanvasHeightDip = height / session.DisplayScale;
+        }
+        else
+        {
+            _definition.ManualCanvasBaseWidthDip = width / session.DisplayScale / _definition.CanvasScale;
+            _definition.ManualCanvasBaseHeightDip = height / session.DisplayScale / _definition.CanvasScale;
+        }
+        ConfigureItemsLayout();
         UpdateCanvasResizeEdgeWindows(show: true);
-        if (previousItemScale - _definition.ItemScale >= .005)
-        {
-            UpdateRealizedItems();
-            UpdateCompactPreviewItemScale();
-        }
     }
 
-    private async Task FinishCanvasResizeAsync(NativeMethods.POINT? finalCursor = null)
+    private void QueueCanvasResizeCompletion()
     {
-        if (_canvasResize is null) return;
-        StopCanvasResizeRendering();
+        long version = _resizeGesture.Version;
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_closing) _ = RunSafelyAsync(() => FinishCanvasResizeAsync(version: version), "缩放结束失败");
+        });
+    }
+
+    private Task FinishCanvasResizeAsync(NativeMethods.POINT? finalCursor = null, long? version = null) =>
+        _resizeGesture.CompleteAsync(version ?? _resizeGesture.Version, () => FinishCanvasResizeCoreAsync(finalCursor));
+
+    private async Task FinishCanvasResizeCoreAsync(NativeMethods.POINT? finalCursor)
+    {
+        if (_canvasResize is null || _closing) return;
         NativeMethods.POINT cursor;
-        if (finalCursor is { } suppliedCursor) CommitCanvasResize(suppliedCursor);
-        else if (NativeMethods.GetCursorPos(out cursor)) CommitCanvasResize(cursor);
-        _canvasResize = null;
-        if (NativeMethods.GetCapture() == _hwnd) _ = NativeMethods.ReleaseCapture();
+        try
+        {
+            StopCanvasResizeRendering();
+            if (finalCursor is { } suppliedCursor) CommitCanvasResize(suppliedCursor);
+            else if (NativeMethods.GetCursorPos(out cursor)) CommitCanvasResize(cursor);
+        }
+        finally
+        {
+            // ReleaseCapture synchronously sends WM_CAPTURECHANGED. Retire the session first.
+            _canvasResize = null;
+            ClearWindowAlignment();
+            if (NativeMethods.GetCapture() == _hwnd) _ = NativeMethods.ReleaseCapture();
+            RefreshPerformanceSettings();
+        }
         ConfigureItemsLayout();
         UpdateCompactPreviewItemScale();
         UpdateSurfaceClips();
@@ -2594,13 +2844,13 @@ public sealed partial class MainWindow : Window
         _interactionSaveTimer.Stop();
         CaptureExpandedPosition();
         await SaveStateAsync();
-        _desktopLayer?.Reattach();
+        if (!_closing) _desktopLayer?.Reattach();
     }
 
     private async Task RunCanvasResizeProbeAsync()
     {
         await Task.Delay(100);
-        if (!NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT startBounds))
+        if (!TryGetLogicalWindowRect(out NativeMethods.RECT startBounds))
             throw new InvalidOperationException("Resize probe could not read the organizer bounds.");
 
         var startCursor = new NativeMethods.POINT
@@ -2622,17 +2872,17 @@ public sealed partial class MainWindow : Window
             finalCursor = new NativeMethods.POINT { X = startCursor.X - step * 8, Y = startCursor.Y };
             QueueCanvasResize(finalCursor);
             await Task.Delay(25);
-            if (NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT sample)) samples.Add(sample);
+            if (TryGetLogicalWindowRect(out NativeMethods.RECT sample)) samples.Add(sample);
         }
 
         var releaseClock = Stopwatch.StartNew();
         Task finish = FinishCanvasResizeAsync(finalCursor);
         _canvasResizeProbeRunning = false;
         long releaseSettledMs = releaseClock.ElapsedMilliseconds;
-        _ = NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT beforeFreeMove);
+        _ = TryGetLogicalWindowRect(out NativeMethods.RECT beforeFreeMove);
         _ = NativeMethods.SetCursorPos(finalCursor.X - 120, finalCursor.Y);
         await Task.Delay(200);
-        _ = NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT afterFreeMove);
+        _ = TryGetLogicalWindowRect(out NativeMethods.RECT afterFreeMove);
         await finish;
         WindowRoot.UpdateLayout();
 
@@ -2678,7 +2928,9 @@ public sealed partial class MainWindow : Window
         _hasPendingCanvasResizeCursor = true;
         if (_canvasResizeCommitQueued) return;
         _canvasResizeCommitQueued = true;
-        if (!DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.High, ProcessQueuedCanvasResize))
+        long version = _resizeGesture.Version;
+        if (!DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.High,
+                () => { if (!_closing && version == _resizeGesture.Version) ProcessQueuedCanvasResize(); }))
         {
             _canvasResizeCommitQueued = false;
         }
@@ -2701,33 +2953,28 @@ public sealed partial class MainWindow : Window
     }
 
     private static CanvasResizeEdge GetCanvasResizeEdge(Point point, double width, double height)
-    {
-        if (point.X < 0 || point.Y < 0 || point.X > width || point.Y > height) return CanvasResizeEdge.None;
-        CanvasResizeEdge edge = CanvasResizeEdge.None;
-        if (point.X <= CanvasResizeBorderDip) edge |= CanvasResizeEdge.Left;
-        else if (point.X >= width - CanvasResizeBorderDip) edge |= CanvasResizeEdge.Right;
-        if (point.Y <= CanvasResizeBorderDip) edge |= CanvasResizeEdge.Top;
-        else if (point.Y >= height - CanvasResizeBorderDip) edge |= CanvasResizeEdge.Bottom;
-        return edge;
-    }
+        => CanvasResizeHitZones.HitTest(point.X, point.Y, width, height, compactList: false);
 
     private CanvasResizeEdge GetCanvasResizeEdge(NativeMethods.POINT cursor)
     {
         if (_definition.PlacementMode == OrganizerPlacementMode.Station || !_expanded || _animating ||
             _itemReorderSession is not null || _shellDragActive ||
-            !NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds)) return CanvasResizeEdge.None;
+            !TryGetLogicalWindowRect(out NativeMethods.RECT bounds)) return CanvasResizeEdge.None;
         return GetCanvasResizeEdge(cursor, bounds);
     }
 
     private CanvasResizeEdge GetCanvasResizeEdge(NativeMethods.POINT cursor, NativeMethods.RECT bounds)
     {
+        if (IsDock) return CanvasResizeEdge.None;
+        if (HasHoverPresentation && TryScreenToHoverViewport(cursor, out Point hoverPoint) &&
+            HoverItemAtViewportPoint(hoverPoint) is not null) return CanvasResizeEdge.None;
         if (_definition.PlacementMode == OrganizerPlacementMode.Station || !_expanded || _animating ||
             _itemReorderSession is not null || _shellDragActive) return CanvasResizeEdge.None;
         double scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
-        return GetCanvasResizeEdge(
-            new Point((cursor.X - bounds.Left) / scale, (cursor.Y - bounds.Top) / scale),
-            bounds.Width / scale,
-            bounds.Height / scale);
+        Point point = new((cursor.X - bounds.Left) / scale, (cursor.Y - bounds.Top) / scale);
+        return IsCompactList
+            ? CanvasResizeHitZones.HitTest(point.X, point.Y, bounds.Width / scale, bounds.Height / scale, compactList: true)
+            : GetCanvasResizeEdge(point, bounds.Width / scale, bounds.Height / scale);
     }
 
     private bool SetCanvasResizeCursor(CanvasResizeEdge edge)
@@ -2771,6 +3018,10 @@ public sealed partial class MainWindow : Window
         NativeMethods.HTBOTTOMRIGHT => CanvasResizeEdge.Right | CanvasResizeEdge.Bottom,
         _ => CanvasResizeEdge.None
     };
+
+    // Hide only the visual subtree: the transparent button retains its original hit area.
+    internal void RefreshCollapseIndicator() =>
+        CollapseButtonSurface.Opacity = _host.State.GlobalSettings.HideCollapseIndicator ? 0 : 1;
 
     private async void CollapseButton_Click(object sender, RoutedEventArgs e) =>
         await RunSafelyAsync(CollapseAsync, "收起窗口失败");
@@ -2828,6 +3079,10 @@ public sealed partial class MainWindow : Window
 
     private IntPtr GestureWindowProc(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam, UIntPtr subclassId, IntPtr referenceData)
     {
+        if (message is 0x02E0 or 0x007E) // WM_DPICHANGED / WM_DISPLAYCHANGE
+            ResetHoverWave();
+        if (IsDock && message is 0x02E0 or 0x007E) // WM_DPICHANGED / WM_DISPLAYCHANGE
+            DispatcherQueue.TryEnqueue(() => { if (!_closing) { _dockRegionKey = null; ApplyDockLayout(); } });
         if (message == NativeMethods.WM_MOUSEMOVE && _shellDragActive)
         {
             DragMessageRelay.Complete(ref _itemDragOleMouseMovePending);
@@ -2846,7 +3101,8 @@ public sealed partial class MainWindow : Window
         {
             if (NativeMethods.GetCursorPos(out NativeMethods.POINT cursor))
             {
-                if (!_widgetDragging)
+                if (_widgetMousePress) TryStartMouseWidgetDrag();
+                if (!_widgetDragging && !_widgetMousePress)
                 {
                     double scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
                     _ = _longPressGesture.Move(
@@ -2865,11 +3121,11 @@ public sealed partial class MainWindow : Window
         }
         else if (_nativeMouseCapture && _pressActive && message == NativeMethods.WM_LBUTTONUP)
         {
-            _ = RunSafelyAsync(() => FinishCompactPressAsync(allowOpen: true), "低级鼠标拖动结束失败");
+            QueueCompactPressCompletion(allowOpen: true);
         }
         else if (_nativeMouseCapture && _pressActive && message == NativeMethods.WM_CAPTURECHANGED)
         {
-            _ = RunSafelyAsync(() => FinishCompactPressAsync(allowOpen: false), "低级鼠标拖动捕获丢失处理失败");
+            QueueCompactPressCompletion(allowOpen: false);
         }
         return NativeMethods.DefSubclassProc(hWnd, message, wParam, lParam);
     }
@@ -2924,14 +3180,14 @@ public sealed partial class MainWindow : Window
         {
             if (!_canvasResizeProbeRunning)
             {
-                if ((wParam.ToUInt64() & NativeMethods.MK_LBUTTON) == 0) _ = FinishCanvasResizeAsync();
+                if ((wParam.ToUInt64() & NativeMethods.MK_LBUTTON) == 0) QueueCanvasResizeCompletion();
                 else QueueCanvasResize(resizeCursor);
             }
             return true;
         }
         if (_canvasResize is not null && message is NativeMethods.WM_LBUTTONUP or NativeMethods.WM_NCLBUTTONUP or NativeMethods.WM_CAPTURECHANGED)
         {
-            _ = FinishCanvasResizeAsync();
+            QueueCanvasResizeCompletion();
             return true;
         }
         return false;
@@ -2958,7 +3214,8 @@ public sealed partial class MainWindow : Window
     private void DragRendering(object? sender, object args)
     {
         _dragRenderTickCount++;
-        if (_pressActive && !_widgetDragging &&
+        TryStartMouseWidgetDrag();
+        if (!_widgetMousePress && _pressActive && !_widgetDragging &&
             Stopwatch.GetElapsedTime(_pressStartedAt).TotalMilliseconds >= LongPressMs)
         {
             TryStartWidgetDrag();
@@ -2990,18 +3247,19 @@ public sealed partial class MainWindow : Window
             Bottom = _pressWindowBounds.Bottom + cursor.Y - _pressCursorPx.Y
         };
         DisplayInfo display = _dragDisplay ?? DisplayPlacementService.ForBounds(desired);
-        bool overOrganizerDropTarget = OrganizerInteractionMath.ShouldUseWindowAlignment(
+        bool overOrganizerDropTarget = !_draggingExpanded && (OrganizerInteractionMath.ShouldUseWindowAlignment(
                 _host.State.GlobalSettings.WindowAlignmentEnabled,
                 _draggingExpanded,
                 _definition.PlacementMode,
                 overOrganizerDropTarget: false) &&
             _host.IsOrganizerContainerDropTarget(this, cursor) ||
-            _host.IsOrganizerDragHoverTarget(this, cursor);
+            _host.IsOrganizerDragHoverTarget(this, cursor));
         WindowAlignmentInsets? alignmentInsets = OrganizerInteractionMath.ShouldUseWindowAlignment(
             _host.State.GlobalSettings.WindowAlignmentEnabled,
             _draggingExpanded,
             _definition.PlacementMode,
-            overOrganizerDropTarget)
+            overOrganizerDropTarget,
+            IsPermanentlyExpanded)
                 ? _dragAlignmentInsets
                 : null;
         NativeMethods.RECT nextBounds;
@@ -3014,6 +3272,7 @@ public sealed partial class MainWindow : Window
                 display,
                 _definition.DockEdge);
         }
+        else if (IsDock) nextBounds = desired;
         else
         {
             int centerX = desired.Left + desired.Width / 2;
@@ -3059,7 +3318,7 @@ public sealed partial class MainWindow : Window
             _hwnd,
             IntPtr.Zero,
             nextBounds.Left,
-            nextBounds.Top,
+            nextBounds.Top - (IsDock ? _dockOverflowPixels : 0),
             0,
             0,
             NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE |
@@ -3123,13 +3382,35 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task FinishCompactPressAsync(bool allowOpen)
+    private void QueueCompactPressCompletion(bool allowOpen)
+    {
+        long version = _widgetGesture.Version;
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_closing) _ = RunSafelyAsync(() => FinishCompactPressAsync(allowOpen, version), "拖动结束失败");
+        });
+    }
+
+    private Task FinishCompactPressAsync(bool allowOpen, long? version = null) =>
+        _widgetGesture.CompleteAsync(version ?? _widgetGesture.Version, async () =>
+        {
+            try { await FinishCompactPressCoreAsync(allowOpen); }
+            finally
+            {
+                _host.EndOrganizerDragHover(this);
+                if (!_closing && (_pressActive || _nativeMouseCapture)) ResetCompactPress();
+            }
+        });
+
+    private async Task FinishCompactPressCoreAsync(bool allowOpen)
     {
         if (!_pressActive) return;
+        if (allowOpen) TryStartMouseWidgetDrag();
         LongPressResult releaseResult = _longPressGesture.Release();
         bool wasDragging = releaseResult == LongPressResult.FinishDrag;
         bool wasExpandedDrag = _draggingExpanded;
         bool canOpen = allowOpen && releaseResult == LongPressResult.Open;
+        bool editTitle = canOpen && _pressedOrganizerTitle && !wasDragging;
         int offeredFrames = 0;
         int committedFrames = 0;
         int renderTicks = 0;
@@ -3138,7 +3419,6 @@ public sealed partial class MainWindow : Window
         if (wasDragging)
         {
             UpdateWidgetDragFromCursor();
-            await _host.WaitForOrganizerDragHoverAsync(this);
             offeredFrames = _dragInputCount;
             committedFrames = _dragCommitCount;
             renderTicks = _dragRenderTickCount;
@@ -3146,9 +3426,13 @@ public sealed partial class MainWindow : Window
             dragDurationMs = Stopwatch.GetElapsedTime(_dragStartedAt).TotalMilliseconds;
         }
         ResetCompactPress();
+        if (editTitle) { BeginOrganizerTitleEdit(); return; }
+        if (IsDock && !wasDragging) ApplyDockLayout();
         if (wasDragging)
         {
-            AppLogger.Info($"组件拖动 {dragDurationMs:0}ms，鼠标消息 {offeredFrames} 次，合成节拍 {renderTicks} 次，移动提交 {committedFrames} 次，时钟保活={clockBoosted}。");
+            await _host.WaitForOrganizerDragHoverAsync(this);
+            if (_closing) return;
+            AppLogger.Performance($"组件拖动 {dragDurationMs:0}ms，鼠标消息 {offeredFrames} 次，合成节拍 {renderTicks} 次，移动提交 {committedFrames} 次，时钟保活={clockBoosted}。");
             if (!wasExpandedDrag && NativeMethods.GetCursorPos(out NativeMethods.POINT dropPoint))
             {
                 try
@@ -3171,7 +3455,11 @@ public sealed partial class MainWindow : Window
                     return;
                 }
             }
-            if (wasExpandedDrag && ShouldRememberExpandedPosition())
+            if (IsDock)
+            {
+                await SaveDockCenterAsync();
+            }
+            else if (wasExpandedDrag && ShouldRememberExpandedPosition())
             {
                 CaptureExpandedPosition();
                 await SaveStateAsync();
@@ -3222,24 +3510,29 @@ public sealed partial class MainWindow : Window
                 AppLogger.Error("Expand from compact pointer failed", ex);
                 _expanded = false;
                 _animating = false;
+                _host.NotifyDockOpenStateChanged();
             }
         }
     }
 
     private void ResetCompactPress()
     {
+        _pressedOrganizerTitle = false;
+        _widgetMousePress = false;
         _longPressTimer.Stop();
         _longPressGesture.Reset();
         _pressActive = false;
         StopDragClock();
         if (_pressedPointerId != 0)
         {
-            CompactTile.ReleasePointerCaptures();
+            _pressedPointerId = 0;
+            if (_draggingExpanded) ExpandedView.ReleasePointerCaptures();
+            else CompactTile.ReleasePointerCaptures();
         }
         if (_nativeMouseCapture)
         {
-            _ = NativeMethods.ReleaseCapture();
             _nativeMouseCapture = false;
+            if (NativeMethods.GetCapture() == _hwnd) _ = NativeMethods.ReleaseCapture();
         }
         _pressedPointerId = 0;
         _widgetDragging = false;
@@ -3277,20 +3570,23 @@ public sealed partial class MainWindow : Window
         return false;
     }
 
-    private bool TryGetCompactAlignmentFrame(out NativeMethods.RECT bounds)
+    private bool TryGetCompactAlignmentFrame(out NativeMethods.RECT bounds) =>
+        TryGetVisibleAlignmentFrame(CompactThumbnailHost, out bounds);
+
+    private bool TryGetVisibleAlignmentFrame(FrameworkElement surface, out NativeMethods.RECT bounds)
     {
         bounds = default;
-        double width = CompactThumbnailHost.ActualWidth;
-        double height = CompactThumbnailHost.ActualHeight;
+        double width = surface.ActualWidth;
+        double height = surface.ActualHeight;
         double scale = WindowRoot.XamlRoot?.RasterizationScale ?? 0;
-        if (_hwnd == IntPtr.Zero || !CompactThumbnailHost.IsLoaded ||
+        if (_hwnd == IntPtr.Zero || !surface.IsLoaded ||
             !double.IsFinite(width) || !double.IsFinite(height) || !double.IsFinite(scale) ||
             width <= 0 || height <= 0 || scale <= 0) return false;
 
         Point origin;
         try
         {
-            origin = CompactThumbnailHost.TransformToVisual(WindowRoot).TransformPoint(new Point());
+            origin = surface.TransformToVisual(WindowRoot).TransformPoint(new Point());
         }
         catch (InvalidOperationException)
         {
@@ -3336,28 +3632,42 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void CompactListRow_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private async void ItemHost_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
-        if (!IsCompactList || sender is not FrameworkElement host) return;
+        if (IsCompactList && e.PointerDeviceType == PointerDeviceType.Mouse)
+        {
+            e.Handled = true; // Logical mouse sequence owns activation, including child organizers.
+            return;
+        }
+        if (e.Handled || sender is not Border host) return;
+        if (_shellDragActive || _shellDropFinalizing || _itemReorderSession is { IsActive: true }) return;
+        if (UseHoverPresentation)
+        {
+            if (HoverItemAtViewportPoint(e.GetPosition(ItemsScrollView)) is not { } visualHost) return;
+            host = visualHost;
+        }
+        else if (!IsCompactList && !IsInsideBaseItemContent(host, e.GetPosition(host))) return;
         e.Handled = true;
-        await OpenTaggedItemAsync(host, doubleTap: true);
+        await RunSafelyAsync(() => OpenTaggedItemAsync(host, doubleTap: true), "打开项目失败");
     }
 
-    private async void Item_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private Task OpenTaggedItemAsync(FrameworkElement host, bool doubleTap = false)
     {
-        if (sender is not FrameworkElement host) return;
-        e.Handled = true;
-        await OpenTaggedItemAsync(host, doubleTap: true);
-    }
-
-    private async Task OpenTaggedItemAsync(FrameworkElement host, bool doubleTap = false)
-    {
-        if (_shellDropFinalizing || host.Tag is not string relativeName || _draggedRelativeName is not null) return;
+        if (_shellDropFinalizing || host.Tag is not string relativeName || _draggedRelativeName is not null) return Task.CompletedTask;
         WidgetItem? item = _items.FirstOrDefault(candidate => candidate.RelativeName.Equals(relativeName, StringComparison.OrdinalIgnoreCase));
-        if (item is null) return;
+        if (item is null) return Task.CompletedTask;
+        NativeMethods.RECT? anchor = item.Kind == WidgetItemKind.Organizer &&
+            TryGetElementScreenBounds(host, out NativeMethods.RECT bounds) ? bounds : null;
+        return OpenItemAsync(item, doubleTap, anchor);
+    }
+
+    private async Task OpenItemAsync(WidgetItem item, bool doubleTap, NativeMethods.RECT? organizerAnchor = null)
+    {
+        if (_shellDropFinalizing || _draggedRelativeName is not null) return;
 
         if (item is { Kind: WidgetItemKind.Note, NoteId: Guid noteId })
         {
+            StartItemBounce(item);
             _host.OpenNote(_definition.Id, noteId);
             return;
         }
@@ -3365,6 +3675,7 @@ public sealed partial class MainWindow : Window
         if (item.Kind == WidgetItemKind.PortableNote)
         {
             if (doubleTap && !IsCompactList) return;
+            StartItemBounce(item);
             await _host.OpenExternalNoteAsync(item.FullPath);
             return;
         }
@@ -3372,13 +3683,15 @@ public sealed partial class MainWindow : Window
         if (item.Kind == WidgetItemKind.PortableTodo)
         {
             if (doubleTap && !IsCompactList) return;
+            StartItemBounce(item);
             await _host.OpenExternalTodoAsync(item.FullPath);
             return;
         }
 
         if (item is { Kind: WidgetItemKind.Organizer, OrganizerId: Guid organizerId })
         {
-            if (!TryGetElementScreenBounds(host, out NativeMethods.RECT anchor) &&
+            NativeMethods.RECT anchor = organizerAnchor ?? default;
+            if (organizerAnchor is null &&
                 NativeMethods.GetCursorPos(out NativeMethods.POINT cursor))
             {
                 anchor = new NativeMethods.RECT
@@ -3389,23 +3702,31 @@ public sealed partial class MainWindow : Window
                     Bottom = cursor.Y + 1
                 };
             }
+            StartItemBounce(item);
             await _host.OpenContainedOrganizerAsync(organizerId, anchor);
             return;
         }
 
         try
         {
-            Process.Start(new ProcessStartInfo(item.FullPath) { UseShellExecute = true });
+            StartItemBounce(item);
+            Task launch = _host.ShellLauncher.OpenAsync(item.FullPath);
+            if (await Task.WhenAny(launch, Task.Delay(TimeSpan.FromSeconds(5), _windowLifetime.Token)) != launch && !_closing)
+                ShowMessage(AppStrings.Get("LaunchPending"), InfoBarSeverity.Informational);
+            await launch.WaitAsync(_windowLifetime.Token);
         }
+        catch (OperationCanceledException) when (_closing) { }
         catch (Exception ex)
         {
             AppLogger.Error($"无法打开：{item.FullPath}", ex);
-            ShowMessage(AppStrings.Format("OpenItemErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
+            if (!_closing) ShowMessage(AppStrings.Format("OpenItemErrorFormat", item.Name, ex.Message), InfoBarSeverity.Error);
         }
     }
 
     private void Item_ContextRequested(UIElement sender, ContextRequestedEventArgs e)
     {
+        _compactClicks.Reset();
+        ResetHoverWave();
         e.Handled = true;
         if (!_expanded || _animating || _shellDragActive || _shellDropFinalizing ||
             _shellContextMenuOpen ||
@@ -3494,7 +3815,7 @@ public sealed partial class MainWindow : Window
         var flyout = new MenuFlyout
         {
             MenuFlyoutPresenterStyle = (Style)WindowRoot.Resources["OrganizerMenuPresenterStyle"],
-            ShouldConstrainToRootBounds = true
+            ShouldConstrainToRootBounds = !IsDock
         };
         flyout.Opening += ContextMenu_Opening;
         flyout.Opened += ContextMenu_Opened;
@@ -3548,7 +3869,8 @@ public sealed partial class MainWindow : Window
         if (station) _desktopLayer?.SetInputActivation(true);
         try
         {
-            DisplayInfo display = _stationDisplay ??= DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
+            DisplayInfo display = IsDock ? GetRenameDialogDisplay()
+                : (_stationDisplay ??= DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice));
             bool accepted = await OwnedDialogWindow.ShowTextInputAsync(
                 _hwnd,
                 display,
@@ -3722,7 +4044,8 @@ public sealed partial class MainWindow : Window
         string acceptedName = note.Name;
         try
         {
-            DisplayInfo display = DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
+            DisplayInfo display = IsDock ? GetRenameDialogDisplay()
+                : DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
             bool accepted = await OwnedDialogWindow.ShowTextInputAsync(
                 _hwnd,
                 display,
@@ -3789,6 +4112,7 @@ public sealed partial class MainWindow : Window
 
     private void Item_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
+        if (IsCompactList) return; // The viewport owns logical row highlighting, including proxy/blank areas.
         if (e.Pointer.PointerDeviceType == PointerDeviceType.Mouse &&
             sender is Border host && !ReferenceEquals(host, _itemDragHost))
         {
@@ -3798,6 +4122,7 @@ public sealed partial class MainWindow : Window
 
     private void Item_PointerExited(object sender, PointerRoutedEventArgs e)
     {
+        if (IsCompactList) return;
         if (sender is Border host && !ReferenceEquals(host, _itemDragHost))
         {
             ResetItemInteractionVisual(host);
@@ -3806,8 +4131,15 @@ public sealed partial class MainWindow : Window
 
     private void Item_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
+        if (sender is Border host) BeginItemPointerPress(host, e, host);
+    }
+
+    private void BeginItemPointerPress(Border host, PointerRoutedEventArgs e, UIElement captureOwner)
+    {
+        if (e.Handled) return;
+        CloseDockToolTip();
         if (_itemReorderProbeRunning || !_expanded || _animating || _shellDragActive || _shellDropFinalizing || _itemReorderSession is not null ||
-            sender is not Border { Tag: string relativeName } host)
+            host.Tag is not string relativeName)
         {
             if (_itemDragTraceEnabled)
                 AppLogger.Info($"换序跟踪：忽略按下 probe={_itemReorderProbeRunning} expanded={_expanded} animating={_animating} shell={_shellDragActive} finalizing={_shellDropFinalizing} session={_itemReorderSession is not null}。");
@@ -3817,22 +4149,32 @@ public sealed partial class MainWindow : Window
         if (!point.Properties.IsLeftButtonPressed) return;
         int sourceIndex = IndexOfItem(relativeName);
         if (sourceIndex < 0) return;
+        if (IsCompactList && e.Pointer.PointerDeviceType == PointerDeviceType.Mouse) BeginCompactClick(host, e);
         SetItemInteractionVisual(host, pressed: true);
         if (_itemDragTraceEnabled) AppLogger.Info($"换序跟踪：按下 source={sourceIndex} pointer={e.Pointer.PointerId}。");
 
         NormalizeItemMotionsToLayout("NewPress");
         Point hostOrigin = host.TransformToVisual(ItemsRepeater).TransformPoint(new Point());
+        _hoverDragOriginOffset = _hoverPressOffset is Point grab
+            ? new Vector3((float)(point.Position.X - hostOrigin.X - grab.X), (float)(point.Position.Y - hostOrigin.Y - grab.Y), 0)
+            : Vector3.Zero;
         _itemReorderSession = new ItemReorderSession(
             relativeName,
             sourceIndex,
             point.Position,
-            new Point(point.Position.X - hostOrigin.X, point.Position.Y - hostOrigin.Y));
+            _hoverPressOffset ?? new Point(point.Position.X - hostOrigin.X, point.Position.Y - hostOrigin.Y));
         _itemDragPressedAt = Stopwatch.GetTimestamp();
         _itemDragHost = host;
         _itemDragPointerId = e.Pointer.PointerId;
         _itemDragPointerType = e.Pointer.PointerDeviceType;
         _itemDragLastPointerPoint = e.GetCurrentPoint(host);
-        if (!host.CapturePointer(e.Pointer))
+        if (e.Pointer.PointerDeviceType == PointerDeviceType.Mouse)
+            UpdateCompactRowHighlight(e.GetCurrentPoint(ItemsScrollView).Position);
+        // Keep native gesture recognition on the element that received the press.
+        // Logical file identity still belongs to host; a drag transfers capture later.
+        _itemPointerCaptureOwner = captureOwner;
+        _itemCapturedPointer = e.Pointer;
+        if (!captureOwner.CapturePointer(e.Pointer))
         {
             CancelItemReorder();
             return;
@@ -3894,6 +4236,11 @@ public sealed partial class MainWindow : Window
         }
         if (_itemDragTraceEnabled)
             AppLogger.Info($"换序跟踪：释放 source={session.SourceIndex} target={session.TargetIndex} state={session.State}。");
+        if (IsCompactList && e.Pointer.PointerDeviceType == PointerDeviceType.Mouse && session.State == ItemDragState.Pressed)
+        {
+            await CompleteCompactClickAsync(e);
+            return;
+        }
         if (session.IsActive && !session.IsNativeDragging)
         {
             e.Handled = true;
@@ -3903,7 +4250,7 @@ public sealed partial class MainWindow : Window
         {
             WidgetItem? item = _items.FirstOrDefault(candidate =>
                 candidate.RelativeName.Equals(session.RelativeName, StringComparison.OrdinalIgnoreCase));
-            CancelItemReorder();
+            CancelItemReorder(preserveHover: UseHoverPresentation && session.State == ItemDragState.Pressed && _hoverWave.HasPointer);
             if (item is { Kind: WidgetItemKind.Organizer, OrganizerId: Guid } && sender is FrameworkElement host)
             {
                 await OpenTaggedItemAsync(host);
@@ -3911,17 +4258,17 @@ public sealed partial class MainWindow : Window
             }
             else if (!IsCompactList && item is { Kind: WidgetItemKind.Note, NoteId: Guid noteId })
             {
-                _host.OpenNote(_definition.Id, noteId);
+                await OpenItemAsync(item, doubleTap: false);
                 e.Handled = true;
             }
             else if (!IsCompactList && item?.Kind == WidgetItemKind.PortableNote)
             {
-                await _host.OpenExternalNoteAsync(item.FullPath);
+                await OpenItemAsync(item, doubleTap: false);
                 e.Handled = true;
             }
             else if (!IsCompactList && item?.Kind == WidgetItemKind.PortableTodo)
             {
-                await _host.OpenExternalTodoAsync(item.FullPath);
+                await OpenItemAsync(item, doubleTap: false);
                 e.Handled = true;
             }
         }
@@ -3930,6 +4277,7 @@ public sealed partial class MainWindow : Window
 
     private void Item_PointerCanceled(object sender, PointerRoutedEventArgs e)
     {
+        _compactClicks.Reset();
         if (sender is Border host) ResetItemInteractionVisual(host);
         if (_itemDragTraceEnabled) AppLogger.Info("换序跟踪：指针取消。");
         if (_itemReorderSession is null || _itemDragPointerId == 0 || e.Pointer.PointerId != _itemDragPointerId) return;
@@ -3954,6 +4302,21 @@ public sealed partial class MainWindow : Window
     private void StartItemReorder()
     {
         if (_itemReorderSession is not { IsActive: true } session || _itemDragHost is null) return;
+        _compactClicks.Reset();
+        if (_itemCapturedPointer is { } pointer && _itemPointerCaptureOwner is { } previousOwner &&
+            !ReferenceEquals(previousOwner, _itemDragHost))
+        {
+            // Set the new owner before transfer: the old proxy's capture-lost event
+            // must not cancel the drag that is taking over from the press.
+            _itemPointerCaptureOwner = _itemDragHost;
+            previousOwner.ReleasePointerCaptures();
+            if (!_itemDragHost.CapturePointer(pointer))
+            {
+                CancelItemReorder();
+                return;
+            }
+        }
+        ResetHoverWave();
         BeginNoteDragPreparation(session);
         _itemTouchHoldTimer.Stop();
         ResetGapTransitionState();
@@ -3980,10 +4343,19 @@ public sealed partial class MainWindow : Window
         TrySetItemDragClockBoost(true);
         if (_itemDragPointerType == PointerDeviceType.Mouse) StartItemDragBoundaryHook();
         ApplyAllProvisionalItemVisuals(animate: false);
+        if (_hoverDragOriginOffset != Vector3.Zero)
+        {
+            Vector3 position = _hoverDragOriginOffset + new Vector3(
+                (float)(session.LatestPointerContent.X - session.PressPointerContent.X),
+                (float)(session.LatestPointerContent.Y - session.PressPointerContent.Y), 0);
+            draggedMotion.Translation = draggedMotion.TranslationTarget = position;
+            _itemDragHost.Translation = position;
+        }
     }
 
     private void ItemDragRendering(object? sender, object args)
     {
+        if (IsDock) UpdateDockInputRegion();
         if (_itemReorderSession is not { IsActive: true } session || _itemDragHost is null) return;
 
         long now = Stopwatch.GetTimestamp();
@@ -4006,14 +4378,14 @@ public sealed partial class MainWindow : Window
         Point pointerInWindow;
         if (_itemDragPointerType == PointerDeviceType.Mouse)
         {
-            if (!NativeMethods.GetCursorPos(out NativeMethods.POINT cursor) ||
-                !NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT window)) return;
+            if (!NativeMethods.GetCursorPos(out NativeMethods.POINT cursor)) return;
             if (!DragBoundaryMath.Contains(_itemDragBoundaryBounds, cursor))
             {
                 TryPostItemExternalDragPromotion();
                 return;
             }
-            pointerInWindow = new((cursor.X - window.Left) / scale, (cursor.Y - window.Top) / scale);
+            if (!NativeMethods.ScreenToClient(_hwnd, ref cursor)) return;
+            pointerInWindow = new(cursor.X / scale, cursor.Y / scale);
         }
         else
         {
@@ -4038,8 +4410,8 @@ public sealed partial class MainWindow : Window
 
         ItemMotionState draggedMotion = GetItemMotion(_itemDragHost);
         Vector3 nextTranslation = new(
-            (float)(pointerContent.X - session.PressPointerContent.X),
-            (float)(pointerContent.Y - session.PressPointerContent.Y),
+            (float)(pointerContent.X - session.PressPointerContent.X) + _hoverDragOriginOffset.X,
+            (float)(pointerContent.Y - session.PressPointerContent.Y) + _hoverDragOriginOffset.Y,
             16);
         if (seconds > 0) draggedMotion.TranslationVelocity = (nextTranslation - draggedMotion.Translation) / (float)seconds;
         draggedMotion.Translation = nextTranslation;
@@ -4051,20 +4423,20 @@ public sealed partial class MainWindow : Window
     {
         pointerContent = default;
         if (!NativeMethods.GetCursorPos(out NativeMethods.POINT cursor) ||
-            !NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT window)) return false;
+            !NativeMethods.ScreenToClient(_hwnd, ref cursor)) return false;
 
         double scale = Math.Max(1, NativeMethods.GetDpiForWindow(_hwnd) / 96d);
         Point repeaterOrigin = ItemsRepeater.TransformToVisual(WindowRoot).TransformPoint(new Point());
         pointerContent = new Point(
-            (cursor.X - window.Left) / scale - repeaterOrigin.X,
-            (cursor.Y - window.Top) / scale - repeaterOrigin.Y);
+            cursor.X / scale - repeaterOrigin.X,
+            cursor.Y / scale - repeaterOrigin.Y);
         return true;
     }
 
     private void StartItemDragBoundaryHook()
     {
         StopItemDragBoundaryHook();
-        if (!NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT window)) return;
+        if (!TryGetLogicalWindowRect(out NativeMethods.RECT window)) return;
         _itemDragBoundaryBounds = window;
         DragMessageRelay.Reset(ref _itemDragOleMouseMovePending, ref _itemDragLastOleMouseMoveForwardedAt);
         Volatile.Write(ref _itemDragBoundaryPromotionPosted, 0);
@@ -4594,12 +4966,15 @@ public sealed partial class MainWindow : Window
                 {
                     foreach (int slot in affectedSlots)
                     {
+                        UnregisterHoverItem(realizedSlots[slot]!);
                         originalContent[slot] = realizedSlots[slot]!.Child;
                         realizedSlots[slot]!.Child = null;
                     }
                     foreach (int original in affectedSlots)
                     {
-                        realizedSlots[visualIndices[original]]!.Child = originalContent[original];
+                        Border destination = realizedSlots[visualIndices[original]]!;
+                        destination.Child = originalContent[original];
+                        RegisterHoverItem(destination);
                     }
                 }
                 foreach (Border? host in realizedSlots)
@@ -4613,9 +4988,10 @@ public sealed partial class MainWindow : Window
                     WidgetItem item = _items[slot];
                     _realizedItemHosts.Register(item.RelativeName, host);
                     host.Tag = item.RelativeName;
-                    ToolTipService.SetToolTip(host, IsDocumentItem(item) || item.Kind == WidgetItemKind.Organizer ? item.Name : item.FullPath);
+                    SetItemToolTip(host, IsDock || IsDocumentItem(item) || item.Kind == WidgetItemKind.Organizer ? item.Name : item.FullPath);
                     if (!canRotateRealizedContent && affectedSlots.Contains(slot)) PrepareReorderedItemIdentity(host, item);
                 }
+                _animationTrace?.Metrics.RecordWork(AnimationTraceWork.UpdateLayout);
                 ItemsRepeater.UpdateLayout();
                 if (visualPositions is not null) ApplyFlipFromCapturedPositions(visualPositions);
             }
@@ -4943,6 +5319,7 @@ public sealed partial class MainWindow : Window
 
     private async Task BeginContainedOrganizerDrag(WidgetItem item, Border host, ItemReorderSession session)
     {
+        using var modeInteraction = HoldExpansionModeInteraction();
         bool completed = false;
         bool timedOut = false;
         long dragStarted = Stopwatch.GetTimestamp();
@@ -4999,6 +5376,7 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
+            _host.EndOrganizerDragHover(this);
             try
             {
                 _host.ReconcileContainedOrganizer(item.OrganizerId!.Value);
@@ -5022,6 +5400,7 @@ public sealed partial class MainWindow : Window
 
     private async Task BeginNativeShellDrag(WidgetItem item, Border host, ItemReorderSession session)
     {
+        using var modeInteraction = HoldExpansionModeInteraction();
         ShellDragService.ShellDragSession? shellSession = null;
         string dragPath = item.FullPath;
         bool internalDropAccepted = false;
@@ -5082,7 +5461,13 @@ public sealed partial class MainWindow : Window
                     dragCompleted = false;
                     ShowMessage(moved.Message, moved.Status == TransferStatus.Cancelled
                         ? InfoBarSeverity.Informational
-                        : InfoBarSeverity.Error);
+                        : moved.Status == TransferStatus.CopiedSourceRetained ? InfoBarSeverity.Warning : InfoBarSeverity.Error);
+                    if (moved.Status == TransferStatus.CopiedSourceRetained)
+                    {
+                        if (!File.Exists(dragPath) && moved.DestinationPath is { } retained && File.Exists(retained))
+                            _host.RebindPortableWindowAfterMove(dragPath, retained);
+                        await RefreshCatalogAsync(notifyUnsupported: false);
+                    }
                 }
                 else
                 {
@@ -5145,6 +5530,7 @@ public sealed partial class MainWindow : Window
         ItemReorderSession session,
         (string Path, bool RestoreWindow, IStorageItem StorageItem)? preparedNote)
     {
+        using var modeInteraction = HoldExpansionModeInteraction();
         if (!ReferenceEquals(_itemReorderSession, session) ||
             session.SourceIndex < 0 || session.SourceIndex >= _items.Count) return;
 
@@ -5326,12 +5712,13 @@ public sealed partial class MainWindow : Window
         host.Scale = Vector3.One;
     }
 
-    private void CancelItemReorder(bool runPendingRefresh = true)
+    private void CancelItemReorder(bool runPendingRefresh = true, bool preserveHover = false, bool preserveClickSequence = false)
     {
+        if (!preserveClickSequence) _compactClicks.Reset();
         if (_itemReorderSession is not { } session) return;
         session.MarkOutcome(ItemDragState.Cancelled);
         StopItemDragInput(keepRendering: false);
-        ResetItemDragVisuals();
+        ResetItemDragVisuals(preserveHover);
         FinishItemReorderSession(runPendingRefresh);
     }
 
@@ -5349,14 +5736,21 @@ public sealed partial class MainWindow : Window
         _itemDragLastPointerPoint = null;
         if (releasePointerCapture)
         {
-            _itemDragHost?.ReleasePointerCaptures();
+            UIElement? captureOwner = _itemPointerCaptureOwner;
+            _itemPointerCaptureOwner = null;
+            _itemCapturedPointer = null;
+            captureOwner?.ReleasePointerCaptures();
+            if (!ReferenceEquals(captureOwner, _itemDragHost)) _itemDragHost?.ReleasePointerCaptures();
             // OLE drag/drop cannot take over while the XAML island still owns capture.
             _ = NativeMethods.ReleaseCapture();
         }
     }
 
-    private void ResetItemDragVisuals()
+    private void ResetItemDragVisuals(bool preserveHover = false)
     {
+        if (!preserveHover) ReturnHoverWave();
+        if (_itemDragHost is { } pressedHost) ResetItemInteractionVisual(pressedHost);
+        InvalidateHoverGeometry();
         ResetGapTransitionState();
         StopNativeItemMotionRendering(snapToTargets: false);
         _itemMotionSettled?.TrySetCanceled();
@@ -5390,7 +5784,10 @@ public sealed partial class MainWindow : Window
         _shellPromotionPending = false;
         _itemDragLanding = false;
         _itemDragHost = null;
+        _hoverDragOriginOffset = Vector3.Zero;
         _itemDragPointerType = PointerDeviceType.Mouse;
+        RefreshCompactRowHighlight();
+        if (IsDock) UpdateDockInputRegion();
         if (runPendingRefresh) _ = StartCatalogRefreshIfReady();
     }
 
@@ -5425,6 +5822,7 @@ public sealed partial class MainWindow : Window
         Volatile.Write(ref _shellDragActive, false);
         _shellPromotionPending = false;
         _draggedRelativeName = null;
+        if (IsDock) UpdateDockInputRegion();
     }
 
     private void TryFinishShellDragVisualState(ItemReorderSession session)
@@ -5440,6 +5838,7 @@ public sealed partial class MainWindow : Window
             _shellPromotionPending = false;
             _shellDropFinalizing = false;
             _draggedRelativeName = null;
+            if (IsDock) UpdateDockInputRegion();
         }
     }
 
@@ -5463,6 +5862,7 @@ public sealed partial class MainWindow : Window
 
     private void ItemsGrid_DragEnter(object sender, DragEventArgs e)
     {
+        ResetHoverWave();
         _dragHasLocalFile = HasLocalFileDrop(e.DataView);
         if (_draggedRelativeName is null || _itemReorderSession is not { NativeDragStarted: true } session) return;
         UpdateInternalOleTarget(e, session);
@@ -5513,7 +5913,10 @@ public sealed partial class MainWindow : Window
 
     private async void ItemsGrid_Drop(object sender, DragEventArgs e)
     {
-        await RunSafelyAsync(() => HandleItemsGridDropAsync(sender, e), "项目拖入处理失败");
+        var deferral = e.GetDeferral();
+        await IncomingDropOperation.RunAsync(deferral.Complete,
+            HoldIncomingDrop, HoldExpansionModeInteraction,
+            () => RunSafelyAsync(() => HandleItemsGridDropAsync(sender, e), "项目拖入处理失败"), () => _dragHasLocalFile = false);
     }
 
     private async Task HandleItemsGridDropAsync(object sender, DragEventArgs e)
@@ -5539,6 +5942,7 @@ public sealed partial class MainWindow : Window
 
     private void WindowRoot_DragEnter(object sender, DragEventArgs e)
     {
+        ResetHoverWave();
         _dragHasLocalFile = HasLocalFileDrop(e.DataView);
         if (!_expanded && _draggedRelativeName is null && _dragHasLocalFile)
         {
@@ -5579,6 +5983,15 @@ public sealed partial class MainWindow : Window
     }
 
     private async void WindowRoot_Drop(object sender, DragEventArgs e)
+    {
+        var deferral = e.GetDeferral();
+        await IncomingDropOperation.RunAsync(deferral.Complete,
+            HoldIncomingDrop, HoldExpansionModeInteraction,
+            () => RunSafelyAsync(() => HandleWindowDropAsync(e), "窗口文件拖入处理失败"),
+            () => _dragHasLocalFile = false);
+    }
+
+    private async Task HandleWindowDropAsync(DragEventArgs e)
     {
         _externalHoverTimer.Stop();
         if (_draggedRelativeName is not null)
@@ -5626,9 +6039,13 @@ public sealed partial class MainWindow : Window
 
     private void WindowRoot_PointerExited(object sender, PointerRoutedEventArgs e)
     {
+        if (!CanActivateHover(e.GetCurrentPoint(ItemsScrollView).Position)) ReturnHoverWave();
         if (NativeMethods.GetCursorPos(out NativeMethods.POINT cursor) &&
-            NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds) &&
-            DragBoundaryMath.Contains(bounds, cursor)) return;
+            TryGetLogicalWindowRect(out NativeMethods.RECT bounds))
+        {
+            if (DragBoundaryMath.Contains(bounds, cursor)) return;
+            if (!_expanded && !_animating && !_changingExpansionMode) _modeHoverGuard.ObservePointer(insideEntry: false);
+        }
         _externalHoverTimer.Stop();
         _hoverExpandScrollToEnd = false;
     }
@@ -5658,10 +6075,10 @@ public sealed partial class MainWindow : Window
         _desktopRepairTimer.Interval = TimeSpan.FromMilliseconds(tuning.DesktopRepairMilliseconds);
 
         bool visible = _definition.PlacementMode == OrganizerPlacementMode.Station
-            ? _stationVisible
+            ? _stationVisible && _stationReady
             : _runtimeVisible || IsContained && _expanded;
         bool interactionDragActive = _pressActive || _widgetDragging || _itemReorderSession is not null || _shellDragActive;
-        bool pollPointer = !_closing && !interactionDragActive && OrganizerInteractionMath.ShouldPollPointer(
+        bool pollPointer = !_closing && !StaysExpanded && !_changingExpansionMode && !interactionDragActive && OrganizerInteractionMath.ShouldPollPointer(
             _definition.PlacementMode,
             visible,
             IsContained,
@@ -5682,12 +6099,7 @@ public sealed partial class MainWindow : Window
 
         TimeSpan iconTransitionDuration = UseCustomAnimations ? TimeSpan.FromMilliseconds(120) : TimeSpan.Zero;
         if (CollapseDash.ScaleTransition is not null) CollapseDash.ScaleTransition.Duration = iconTransitionDuration;
-        for (int index = 0; index < _items.Count; index++)
-        {
-            if (TryGetRealizedItemHost(index, out Border host) &&
-                FindItemPart<StackPanel>(host, "ItemContent") is StackPanel content)
-                ConfigureItemInteractionTransitions(content);
-        }
+        RefreshHoverAvailability();
         if (!UseCustomAnimations)
         {
             CollapseDash.Scale = Vector3.One;
@@ -5707,6 +6119,7 @@ public sealed partial class MainWindow : Window
 
     private bool ShouldStartIdleHoverExpand()
     {
+        if (_changingExpansionMode || StaysExpanded || !_runtimeVisible || !_modeHoverGuard.CanHover) return false;
         bool interactionActive = _pressActive || _widgetDragging || _nativeMouseCapture ||
             (NativeMethods.GetAsyncKeyState(NativeMethods.VK_LBUTTON) & 0x8000) != 0;
         return OrganizerInteractionMath.ShouldStartHoverExpand(
@@ -5723,6 +6136,7 @@ public sealed partial class MainWindow : Window
         {
             bool pointerOverWindow = NativeMethods.GetCursorPos(out NativeMethods.POINT pointer) &&
                 IsPointerOverThisWindow(pointer);
+            if (!_expanded && !_animating && !_changingExpansionMode) _modeHoverGuard.ObservePointer(pointerOverWindow);
             if (!_closing && pointerOverWindow && ShouldStartIdleHoverExpand())
             {
                 if (!_externalHoverTimer.IsRunning) StartHoverExpand(scrollToEnd: false);
@@ -5732,7 +6146,7 @@ public sealed partial class MainWindow : Window
                 _externalHoverTimer.Stop();
             }
 
-            if (!_host.State.GlobalSettings.CollapseOnPointerLeave || !_expanded || _closing ||
+            if (_organizerTitleEdit.IsBusy || ReceivingDrop || !_host.State.GlobalSettings.CollapseOnPointerLeave || !_expanded || _closing ||
                 _animating || _host.TransferQueue.IsActive || _shellDragActive || _shellDropFinalizing ||
                 _itemReorderSession is not null || _canvasResize is not null || _pressActive ||
                 _widgetDragging || _nativeMouseCapture || _shellContextMenuOpen || _overlayOpenCount > 0)
@@ -5756,7 +6170,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (_definition.PlacementMode != OrganizerPlacementMode.Station || !_stationVisible || _closing ||
+        if (_definition.PlacementMode != OrganizerPlacementMode.Station || !_stationVisible || !_stationReady || _closing ||
             _stationTransitionPending || !NativeMethods.GetCursorPos(out NativeMethods.POINT cursor))
         {
             ResetStationPointerDelay();
@@ -5795,13 +6209,14 @@ public sealed partial class MainWindow : Window
             if (Stopwatch.GetElapsedTime(_stationHotSince, now).TotalMilliseconds <
                 _host.State.GlobalSettings.StationHoverExpandDelayMs) return;
             _stationTransitionPending = true;
+            AppLogger.Performance($"station-expand-request id={OrganizerId} display={display.Device}");
             ResetStationPointerDelay();
             try { await RunSafelyAsync(() => ExpandAsync(), "中转站悬停展开失败"); }
             finally { _stationTransitionPending = false; }
             return;
         }
 
-        if (!NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds))
+        if (!TryGetLogicalWindowRect(out NativeMethods.RECT bounds))
         {
             _stationOutsideSince = 0;
             return;
@@ -5842,6 +6257,8 @@ public sealed partial class MainWindow : Window
 
     private void ContextMenu_Opening(object? sender, object e)
     {
+        ResetHoverWave();
+        UpdateExpansionModeControls();
         UpdateContentModeMenuItems();
         if (_contextMenuActivated) return;
         _contextMenuActivated = true;
@@ -5851,20 +6268,20 @@ public sealed partial class MainWindow : Window
 
     private void ContextMenu_Opened(object? sender, object e)
     {
-        if (ReferenceEquals(sender, ExpandedViewContextMenu))
+        if (ReferenceEquals(sender, ExpandedViewContextMenu) || ReferenceEquals(sender, CompactTileContextMenu))
         {
             _ = NativeMethods.GetCursorPos(out _contextMenuScreenPoint);
             try
             {
                 DataPackageView data = Clipboard.GetContent();
-                PasteMenuItem.IsEnabled = data.Contains(StandardDataFormats.StorageItems) ||
+                CompactPasteMenuItem.IsEnabled = PasteMenuItem.IsEnabled = data.Contains(StandardDataFormats.StorageItems) ||
                     ShellDragService.TryGetClipboardPaths(out _, out _) ||
                     data.Contains(StandardDataFormats.Bitmap) ||
                     data.Contains(StandardDataFormats.Text);
             }
             catch
             {
-                PasteMenuItem.IsEnabled = false;
+                CompactPasteMenuItem.IsEnabled = PasteMenuItem.IsEnabled = false;
             }
         }
         if (!_contextMenuCounted)
@@ -5889,20 +6306,23 @@ public sealed partial class MainWindow : Window
         if (_contextMenuActivated)
         {
             _contextMenuActivated = false;
-            _desktopLayer?.SetInputActivation(false);
+            // Closed can arrive inside the file picker's nested modal message loop.
+            // The add-item operation owns activation until its finally block.
+            _desktopLayer?.SetInputActivation(_addingItem);
         }
         ResetStationPointerDelay();
     }
 
     private async Task ImportFromDragAsync(DragEventArgs e)
     {
+        using var diagnostic = AppLogger.Begin(DiagnosticArea.Drop);
+        e.AcceptedOperation = DataPackageOperation.None;
         if (!_dragHasLocalFile)
         {
             return;
         }
 
         DataPackageOperation operation = OrganizerInteractionMath.SelectDropOperation(e.AllowedOperations);
-        e.AcceptedOperation = operation;
         if (operation == DataPackageOperation.None) return;
         bool move = operation == DataPackageOperation.Move;
 
@@ -5912,12 +6332,13 @@ public sealed partial class MainWindow : Window
         {
             try
             {
-                IReadOnlyList<IStorageItem> storageItems = await e.DataView.GetStorageItemsAsync();
+                IReadOnlyList<IStorageItem> storageItems = await e.DataView.GetStorageItemsAsync().AsTask(_windowLifetime.Token);
                 paths = storageItems.Select(item => item.Path)
                     .Where(path => !string.IsNullOrWhiteSpace(path))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
             }
+            catch (OperationCanceledException) when (_closing) { throw; }
             catch (Exception ex)
             {
                 storageReadError = ex;
@@ -5931,6 +6352,8 @@ public sealed partial class MainWindow : Window
 
         if (paths.Length == 0)
         {
+            e.AcceptedOperation = DataPackageOperation.None;
+            diagnostic.Fail(storageReadError ?? new InvalidOperationException());
             string reason = storageReadError is not null && !string.IsNullOrWhiteSpace(storageReadError.Message)
                 ? storageReadError.Message
                 : AppStrings.Get("NoImportableItems");
@@ -5943,33 +6366,42 @@ public sealed partial class MainWindow : Window
             await ExpandAsync(scrollToEnd: true);
         }
 
-        _host.Notify("TuckPane", AppStrings.Format(
+        _host.LogStatus("TuckPane", AppStrings.Format(
             move ? "MovingItemsFormat" : "CopyingItemsFormat",
             AppStrings.FormatItemCount(paths.Length)));
         // No progress UI is shown for drag-in operations. Passing null avoids
         // capturing the DispatcherSynchronizationContext and enqueueing one
         // UI callback for every copied chunk.
         IProgress<TransferProgress>? progress = null;
+        AppLogger.Record(DiagnosticArea.Drop, DiagnosticStage.DataRead, diagnostic.Id, count: paths.Length);
 
         try
         {
             IReadOnlyList<TransferOutcome> outcomes = await _host.TransferQueue.RunAsync(token => move
                 ? _storage.ImportBatchAsync(paths, progress, token)
-                : _storage.CopyBatchAsync(paths, progress, token));
+                : _storage.CopyBatchAsync(paths, progress, token), _windowLifetime.Token);
+            e.AcceptedOperation = IncomingDropOperation.ResultOperation(operation, e.AllowedOperations, outcomes);
+            if (outcomes.All(outcome => outcome.Status is TransferStatus.Moved or TransferStatus.Copied or TransferStatus.ShortcutCreated))
+                diagnostic.Complete(outcomes.Count);
+            else diagnostic.Fail(new IOException());
             RebindMovedPortableWindows(outcomes);
+            if (_closing) return;
             StartWatcher();
             await RefreshCatalogAsync(notifyUnsupported: false);
             await WaitForNextRenderAsync(CancellationToken.None);
             ScrollToEnd(animated: true);
 
             TransferOutcome[] warnings = outcomes.Where(outcome => move
-                ? outcome.Status is not (TransferStatus.Moved or TransferStatus.ShortcutCreated)
-                : outcome.Status is not (TransferStatus.Copied or TransferStatus.ShortcutCreated)).ToArray();
+                ? outcome.Status is not (TransferStatus.Moved or TransferStatus.ShortcutCreated or TransferStatus.Cancelled)
+                : outcome.Status is not (TransferStatus.Copied or TransferStatus.ShortcutCreated or TransferStatus.Cancelled)).ToArray();
             if (warnings.Length == 0)
             {
-                ShowMessage(AppStrings.Format(
-                    move ? "MovedItemsFormat" : "CopiedItemsFormat",
-                    AppStrings.FormatItemCount(outcomes.Count)), InfoBarSeverity.Success);
+                if (outcomes.Any(outcome => outcome.Status == TransferStatus.Cancelled))
+                    _host.LogStatus("TuckPane", AppStrings.Get(move ? "MoveCancelled" : "CopyCancelled"));
+                else
+                    _host.LogStatus("TuckPane", AppStrings.Format(
+                        move ? "MovedItemsFormat" : "CopiedItemsFormat",
+                        AppStrings.FormatItemCount(outcomes.Count)));
             }
             else
             {
@@ -5978,12 +6410,16 @@ public sealed partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
-            ShowMessage(AppStrings.Get(move ? "MoveCancelled" : "CopyCancelled"), InfoBarSeverity.Informational);
+            diagnostic.Fail(new OperationCanceledException());
+            e.AcceptedOperation = DataPackageOperation.None;
+            if (!_closing) ShowMessage(AppStrings.Get(move ? "MoveCancelled" : "CopyCancelled"), InfoBarSeverity.Informational);
         }
         catch (Exception ex)
         {
             AppLogger.Error("拖入失败。", ex);
-            ShowMessage(ex.Message, InfoBarSeverity.Error);
+            diagnostic.Fail(ex);
+            e.AcceptedOperation = DataPackageOperation.None;
+            if (!_closing) ShowMessage(ex.Message, InfoBarSeverity.Error);
         }
     }
 
@@ -5992,6 +6428,7 @@ public sealed partial class MainWindow : Window
 
     private async void WindowRoot_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (_organizerTitleEdit.IsBusy) return;
         if (e.Key == VirtualKey.Escape && _itemReorderSession is not null)
         {
             e.Handled = true;
@@ -6181,10 +6618,16 @@ public sealed partial class MainWindow : Window
                 ScrollToEnd(animated: true);
                 catalogRefreshed = true;
                 TransferOutcome[] warnings = outcomes.Where(outcome => outcome.Status is not (
-                    TransferStatus.Moved or TransferStatus.Copied or TransferStatus.ShortcutCreated)).ToArray();
+                    TransferStatus.Moved or TransferStatus.Copied or TransferStatus.ShortcutCreated or TransferStatus.Cancelled)).ToArray();
                 if (warnings.Length > 0)
                 {
                     ShowMessage(string.Join(" ", warnings.Select(outcome => $"{Path.GetFileName(outcome.SourcePath)}：{outcome.Message}")), InfoBarSeverity.Warning);
+                    return;
+                }
+
+                if (outcomes.Any(outcome => outcome.Status == TransferStatus.Cancelled))
+                {
+                    _host.LogStatus("TuckPane", AppStrings.Get("PasteCancelled"));
                     return;
                 }
 
@@ -6245,7 +6688,7 @@ public sealed partial class MainWindow : Window
         try
         {
             NativeMethods.POINT anchor = _contextMenuScreenPoint;
-            if (anchor.X == 0 && anchor.Y == 0 && NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds))
+            if (anchor.X == 0 && anchor.Y == 0 && TryGetLogicalWindowRect(out NativeMethods.RECT bounds))
             {
                 anchor = new NativeMethods.POINT
                 {
@@ -6384,37 +6827,18 @@ public sealed partial class MainWindow : Window
         _overlayOpenCount++;
         _desktopLayer?.SetInputActivation(true);
         string storagePath = AppPaths.ResolveStoragePath(_definition);
-        bool directStorage = !string.IsNullOrWhiteSpace(_definition.StorageAbsolutePath);
-        bool moveFiles = _host.State.GlobalSettings.MoveOrganizerFilesToDesktopOnDelete;
-        string title = AppStrings.Format("DeleteTitleFormat", _definition.Name);
-        string message = !moveFiles
-            ? AppStrings.Format("DeleteKeepFilesFormat", storagePath)
-            : directStorage
-            ? FileCount > 0
-                ? AppStrings.Format("DeleteDirectNonEmptyFormat", storagePath, AppStrings.FormatItemCount(FileCount), _definition.Name)
-                : AppStrings.Format("DeleteDirectEmptyFormat", storagePath)
-            : FileCount > 0
-                ? AppStrings.Format("DeleteNonEmptyFormat", AppStrings.FormatItemCount(FileCount), _definition.Name)
-                : AppStrings.Get("DeleteEmpty");
         try
         {
-            bool confirmed;
-            DisplayInfo display = NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT dialogBounds)
+            DisplayInfo display = TryGetLogicalWindowRect(out NativeMethods.RECT dialogBounds)
                 ? DisplayPlacementService.ForBounds(dialogBounds)
                 : DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
-            confirmed = await OwnedDialogWindow.ShowConfirmationAsync(
-                _hwnd,
-                display,
-                _host,
-                title,
-                message,
-                AppStrings.Get(moveFiles ? "ExportDelete" : "DeleteOrganizerOnly"),
-                AppStrings.Get("Cancel"));
-            if (!confirmed) return;
-            TransferOutcome outcome = await _host.DeleteOrganizerAsync(_definition.Id);
+            OrganizerDeleteDisposition? choice = await OwnedDialogWindow.ShowDeleteChoiceAsync(
+                _hwnd, display, _host, _definition.Name, storagePath);
+            if (choice is not OrganizerDeleteDisposition disposition) return;
+            TransferOutcome outcome = await _host.DeleteOrganizerAsync(_definition.Id, disposition);
             if (outcome.Status is not (TransferStatus.Moved or TransferStatus.Retained))
             {
-                ShowMessage(outcome.Message, InfoBarSeverity.Error);
+                ShowMessage(outcome.Message, outcome.Status == TransferStatus.CopiedSourceRetained ? InfoBarSeverity.Warning : InfoBarSeverity.Error);
             }
         }
         catch (Exception ex)
@@ -6430,6 +6854,11 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private DisplayInfo GetRenameDialogDisplay() => RenameDialogPlacement.Resolve(
+        TryGetLogicalWindowRect(out NativeMethods.RECT bounds) ? bounds : null,
+        IsDock ? _definition.DockCenter?.MonitorDevice : _definition.Position?.MonitorDevice,
+        DisplayPlacementService.ForBounds, DisplayPlacementService.GetDisplay);
+
     private async Task ShowRenameDialogAsync()
     {
         if (!_expanded)
@@ -6441,9 +6870,7 @@ public sealed partial class MainWindow : Window
         string acceptedName = _definition.Name;
         try
         {
-            DisplayInfo display = NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds)
-                ? DisplayPlacementService.ForBounds(bounds)
-                : DisplayPlacementService.GetDisplay(_definition.Position?.MonitorDevice);
+            DisplayInfo display = GetRenameDialogDisplay();
             bool accepted = await OwnedDialogWindow.ShowTextInputAsync(
                 _hwnd,
                 display,
@@ -6454,23 +6881,20 @@ public sealed partial class MainWindow : Window
                 AppStrings.Get("Cancel"),
                 candidate =>
                 {
-                    acceptedName = candidate.Trim();
-                    return null;
+                    try { acceptedName = OrganizerNameChange.NormalizeName(candidate); return null; }
+                    catch (Exception ex) { return ex.Message; }
                 },
                 maxLength: 40,
                 placeholderText: AppStrings.Get("RenamePlaceholder"));
             if (accepted && acceptedName.Length > 0)
             {
-                _definition.Name = acceptedName;
-                string? error = _host.ApplyOrganizerRuntime(_definition, OrganizerVisualChange.Name);
-                if (error is not null)
-                {
-                    ShowMessage(error, InfoBarSeverity.Error);
-                    return;
-                }
-                _host.Console.RefreshAll(_definition.Id);
-                await SaveStateAsync();
+                await _host.RenameOrganizerAsync(_definition.Id, acceptedName);
             }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("无法重命名收纳窗。", ex);
+            ShowMessage(ex.Message, InfoBarSeverity.Error);
         }
         finally
         {
@@ -6551,7 +6975,31 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        _host.EndOrganizerDragHover(this);
+        Activated -= OrganizerTitleWindow_Activated;
+        _compactClicks.Reset();
+        DisposeHoverWave();
+        try
+        {
+            _compactBackdrop.DetachAndClose();
+            _expandedBackdrop.DetachAndClose();
+        }
+        catch (Exception ex) { AppLogger.Error("Organizer backdrop close failed.", ex); }
+        _animationTrace?.Finish("window-closed");
         _closing = true;
+        _host.RefreshDockRunningSubscription();
+        ++_transitionRequestVersion;
+        _host.CloseExpansionModeCoordinator(OrganizerId);
+        ClearWindowAlignment();
+        _windowLifetime.Cancel();
+        _widgetGesture.Invalidate();
+        _resizeGesture.Invalidate();
+        _pressActive = false;
+        _nativeMouseCapture = false;
+        _canvasResize = null;
+        _animating = false;
+        _host.NotifyDockOpenStateChanged();
+        _stationReady = false;
         _host.ThemeChanged -= Host_ThemeChanged;
         if (_itemReorderSession is not null) CancelItemReorder(runPendingRefresh: false);
         ShutdownItemDragBoundaryHook();
@@ -6570,8 +7018,10 @@ public sealed partial class MainWindow : Window
         _longPressTimer.Stop();
         StopCanvasResizeRendering();
         StopDragClock();
-        _transitionCancellation?.Cancel();
-        _transitionCancellation?.Dispose();
+        CancellationTokenSource? closingTransition = _transitionCancellation;
+        _transitionCancellation = null;
+        closingTransition?.Cancel();
+        closingTransition?.Dispose();
         _compactClip?.Dispose();
         _expandedClip?.Dispose();
         _compactSurface.Dispose();
@@ -6581,7 +7031,9 @@ public sealed partial class MainWindow : Window
         _windowAlignmentGuide?.Dispose();
         _windowAlignmentGuide = null;
         _outsideClickHook?.Dispose();
+        _watcherRecovery.Dispose();
         _watcher?.Dispose();
+        _watcher = null;
         foreach (IntPtr edgeWindow in _canvasResizeEdgeWindows)
         {
             RestoreCanvasResizeWindowProc(edgeWindow);
@@ -6599,7 +7051,10 @@ public sealed partial class MainWindow : Window
 
     private void ShowMessage(string message, InfoBarSeverity severity)
     {
-        _host.Notify("TuckPane", message, severity is InfoBarSeverity.Warning or InfoBarSeverity.Error);
+        if (severity is InfoBarSeverity.Warning or InfoBarSeverity.Error)
+            _host.ReportOperationError("TuckPane", message, _hwnd, _definition.Position?.MonitorDevice);
+        else
+            _host.LogStatus("TuckPane", message);
     }
 
     private async Task SaveStateAsync()
@@ -6622,6 +7077,18 @@ public sealed partial class MainWindow : Window
     private bool IsContained => _definition.ContainerOrganizerId is not null;
     internal bool IsExpanded => _expanded || _animating;
     internal bool IsShellDragActive => Volatile.Read(ref _shellDragActive);
+    internal void RefreshOrganizerName()
+    {
+        UpdateOrganizerName();
+    }
+
+    internal void RefreshContainedOrganizerName(Guid organizerId, string name)
+    {
+        WidgetItem? item = _items.FirstOrDefault(candidate => candidate.OrganizerId == organizerId);
+        if (item is null) return;
+        item.ApplyValue(new WidgetItem(name, item.FullPath, item.RelativeName, item.Kind, item.NoteId, item.OrganizerId));
+        RefreshOrganizerPreview(organizerId);
+    }
     private void HandleOutsideClick(NativeMethods.POINT clickPoint)
     {
         if (_host.ContainsExpandedContainedChildPoint(_definition.Id, clickPoint)) return;
@@ -6646,6 +7113,7 @@ public sealed partial class MainWindow : Window
     internal void ApplyOutsideClickSetting()
     {
         if (_definition.PlacementMode != OrganizerPlacementMode.Station &&
+            !StaysExpanded && !_changingExpansionMode &&
             _expanded && !_animating && _host.State.GlobalSettings.CollapseOnOutsideClick)
             _outsideClickHook?.Start();
         else
@@ -6667,7 +7135,7 @@ public sealed partial class MainWindow : Window
             return false;
         if (IsContained)
         {
-            return NativeMethods.GetWindowRect(_hwnd, out bounds) && bounds.Width > 0 && bounds.Height > 0;
+            return TryGetLogicalWindowRect(out bounds) && bounds.Width > 0 && bounds.Height > 0;
         }
         if (_expanded) return false;
         return TryGetCompactAlignmentFrame(out bounds);
@@ -6678,13 +7146,13 @@ public sealed partial class MainWindow : Window
             ? Task.CompletedTask
             : ExpandAsync();
 
-    internal bool TryGetCollapsedFloatingAlignmentFrame(out NativeMethods.RECT bounds)
+    internal bool TryGetWindowAlignmentFrame(out NativeMethods.RECT bounds)
     {
         bounds = default;
         if (_closing || _appWindow is not { IsVisible: true } ||
-            _definition.PlacementMode != OrganizerPlacementMode.Floating ||
-            _expanded || _animating) return false;
-        return TryGetCompactAlignmentFrame(out bounds);
+            IsContained || _animating || !OrganizerInteractionMath.ShouldUseWindowAlignment(
+                true, _expanded, _definition.PlacementMode, false, IsPermanentlyExpanded)) return false;
+        return TryGetVisibleAlignmentFrame(_expanded ? ExpandedPanel : CompactThumbnailHost, out bounds);
     }
 
     internal void RefreshWindowAlignmentSetting()
@@ -6693,8 +7161,9 @@ public sealed partial class MainWindow : Window
     }
 
     internal bool ContainsScreenPoint(NativeMethods.POINT point) =>
-        !_closing && _expanded && NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds) &&
-        DragBoundaryMath.Contains(bounds, point);
+        !_closing && _expanded && TryGetLogicalWindowRect(out NativeMethods.RECT bounds) &&
+        (IsDock ? DockContainsScreenPoint(point) : DragBoundaryMath.Contains(bounds, point) ||
+            HasHoverPresentation && TryScreenToHoverViewport(point, out Point hoverPoint) && HoverItemAtViewportPoint(hoverPoint) is not null);
 
     internal bool TryGetOrganizerDropIndex(NativeMethods.POINT screenPoint, out int insertionIndex)
     {
@@ -6703,6 +7172,12 @@ public sealed partial class MainWindow : Window
         NativeMethods.POINT clientPoint = screenPoint;
         if (!NativeMethods.ScreenToClient(_hwnd, ref clientPoint)) return false;
         double scale = Math.Max(1, WindowRoot.XamlRoot?.RasterizationScale ?? 1);
+        if (IsDock)
+        {
+            Point dockOrigin = ExpandedView.TransformToVisual(WindowRoot).TransformPoint(new Point());
+            insertionIndex = _dockGeometry.InsertionIndex(new Vector2((float)(clientPoint.X / scale - dockOrigin.X), (float)(clientPoint.Y / scale - dockOrigin.Y)));
+            return true;
+        }
         Point scrollOrigin;
         Point origin;
         try
@@ -6758,7 +7233,7 @@ public sealed partial class MainWindow : Window
         try
         {
             NativeMethods.POINT anchor = _contextMenuScreenPoint;
-            if (anchor.X == 0 && anchor.Y == 0 && NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds))
+            if (anchor.X == 0 && anchor.Y == 0 && TryGetLogicalWindowRect(out NativeMethods.RECT bounds))
             {
                 anchor = new NativeMethods.POINT
                 {
@@ -6824,7 +7299,17 @@ public sealed partial class MainWindow : Window
 
     internal void SetVisible(bool visible)
     {
+        if (!visible) _compactClicks.Reset();
+        if (IsDock && _appWindow is not null)
+        {
+            _runtimeVisible = visible;
+            if (visible) { _desktopLayer?.BringAboveDesktopPeers(); ApplyDockLayout(); }
+            else { ResetHoverWave(); _appWindow.Hide(); }
+            return;
+        }
+        ResetHoverWave();
         if (_appWindow is null) return;
+        if (!visible) StopCanvasResizeForHide();
         if (IsContained)
         {
             if (visible) _appWindow.Hide();
@@ -6845,10 +7330,27 @@ public sealed partial class MainWindow : Window
             return;
         }
         _runtimeVisible = visible;
+        if (!visible)
+        {
+            ++_modeVisibilityVersion;
+            _pendingExpansionModeApply |= _animating || _changingExpansionMode;
+            ++_transitionRequestVersion;
+            _transitionCancellation?.Cancel();
+            _animating = false;
+            _host.NotifyDockOpenStateChanged();
+        }
         if (visible)
         {
             _desktopLayer?.BringAboveDesktopPeers();
-            ApplyBounds(_expanded ? CalculateExpandedBounds(_compactBounds) : _compactBounds, show: true);
+            if (_pendingExpansionModeApply)
+            {
+                _ = RunSafelyAsync(ApplyExpansionModeAsync, "恢复窗口展开模式失败");
+                return;
+            }
+            if (IsPermanentlyExpanded && _expanded && TryGetLogicalWindowRect(out NativeMethods.RECT current))
+                ApplyBounds(current, show: true);
+            else ApplyBounds(_expanded ? CalculateExpandedBounds(_compactBounds) : _compactBounds, show: true);
+            if (IsPermanentlyExpanded && !_expanded) _ = RunSafelyAsync(ExpandAsyncForMode, "恢复展开模式失败");
         }
         else
         {
@@ -6866,6 +7368,7 @@ public sealed partial class MainWindow : Window
 
     internal void MoveContainedDragPreview(NativeMethods.POINT cursor, MainWindow container)
     {
+        ResetHoverWave();
         if (!IsContained || _appWindow is null) return;
         if (_hasContainedDragPreview &&
             _containedDragPreviewOwner == container._hwnd &&
@@ -6905,9 +7408,11 @@ public sealed partial class MainWindow : Window
         if (_appWindow is null) return;
         if (contained)
         {
+            ++_transitionRequestVersion;
             _transitionCancellation?.Cancel();
             _expanded = false;
             _animating = false;
+            _host.NotifyDockOpenStateChanged();
             CompactView.Visibility = Visibility.Collapsed;
             ExpandedView.Visibility = Visibility.Collapsed;
             _desktopLayer?.SetExpanded(false, showWindow: false);
@@ -6922,12 +7427,29 @@ public sealed partial class MainWindow : Window
 
     internal void ClosePermanently()
     {
+        _host.EndOrganizerDragHover(this);
+        _compactClicks.Reset();
+        _compactBackdrop.DetachAndClose();
+        _expandedBackdrop.DetachAndClose();
         _closing = true;
+        ++_transitionRequestVersion;
+        _host.CloseExpansionModeCoordinator(OrganizerId);
         Close();
     }
 
     internal void ApplyDefinition(OrganizerVisualChange changes)
     {
+        _compactClicks.Reset();
+        if (IsDock)
+        {
+            ResetHoverWave();
+            UpdateOrganizerName();
+            ApplyDockLayout();
+            ApplyTheme();
+            return;
+        }
+        ResetHoverWave();
+        ApplyExpandedContentInset();
         if (_itemReorderSession is not null) CancelItemReorder();
         if ((changes & (OrganizerVisualChange.ExpandedContentMode | OrganizerVisualChange.PlacementMode)) != 0)
         {
@@ -6953,12 +7475,13 @@ public sealed partial class MainWindow : Window
             _transitionCancellation?.Cancel();
             _transitionCancellation?.Dispose();
             _transitionCancellation = null;
-            if (!NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT current)) current = CalculateExpandedBounds(_compactBounds);
+            if (!TryGetLogicalWindowRect(out NativeMethods.RECT current)) current = CalculateExpandedBounds(_compactBounds);
             NativeMethods.RECT target = _definition.PlacementMode == OrganizerPlacementMode.Station
                 ? CalculateExpandedBounds(_compactBounds)
                 : CalculateExpandedBoundsAroundCenter(current);
             _expanded = true;
             _animating = false;
+            _host.NotifyDockOpenStateChanged();
             _transitionProgress = 1;
             _transitionVelocity = 0;
             ClearStationTransitionVisuals();
@@ -6976,6 +7499,7 @@ public sealed partial class MainWindow : Window
             ConfigureItemsLayout();
         }
         if ((changes & OrganizerVisualChange.PlacementMode) != 0) RefreshPerformanceSettings();
+        if (IsPermanentlyExpanded && _expanded && changesExpandedGeometry) CaptureExpandedPosition();
     }
 
     internal void RecreateStorage()
@@ -6987,7 +7511,8 @@ public sealed partial class MainWindow : Window
 
     private void ApplyTheme()
     {
-        ThemeValues theme = _host.State.GlobalSettings.GetTheme(ThemeTarget.Organizer);
+        _animationTrace?.Metrics.RecordWork(AnimationTraceWork.ThemeApplication);
+        ThemeValues theme = _host.State.GlobalSettings.GetTheme(OrganizerKinds.ThemeFor(_definition.PlacementMode));
         WindowRoot.RequestedTheme = ThemePalette.IsDark(theme) ? ElementTheme.Dark : ElementTheme.Light;
         bool useEffects = _uiSettings.AdvancedEffectsEnabled;
         _compactBackdrop.SetTheme(theme, useEffects);
@@ -7000,6 +7525,7 @@ public sealed partial class MainWindow : Window
         _expandedEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled);
         var foregroundColor = ThemePalette.ForegroundColor(theme);
         var foreground = new SolidColorBrush(foregroundColor);
+        DockEmptyAddIcon.Foreground = foreground;
         SolidColorBrush organizerText = CreateOrganizerTextBrush();
         CompactNameText.Foreground = organizerText;
         ExpandedNameText.Foreground = organizerText;
@@ -7015,6 +7541,7 @@ public sealed partial class MainWindow : Window
             ? _uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Background)
             : ColorHelper.FromArgb(255, 255, 200, 87));
         CollapseDash.Background = foreground;
+        RefreshCollapseIndicator();
         CollapseButtonSurface.Background = CollapseButton.IsPointerOver ? _collapseHoverBrush : _transparentItemBrush;
         UpdateRealizedItems();
         VisitTextBlocks(WindowRoot);
@@ -7022,7 +7549,7 @@ public sealed partial class MainWindow : Window
 
     private SolidColorBrush CreateOrganizerTextBrush()
     {
-        ThemeValues theme = _host.State.GlobalSettings.GetTheme(ThemeTarget.Organizer);
+        ThemeValues theme = _host.State.GlobalSettings.GetTheme(OrganizerKinds.ThemeFor(_definition.PlacementMode));
         return new(ThemePalette.ResolveOrganizerTextColor(
             _host.State.GlobalSettings.OrganizerTextColor,
             theme));
@@ -7068,6 +7595,7 @@ public sealed partial class MainWindow : Window
         UpdateCanvasResizeEdgeWindows(show: false);
         _expanded = false;
         _animating = false;
+        _host.NotifyDockOpenStateChanged();
         _transitionProgress = 0;
         _transitionVelocity = 0;
         _compactBounds = anchor;
@@ -7085,6 +7613,15 @@ public sealed partial class MainWindow : Window
 
     private void ShowCompactPlacement(NativeMethods.RECT bounds)
     {
+        if (IsPermanentlyExpanded && _expanded)
+        {
+            _compactBounds = bounds;
+            ApplyExpandedContentInset();
+            UpdateOrganizerName();
+            ApplyLanguage();
+            ClearWindowAlignment();
+            return;
+        }
         ApplyExpandedContentInset();
         UpdateOrganizerName();
         _transitionCancellation?.Cancel();
@@ -7093,6 +7630,7 @@ public sealed partial class MainWindow : Window
         UpdateCanvasResizeEdgeWindows(show: false);
         _expanded = false;
         _animating = false;
+        _host.NotifyDockOpenStateChanged();
         _transitionProgress = 0;
         _transitionVelocity = 0;
         _compactBounds = bounds;
@@ -7207,6 +7745,7 @@ public sealed partial class MainWindow : Window
 
     private bool NormalizeVisualScales(DisplayInfo display)
     {
+        if (IsDock) return false;
         bool station = _definition.PlacementMode == OrganizerPlacementMode.Station;
         double canvas;
         double maximumItem;
@@ -7243,8 +7782,8 @@ public sealed partial class MainWindow : Window
                     availablePanelHeightDip / (manualHeight * canvas)));
                 maximumItem = DisplayPlacementService.CalculateMaximumItemScaleForExpandedSize(
                     _definition.Layout,
-                    manualWidth * canvas * fit,
-                    manualHeight * canvas * fit);
+                    manualWidth * canvas / OrganizerContentScale.Normalize(_definition.IconContentScale),
+                    manualHeight * canvas / OrganizerContentScale.Normalize(_definition.IconContentScale));
             }
             else
             {
@@ -7260,6 +7799,9 @@ public sealed partial class MainWindow : Window
 
     private void ApplyBounds(NativeMethods.RECT bounds, bool show, bool preserveZOrder = false)
     {
+        if (HasHoverPresentation) ResetHoverWave();
+        bounds = DockPhysicalBounds(bounds);
+        _animationTrace?.Metrics.RecordWork(AnimationTraceWork.ApplyBounds);
         uint flags = NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOOWNERZORDER |
             (preserveZOrder ? NativeMethods.SWP_NOZORDER : 0) |
             (show ? NativeMethods.SWP_SHOWWINDOW : 0);
@@ -7299,14 +7841,33 @@ public sealed partial class MainWindow : Window
     private void UpdateSurfaceClips()
     {
         if (!WindowRoot.IsLoaded) return;
-        double compactRadius = SnapDip(CompactCornerRadiusDip * _appliedCompactScale);
-        double expandedRadius = SnapDip(ExpandedCornerRadiusDip);
-        CompactSurfaceHost.CornerRadius = new CornerRadius(compactRadius);
-        ExpandedSurfaceHost.CornerRadius = new CornerRadius(expandedRadius);
+        _hoverGeometryDirty = true;
+        _animationTrace?.Metrics.RecordWork(AnimationTraceWork.SurfaceGeometry);
+        RoundedSurfaceGeometry compactGeometry = RoundedSurfaceGeometry.Create(
+            CompactThumbnailHost.ActualWidth, CompactThumbnailHost.ActualHeight,
+            CompactCornerRadiusDip * _appliedCompactScale, WindowRoot.XamlRoot?.RasterizationScale ?? 1);
+        double compactRadius = compactGeometry.Radius;
+        double expandedRadius = IsDock ? CurrentDockCornerRadius : SnapDip(ExpandedCornerRadiusDip);
+        _compactBackdrop.SetRoundedGeometry(compactGeometry);
+        if (IsDock)
+        {
+            // A single arranged body owns every visible edge; the animation gutter
+            // and independently arranged overlay must not change the material outline.
+            RoundedSurfaceGeometry dockSurface = RoundedSurfaceGeometry.Create(ExpandedPanel.ActualWidth,
+                ExpandedPanel.ActualHeight, expandedRadius, WindowRoot.XamlRoot?.RasterizationScale ?? 1);
+            expandedRadius = dockSurface.Radius;
+            _expandedBackdrop.SetRoundedGeometry(dockSurface);
+            _expandedSurface.SetRoundedGeometry(dockSurface);
+            _expandedEdgeSurface.SetRoundedGeometry(dockSurface);
+        }
+        else
+        {
+            ExpandedSurfaceHost.CornerRadius = new CornerRadius(expandedRadius);
+            _expandedSurface.SetCornerRadius(expandedRadius);
+            _expandedEdgeSurface.SetCornerRadius(expandedRadius);
+        }
         _compactSurface.SetCornerRadius(compactRadius);
-        _expandedSurface.SetCornerRadius(expandedRadius);
         _compactEdgeSurface.SetCornerRadius(compactRadius);
-        _expandedEdgeSurface.SetCornerRadius(expandedRadius);
         Visual compactBackdropVisual = ElementCompositionPreview.GetElementVisual(CompactSurfaceHost);
         Visual expandedBackdropVisual = ElementCompositionPreview.GetElementVisual(ExpandedSurfaceHost);
         Visual compactContentVisual = ElementCompositionPreview.GetElementVisual(CompactIconPresenter);
@@ -7320,7 +7881,8 @@ public sealed partial class MainWindow : Window
         ApplyPixelAlignedClip(_compactClip, CompactThumbnailHost, compactRadius);
         ApplyPixelAlignedClip(_expandedClip, ExpandedContentLayer, expandedRadius);
         compactContentVisual.Clip = _compactClip;
-        expandedContentVisual.Clip = _expandedClip;
+        expandedContentVisual.Clip = IsDock ? null : _expandedClip;
+        if (IsDock) UpdateDockInputRegion();
     }
 
     private Visual GetExpandedCompositionVisual() =>
@@ -7330,6 +7892,7 @@ public sealed partial class MainWindow : Window
     {
         if (_expandedClip is null) UpdateSurfaceClips();
         if (_expandedClip is null) return;
+        _animationTrace?.Metrics.RecordWork(AnimationTraceWork.AnimatedCorner);
         double radius = CompactCornerRadiusDip * _appliedCompactScale +
             (ExpandedCornerRadiusDip - CompactCornerRadiusDip * _appliedCompactScale) * progress;
         double snappedRadius = SnapDip(radius);
@@ -7341,13 +7904,13 @@ public sealed partial class MainWindow : Window
 
     private void ApplyPixelAlignedClip(RectangleClip clip, FrameworkElement element, double radius)
     {
-        float width = (float)SnapDip(element.ActualWidth > 0 ? element.ActualWidth : element.Width);
-        float height = (float)SnapDip(element.ActualHeight > 0 ? element.ActualHeight : element.Height);
+        RoundedSurfaceGeometry surface = RoundedSurfaceGeometry.Create(
+            element.ActualWidth, element.ActualHeight, radius, WindowRoot.XamlRoot?.RasterizationScale ?? 1);
         clip.Left = 0;
         clip.Top = 0;
-        clip.Right = Math.Max(0, width);
-        clip.Bottom = Math.Max(0, height);
-        SetClipRadius(clip, Math.Min(SnapDip(radius), Math.Min(width, height) / 2));
+        clip.Right = surface.Width;
+        clip.Bottom = surface.Height;
+        SetClipRadius(clip, surface.Radius);
     }
 
     private static void SetClipRadius(RectangleClip clip, double radius)
