@@ -73,6 +73,11 @@
       let pastedImageLabel = 'Pasted image';
       let composing = false;
       let blankLinePress = null;
+      let documentEpoch = 0;
+      let editRevision = 0;
+      let imageRequestId = 0;
+      const imageRequests = new Map();
+      const maximumHtmlLength = 64 * 1024 * 1024;
       const editorTopPadding = 14;
       const ruledLineHeightRatio = 1.8;
       const ruledLowerGapRatio = 0.2;
@@ -115,6 +120,7 @@
 
       const post = payload => window.chrome?.webview?.postMessage(payload);
       const scheduleChanged = () => {
+        editRevision++;
         clearTimeout(notifyTimer);
         notifyTimer = setTimeout(() => post({ type: 'changed', html: cleanHtml(editor.innerHTML), fontSize }), 350);
       };
@@ -156,7 +162,7 @@
         return output.innerHTML;
       }
 
-      function insertNodeAtSelection(node) {
+      function captureEditTarget(image = null) {
         const selection = window.getSelection();
         let range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
         if (!range || !editor.contains(range.commonAncestorContainer)) {
@@ -164,21 +170,95 @@
           range.selectNodeContents(editor);
           range.collapse(false);
         }
-        range.deleteContents();
-        range.insertNode(node);
-        range.setStartAfter(node);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
+        return { image, src: image?.getAttribute('src'), range: range.cloneRange(), epoch: documentEpoch, revision: editRevision };
       }
 
-      function insertText(text) {
-        const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
-        lines.forEach((line, index) => {
-          if (index) insertNodeAtSelection(document.createElement('br'));
-          if (line) insertNodeAtSelection(document.createTextNode(line));
-        });
+      function validEditTarget(target) {
+        return target && target.epoch === documentEpoch && (target.image
+          ? target.image.isConnected && editor.contains(target.image) && target.image.getAttribute('src') === target.src
+          : target.revision === editRevision && editor.contains(target.range.commonAncestorContainer));
+      }
+
+      function nativeImageEdit(command, value, target) {
+        if (!validEditTarget(target)) return false;
+        let replacedLength = 0;
+        if (!target.image && !target.range.collapsed) {
+          const removed = document.createElement('div');
+          removed.appendChild(target.range.cloneContents());
+          replacedLength = cleanHtml(removed.innerHTML).length;
+        }
+        if (command === 'insertHTML' && cleanHtml(editor.innerHTML).length - replacedLength + value.length > maximumHtmlLength) {
+          post({ type: 'imageEditError', tooLarge: true });
+          return false;
+        }
+        const range = target.range.cloneRange();
+        if (target.image) {
+          range.selectNode(target.image);
+          if (command !== 'delete') range.collapse(false); // Image-menu paste inserts AFTER the image.
+        }
+        selectImage(null);
+        editor.focus({ preventScroll: true });
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        // Native editing transactions share the browser's text undo/redo history.
+        const changed = document.execCommand(command, false, value);
+        if (!changed) {
+          post({ type: 'imageEditError' });
+          return false;
+        }
+        alignImagesToRuledGrid();
+        positionHandles();
         scheduleChanged();
+        return true;
+      }
+
+      function insertText(text, target = captureEditTarget()) {
+        const escaped = document.createElement('div');
+        escaped.textContent = String(text || '').replace(/\r\n?/g, '\n');
+        if (!escaped.textContent) return;
+        nativeImageEdit('insertHTML', escaped.innerHTML.replace(/\n/g, '<br>'), target);
+      }
+
+      function rememberImageTarget(image) {
+        if (!image || !editor.contains(image)) return null;
+        const token = String(++imageRequestId);
+        imageRequests.set(token, captureEditTarget(image));
+        if (imageRequests.size > 32) imageRequests.delete(imageRequests.keys().next().value);
+        return token;
+      }
+
+      function hasImageSelection() {
+        return selectedImage && selectedImage.isConnected && !window.getSelection()?.toString();
+      }
+
+      function clearsImageSelection(event) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') return true;
+        if (!event.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown', 'Enter', 'Tab', 'Escape'].includes(event.key)) return true;
+        return !event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1;
+      }
+
+      function imageCommand(token, action) {
+        const target = imageRequests.get(token);
+        if (!validEditTarget(target) || target.pending) return;
+        if (action === 'delete') {
+          imageRequests.delete(token);
+          nativeImageEdit('delete', null, target);
+        } else if (['copy', 'cut', 'paste'].includes(action)) {
+          target.pending = action;
+          post({ type: 'imageClipboard', token, action, dataUrl: action === 'paste' ? null : target.src });
+        }
+      }
+
+      async function completeImageClipboard(result) {
+        const target = imageRequests.get(result.token);
+        imageRequests.delete(result.token);
+        if (!result.ok || !validEditTarget(target)) return;
+        if (target.pending === 'cut') nativeImageEdit('delete', null, target);
+        else if (target.pending === 'paste') {
+          if (result.dataUrl) await insertImageSources([result.dataUrl], target);
+          else insertText(result.text || '', target);
+        }
       }
 
       function setRuledLines(show) {
@@ -186,25 +266,43 @@
         alignImagesToRuledGrid();
       }
 
-      function insertImage(file) {
-        if (!/^image\/(png|jpe?g|gif|webp)$/i.test(file.type)) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          const image = new Image();
-          image.alt = pastedImageLabel;
-          image.tabIndex = 0;
-          image.onload = () => {
-            const maximum = Math.max(96, editor.clientWidth - 40);
-            image.style.width = `${Math.max(48, Math.min(maximum, image.naturalWidth || maximum))}px`;
-            insertNodeAtSelection(image);
-            insertNodeAtSelection(document.createElement('br'));
-            alignImageToRuledGrid(image);
-            selectImage(image);
-            scheduleChanged();
-          };
-          image.src = String(reader.result || '');
-        };
-        reader.readAsDataURL(file);
+      async function insertImageSources(sources, target) {
+        try {
+          if (sources.reduce((sum, src) => sum + src.length, cleanHtml(editor.innerHTML).length) > maximumHtmlLength) {
+            post({ type: 'imageEditError', tooLarge: true });
+            return;
+          }
+          const fragments = await Promise.all(sources.map(src => new Promise((resolve, reject) => {
+            if (!/^data:image\/(png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
+              reject(new Error('Unsupported image')); return;
+            }
+            const image = new Image();
+            image.alt = pastedImageLabel;
+            image.tabIndex = 0;
+            image.onload = () => {
+              const maximum = Math.max(96, editor.clientWidth - 40);
+              image.style.width = `${Math.max(48, Math.min(maximum, image.naturalWidth || maximum))}px`;
+              resolve(image.outerHTML + '<br>');
+            };
+            image.onerror = reject;
+            image.src = src;
+          })));
+          nativeImageEdit('insertHTML', fragments.join(''), target);
+        } catch { post({ type: 'imageEditError' }); }
+      }
+
+      async function insertImageFiles(files, target) {
+        try {
+          const sources = await Promise.all(files.filter(file => /^image\/(png|jpe?g|gif|webp)$/i.test(file.type))
+            .map(file => new Promise((resolve, reject) => {
+              if (file.size * 4 / 3 > maximumHtmlLength) { reject(new Error('Image too large')); return; }
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result || ''));
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+            })));
+          if (sources.length) await insertImageSources(sources, target);
+        } catch { post({ type: 'imageEditError' }); }
       }
 
       function selectImage(image) {
@@ -311,6 +409,10 @@
       }
 
       editor.addEventListener('input', event => {
+        if (event.inputType === 'historyUndo' || event.inputType === 'historyRedo') {
+          selectImage(null);
+          alignImagesToRuledGrid();
+        }
         scheduleChanged();
         if (!diagnostics) return;
         const now = performance.now();
@@ -346,15 +448,28 @@
       editor.addEventListener('focusin', event => {
         if (event.target instanceof HTMLImageElement) selectImage(event.target);
       });
+      editor.addEventListener('contextmenu', event => {
+        if (!(event.target instanceof HTMLImageElement)) return;
+        event.preventDefault();
+        selectImage(event.target);
+        const token = rememberImageTarget(event.target);
+        post({ type: 'imageMenu', token, x: event.clientX, y: event.clientY });
+      });
       editor.addEventListener('paste', event => {
         event.preventDefault();
+        const target = captureEditTarget(hasImageSelection() ? selectedImage : null);
         const images = [...(event.clipboardData?.items || [])]
           .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
           .map(item => item.getAsFile()).filter(Boolean);
-        if (images.length) images.forEach(insertImage);
-        else insertText(event.clipboardData?.getData('text/plain') || '');
+        if (images.length) void insertImageFiles(images, target);
+        else insertText(event.clipboardData?.getData('text/plain') || '', target);
       });
       editor.addEventListener('copy', event => {
+        if (hasImageSelection()) {
+          event.preventDefault();
+          imageCommand(rememberImageTarget(selectedImage), 'copy');
+          return;
+        }
         const text = window.getSelection()?.toString() || '';
         if (!text) return;
         event.preventDefault();
@@ -367,6 +482,13 @@
         // after the default cut has finished writing to the clipboard.
         setTimeout(() => post({ type: 'copyText', text }), 0);
       }
+      editor.addEventListener('cut', event => {
+        if (hasImageSelection()) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          imageCommand(rememberImageTarget(selectedImage), 'cut');
+        }
+      });
       editor.addEventListener('cut', onCutText);
       editor.addEventListener('wheel', event => {
         if (!event.ctrlKey) return;
@@ -376,12 +498,17 @@
         scheduleChanged();
       }, { passive: false });
       editor.addEventListener('keydown', event => {
-        if (!selectedImage) return;
-        if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (!selectedImage || composing || event.isComposing) return;
+        if (clearsImageSelection(event)) { selectImage(null); return; }
+        if (!hasImageSelection()) return;
+        const clipboardAction = (event.ctrlKey || event.metaKey) && !event.altKey
+          ? ({ c: 'copy', x: 'cut', v: 'paste' })[event.key.toLowerCase()] : null;
+        if (clipboardAction) {
           event.preventDefault();
-          selectedImage.remove();
-          selectImage(null);
-          scheduleChanged();
+          imageCommand(rememberImageTarget(selectedImage), clipboardAction);
+        } else if (event.key === 'Delete' || event.key === 'Backspace') {
+          event.preventDefault();
+          imageCommand(rememberImageTarget(selectedImage), 'delete');
         } else if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
           event.preventDefault();
           const width = Math.max(48, Math.min(editor.clientWidth - 40,
@@ -421,6 +548,9 @@
 
       window.__tuckpane = {
         load(html, size, palette, ruledLines, placeholder, languageTag, imageLabel, resizeLabel, traceInput = false) {
+          documentEpoch++;
+          imageRequests.clear();
+          selectImage(null);
           diagnostics = Boolean(traceInput);
           document.documentElement.lang = languageTag || 'en-US';
           pastedImageLabel = imageLabel || 'Pasted image';
@@ -443,6 +573,8 @@
             document.documentElement.style.setProperty(`--${key}`, String(value));
         },
         setRuledLines,
+        imageCommand,
+        completeImageClipboard,
         getState() { return { html: cleanHtml(editor.innerHTML), fontSize }; }
       };
       post({ type: 'shellReady' });

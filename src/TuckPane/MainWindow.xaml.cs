@@ -380,10 +380,24 @@ public sealed partial class MainWindow : Window
 
     private void LocalizeContextMenu(MenuFlyout flyout)
     {
+        LocalizeContextMenuItems(flyout.Items);
+    }
+
+    private void LocalizeContextMenuItems(IEnumerable<MenuFlyoutItemBase> items)
+    {
         FontFamily family = new(AppStrings.FontFamily);
         bool station = _definition.PlacementMode == OrganizerPlacementMode.Station;
-        foreach (MenuFlyoutItem item in flyout.Items.OfType<MenuFlyoutItem>())
+        foreach (MenuFlyoutItemBase entry in items)
         {
+            if (entry is MenuFlyoutSubItem sub)
+            {
+                if (sub.Tag is string subKey) sub.Text = AppStrings.Get(subKey);
+                sub.FontFamily = family;
+                sub.CharacterSpacing = AppStrings.CharacterSpacing;
+                LocalizeContextMenuItems(sub.Items);
+                continue;
+            }
+            if (entry is not MenuFlyoutItem item) continue;
             // These two organizer menus have text-only commands. A toggle elsewhere
             // in the same menu must not reserve a check column to their left.
             if (item is not ToggleMenuFlyoutItem)
@@ -2730,6 +2744,11 @@ public sealed partial class MainWindow : Window
     {
         if (_canvasResize is not { } session) return;
         ClearStationTransitionVisuals();
+        if (session.CompactList)
+        {
+            CommitCompactCanvasResize(session, cursor);
+            return;
+        }
         bool align = session.AlignmentInsets is not null &&
             OrganizerInteractionMath.ShouldUseWindowAlignment(_host.State.GlobalSettings.WindowAlignmentEnabled,
                 true, _definition.PlacementMode, false, IsPermanentlyExpanded);
@@ -6257,6 +6276,11 @@ public sealed partial class MainWindow : Window
 
     private void ContextMenu_Opening(object? sender, object e)
     {
+        if (!_contextMenuCounted)
+        {
+            _contextMenuCounted = true;
+            _overlayOpenCount++;
+        }
         ResetHoverWave();
         UpdateExpansionModeControls();
         UpdateContentModeMenuItems();

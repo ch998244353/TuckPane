@@ -97,6 +97,7 @@
 
         <Grid
             x:Name="CompactView"
+            ContextRequested="OrganizerWindow_ContextRequested"
             Width="76"
             Height="68"
             HorizontalAlignment="Center"
@@ -108,7 +109,10 @@
                     MenuFlyoutPresenterStyle="{StaticResource OrganizerMenuPresenterStyle}"
                     Opened="ContextMenu_Opened"
                     Opening="ContextMenu_Opening">
-                    <MenuFlyoutItem x:Name="CompactAddItemMenuItem" Click="AddItemMenuItem_Click" Tag="ContextAddItem" Text="添加项目" />
+                    <MenuFlyoutSubItem x:Name="CompactAddItemMenuItem" Tag="ContextAddItem" Text="添加项目">
+                        <MenuFlyoutItem Click="AddFileMenuItem_Click" Tag="ContextAddFile" Text="文件…" />
+                        <MenuFlyoutItem Click="AddFolderMenuItem_Click" Tag="ContextAddFolder" Text="文件夹…" />
+                    </MenuFlyoutSubItem>
                     <MenuFlyoutItem x:Name="CompactNewFolderMenuItem" Click="NewFolderMenuItem_Click" Tag="ContextNewFolder" Text="新建文件夹" />
                     <MenuFlyoutItem x:Name="CompactNewNoteMenuItem" Click="NewNoteMenuItem_Click" Tag="ContextNewNote" Text="新建便签" />
                     <MenuFlyoutItem x:Name="CompactNewTodoMenuItem" Click="NewTodoMenuItem_Click" Tag="ContextNewTodo" Text="新建待办" />
@@ -218,6 +222,7 @@
 
         <Grid
             x:Name="ExpandedView"
+            ContextRequested="OrganizerWindow_ContextRequested"
             Background="Transparent"
             HorizontalAlignment="Stretch"
             VerticalAlignment="Stretch"
@@ -232,7 +237,10 @@
                     Opened="ContextMenu_Opened"
                     Opening="ContextMenu_Opening"
                     ShouldConstrainToRootBounds="True">
-                    <MenuFlyoutItem x:Name="ExpandedAddItemMenuItem" Click="AddItemMenuItem_Click" Tag="ContextAddItem" Text="添加项目" />
+                    <MenuFlyoutSubItem x:Name="ExpandedAddItemMenuItem" Tag="ContextAddItem" Text="添加项目">
+                        <MenuFlyoutItem Click="AddFileMenuItem_Click" Tag="ContextAddFile" Text="文件…" />
+                        <MenuFlyoutItem Click="AddFolderMenuItem_Click" Tag="ContextAddFolder" Text="文件夹…" />
+                    </MenuFlyoutSubItem>
                     <MenuFlyoutItem x:Name="NewFolderMenuItem" Click="NewFolderMenuItem_Click" Tag="ContextNewFolder" Text="新建文件夹" />
                     <MenuFlyoutItem x:Name="NewNoteMenuItem" Click="NewNoteMenuItem_Click" Tag="ContextNewNote" Text="新建便签" />
                     <MenuFlyoutItem x:Name="NewTodoMenuItem" Click="NewTodoMenuItem_Click" Tag="ContextNewTodo" Text="新建待办" />

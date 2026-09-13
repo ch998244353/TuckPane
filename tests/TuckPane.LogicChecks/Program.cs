@@ -7,6 +7,13 @@ using Windows.Storage;
 using System.Text.Json;
 using System.Xml.Linq;
 
+if (args.Length > 0 && args[0] == "--sep13-interactions")
+{
+    if (args is not [_, string area]) throw new ArgumentException("Expected --sep13-interactions <resize|menu|shortcut>.");
+    await Sep13InteractionChecks.RunAsync(area);
+    return;
+}
+
 if (args is ["--note-todo-42"])
 {
     await NoteTodo42Checks.RunAsync();

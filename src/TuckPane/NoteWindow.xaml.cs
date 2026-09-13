@@ -341,6 +341,7 @@ public sealed partial class NoteWindow : Window
                     .Equals(Path.GetFullPath(_editorUri.LocalPath), StringComparison.OrdinalIgnoreCase)) return;
             using JsonDocument message = JsonDocument.Parse(args.WebMessageAsJson);
             string type = message.RootElement.GetProperty("type").GetString() ?? string.Empty;
+            if (await HandleImageMessageAsync(type, message.RootElement)) return;
             if (type == "shellReady")
             {
                 await SendEditorLoadAsync();

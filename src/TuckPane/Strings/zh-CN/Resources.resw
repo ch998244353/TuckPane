@@ -361,7 +361,7 @@
   <data name="ExpansionModeUnavailable" xml:space="preserve"><value>仅未被收纳的悬浮窗和定位窗可使用展开模式。请先将子窗移出。</value></data>
   <data name="ExpansionModeBusy" xml:space="preserve"><value>窗口正在切换或拖动，请稍后再切换模式。</value></data>
   <data name="ContextAddItem" xml:space="preserve"><value>添加项目</value></data>
-  <data name="AddItemSourceMissing" xml:space="preserve"><value>所选文件已不存在，请重新选择。</value></data>
+  <data name="AddItemSourceMissing" xml:space="preserve"><value>所选文件或文件夹已不存在，请重新选择。</value></data>
   <data name="AddItemNameConflict" xml:space="preserve"><value>目标名称持续被占用，请稍后重试。原文件已保留。</value></data>
   <data name="NavOrganizers" xml:space="preserve"><value>收纳窗</value></data>
   <data name="NavStations" xml:space="preserve"><value>中转站</value></data>
@@ -435,4 +435,11 @@
   <data name="NoteThemeChangeErrorFormat" xml:space="preserve"><value>主题未完全同步：{0}</value></data>
   <data name="NoteThemeSyncErrorFormat" xml:space="preserve"><value>主题已应用，但有 {0} 个窗口或目录同步失败。请重试。</value></data>
   <data name="NoteThemeDocumentSaveFailed" xml:space="preserve"><value>主题文档未能保存，请检查文件是否存在且可写。</value></data>
+  <data name="ContextAddFile" xml:space="preserve"><value>文件…</value></data>
+  <data name="ContextAddFolder" xml:space="preserve"><value>文件夹…</value></data>
+  <data name="NoteCutImage" xml:space="preserve"><value>剪切图片</value></data>
+  <data name="NoteImageEditError" xml:space="preserve"><value>无法完成图片编辑，请重新选择图片后再试。</value></data>
+  <data name="NoteCopyImage" xml:space="preserve"><value>复制图片</value></data>
+  <data name="NoteDeleteImage" xml:space="preserve"><value>删除图片</value></data>
+  <data name="NoteImagePasteError" xml:space="preserve"><value>无法读取剪贴板中的图片或文字，请重新复制后再试。</value></data>
 </root>

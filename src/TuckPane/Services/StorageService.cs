@@ -84,15 +84,19 @@ public sealed class StorageService
         return outcomes;
     }
 
-    internal TransferOutcome AddFileShortcut(string sourcePath)
+    internal TransferOutcome AddFileShortcut(string sourcePath) => AddItemShortcut(sourcePath);
+
+    internal TransferOutcome AddItemShortcut(string sourcePath)
     {
         string? staging = null;
         try
         {
             string source = Path.GetFullPath(sourcePath);
-            if (!File.Exists(source)) throw new FileNotFoundException(AppStrings.Get("AddItemSourceMissing"), source);
+            bool directory = Directory.Exists(source);
+            if (!directory && !File.Exists(source)) throw new FileNotFoundException(AppStrings.Get("AddItemSourceMissing"), source);
+            if (directory) source = Path.TrimEndingDirectorySeparator(source);
             if (!Exists) throw new DirectoryNotFoundException(AppStrings.Get("MissingStorage"));
-            bool existingLink = Path.GetExtension(source).Equals(".lnk", StringComparison.OrdinalIgnoreCase);
+            bool existingLink = !directory && Path.GetExtension(source).Equals(".lnk", StringComparison.OrdinalIgnoreCase);
             staging = Path.Combine(_itemsRoot, $".glassfolder-staging-{Guid.NewGuid():N}.lnk");
             if (existingLink)
             {
@@ -106,12 +110,14 @@ public sealed class StorageService
                 {
                     var link = (NativeMethods.IShellLinkW)instance;
                     Marshal.ThrowExceptionForHR(link.SetPath(source));
-                    Marshal.ThrowExceptionForHR(link.SetWorkingDirectory(Path.GetDirectoryName(source)!));
+                    Marshal.ThrowExceptionForHR(link.SetWorkingDirectory(directory ? source : Path.GetDirectoryName(source)!));
                     ((IPersistFile)instance).Save(staging, true);
                 }
                 finally { Marshal.FinalReleaseComObject(instance); }
             }
-            string name = existingLink ? Path.GetFileName(source) : Path.GetFileNameWithoutExtension(source) + ".lnk";
+            string directoryName = Path.GetFileName(source);
+            if (directory && directoryName.Length == 0) directoryName = source.TrimEnd('\\', '/').Replace(':', '_');
+            string name = existingLink ? Path.GetFileName(source) : (directory ? directoryName : Path.GetFileNameWithoutExtension(source)) + ".lnk";
             string requested = Path.Combine(_itemsRoot, name);
             for (int attempt = 0; attempt < 32; attempt++)
             {

@@ -361,7 +361,7 @@ Storage path: {2}</value></data>
   <data name="ExpansionModeUnavailable" xml:space="preserve"><value>Only uncontained floating or positioned windows can stay expanded. Move this window out of its container first.</value></data>
   <data name="ExpansionModeBusy" xml:space="preserve"><value>Finish the current window transition or drag before switching modes.</value></data>
   <data name="ContextAddItem" xml:space="preserve"><value>Add item</value></data>
-  <data name="AddItemSourceMissing" xml:space="preserve"><value>The selected file no longer exists. Select it again.</value></data>
+  <data name="AddItemSourceMissing" xml:space="preserve"><value>The selected file or folder no longer exists. Select it again.</value></data>
   <data name="AddItemNameConflict" xml:space="preserve"><value>The destination name is still in use. Try again later. The original file has been kept.</value></data>
   <data name="NavOrganizers" xml:space="preserve"><value>Organizers</value></data>
   <data name="NavStations" xml:space="preserve"><value>Stations</value></data>
@@ -435,4 +435,11 @@ Storage path: {2}</value></data>
   <data name="NoteThemeChangeErrorFormat" xml:space="preserve"><value>Theme synchronization did not complete: {0}</value></data>
   <data name="NoteThemeSyncErrorFormat" xml:space="preserve"><value>The theme was applied, but {0} windows or folders could not be synchronized. Please retry.</value></data>
   <data name="NoteThemeDocumentSaveFailed" xml:space="preserve"><value>The themed document could not be saved. Check that the file exists and is writable.</value></data>
+  <data name="ContextAddFile" xml:space="preserve"><value>File…</value></data>
+  <data name="ContextAddFolder" xml:space="preserve"><value>Folder…</value></data>
+  <data name="NoteCutImage" xml:space="preserve"><value>Cut image</value></data>
+  <data name="NoteImageEditError" xml:space="preserve"><value>Unable to edit the image. Select it again and retry.</value></data>
+  <data name="NoteCopyImage" xml:space="preserve"><value>Copy image</value></data>
+  <data name="NoteDeleteImage" xml:space="preserve"><value>Delete image</value></data>
+  <data name="NoteImagePasteError" xml:space="preserve"><value>Unable to read the clipboard image or text. Copy it again and retry.</value></data>
 </root>
