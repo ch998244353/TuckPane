@@ -24,6 +24,7 @@ namespace TuckPane;
 public sealed partial class NoteWindow : Window
 {
     private readonly AppHost _host;
+    private readonly WindowThemeBrushes _themeBrushes = new();
     private readonly NoteDefinition _definition;
     private readonly NoteStore _store;
     private readonly Guid? _organizerId;
@@ -111,7 +112,13 @@ public sealed partial class NoteWindow : Window
     {
         _definition.Theme = theme;
         if (_portableDocument is not null) _portableDocument.Theme = theme;
-        ApplyTheme();
+        try { ApplyTheme(); }
+        catch (Exception ex)
+        {
+            AppLogger.Error("便签主题外观应用失败", ex);
+            throw;
+        }
+        Exception? editorFailure = null;
         if (_editorReady && Editor.CoreWebView2 is not null)
         {
             try
@@ -123,9 +130,12 @@ public sealed partial class NoteWindow : Window
             {
                 AppLogger.Error($"无法同步便签主题：{Id}", ex);
                 ShowError(AppStrings.Format("NoteEditorErrorFormat", ex.Message));
+                editorFailure = ex;
             }
         }
-        if (_externalPath is not null) await FlushAsync(readEditor: true);
+        if (_externalPath is not null && !await FlushAsync(readEditor: true))
+            throw new IOException(AppStrings.Get("NoteThemeDocumentSaveFailed"));
+        if (editorFailure is not null) throw new InvalidOperationException("Note editor theme synchronization failed.", editorFailure);
     }
 
     internal void RebindExternalPath(string path)
@@ -523,7 +533,7 @@ public sealed partial class NoteWindow : Window
         catch (Exception ex)
         {
             AppLogger.Error($"无法保存全局便签主题：{theme}", ex);
-            ShowError(AppStrings.Format("NoteSaveErrorFormat", ex.Message));
+            ShowError(AppStrings.Format("NoteThemeChangeErrorFormat", ex.Message));
         }
     }
 
@@ -566,38 +576,37 @@ public sealed partial class NoteWindow : Window
         NoteTitleText.Foreground = new SolidColorBrush(text);
         NoteTitleEditor.Foreground = new SolidColorBrush(text);
         ColorButton.Foreground = new SolidColorBrush(accent);
-        ColorButton.Resources["ButtonBackgroundPointerOver"] = new SolidColorBrush(
+        _themeBrushes.Set(ColorButton.Resources, "ButtonBackgroundPointerOver",
             ColorHelper.FromArgb(30, accent.R, accent.G, accent.B));
-        ColorButton.Resources["ButtonBackgroundPressed"] = new SolidColorBrush(
+        _themeBrushes.Set(ColorButton.Resources, "ButtonBackgroundPressed",
             ColorHelper.FromArgb(52, accent.R, accent.G, accent.B));
-        ColorButton.Resources["ButtonForegroundPointerOver"] = new SolidColorBrush(accent);
-        ColorButton.Resources["ButtonForegroundPressed"] = new SolidColorBrush(accent);
+        _themeBrushes.Set(ColorButton.Resources, "ButtonForegroundPointerOver", accent);
+        _themeBrushes.Set(ColorButton.Resources, "ButtonForegroundPressed", accent);
         RuledLinesButton.Foreground = new SolidColorBrush(text);
-        RuledLinesButton.Resources["ToggleButtonBackgroundPointerOver"] = new SolidColorBrush(
+        _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonBackgroundPointerOver",
             ColorHelper.FromArgb(24, accent.R, accent.G, accent.B));
-        RuledLinesButton.Resources["ToggleButtonBackgroundPressed"] = new SolidColorBrush(
+        _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonBackgroundPressed",
             ColorHelper.FromArgb(42, accent.R, accent.G, accent.B));
-        RuledLinesButton.Resources["ToggleButtonBackgroundChecked"] = new SolidColorBrush(
+        _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonBackgroundChecked",
             ColorHelper.FromArgb(68, accent.R, accent.G, accent.B));
-        RuledLinesButton.Resources["ToggleButtonBackgroundCheckedPointerOver"] = new SolidColorBrush(
+        _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonBackgroundCheckedPointerOver",
             ColorHelper.FromArgb(88, accent.R, accent.G, accent.B));
-        RuledLinesButton.Resources["ToggleButtonBackgroundCheckedPressed"] = new SolidColorBrush(
+        _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonBackgroundCheckedPressed",
             ColorHelper.FromArgb(108, accent.R, accent.G, accent.B));
-        RuledLinesButton.Resources["ToggleButtonBackgroundCheckedDisabled"] = new SolidColorBrush(
+        _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonBackgroundCheckedDisabled",
             ColorHelper.FromArgb(34, accent.R, accent.G, accent.B));
-        SolidColorBrush checkedForeground = new(text);
-        RuledLinesButton.Resources["ToggleButtonForegroundChecked"] = checkedForeground;
-        RuledLinesButton.Resources["ToggleButtonForegroundCheckedPointerOver"] = checkedForeground;
-        RuledLinesButton.Resources["ToggleButtonForegroundCheckedPressed"] = checkedForeground;
-        RuledLinesButton.Resources["ToggleButtonForegroundCheckedDisabled"] = checkedForeground;
+        _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonForegroundChecked", text);
+        _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonForegroundCheckedPointerOver", text);
+        _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonForegroundCheckedPressed", text);
+        _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonForegroundCheckedDisabled", text);
         CloseButton.Foreground = new SolidColorBrush(text);
         Color closeHover = _accessibility.HighContrast ? accent : ColorHelper.FromArgb(255, 196, 43, 28);
         Color closePressed = _accessibility.HighContrast ? accent : ColorHelper.FromArgb(255, 164, 38, 25);
         Color closeForeground = _accessibility.HighContrast ? surface : Colors.White;
-        CloseButton.Resources["ButtonBackgroundPointerOver"] = new SolidColorBrush(closeHover);
-        CloseButton.Resources["ButtonBackgroundPressed"] = new SolidColorBrush(closePressed);
-        CloseButton.Resources["ButtonForegroundPointerOver"] = new SolidColorBrush(closeForeground);
-        CloseButton.Resources["ButtonForegroundPressed"] = new SolidColorBrush(closeForeground);
+        _themeBrushes.Set(CloseButton.Resources, "ButtonBackgroundPointerOver", closeHover);
+        _themeBrushes.Set(CloseButton.Resources, "ButtonBackgroundPressed", closePressed);
+        _themeBrushes.Set(CloseButton.Resources, "ButtonForegroundPointerOver", closeForeground);
+        _themeBrushes.Set(CloseButton.Resources, "ButtonForegroundPressed", closeForeground);
     }
 
     private IReadOnlyDictionary<string, string> GetCssPalette()
@@ -720,10 +729,7 @@ public sealed partial class NoteWindow : Window
             }
             else
             {
-                if (!await FlushAsync(readEditor: true)) return;
-                _externalPath = await _host.RenameExternalNoteAsync(_externalPath, candidate);
-                _definition.Name = candidate.Trim();
-                UpdateTitle();
+                await _host.RenameExternalNoteAsync(_externalPath, candidate);
             }
             EndRename();
         }

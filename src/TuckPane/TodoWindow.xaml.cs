@@ -29,12 +29,14 @@ public sealed partial class TodoWindow : Window
     private const double MaximumHeightDip = 1200;
 
     private readonly AppHost _host;
+    private readonly WindowThemeBrushes _themeBrushes = new();
     private readonly NoteStore _store;
     private readonly PortableTodoDocument _document;
     private readonly ObservableCollection<TodoRow> _rows;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _saveTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _completionTimer;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
+    private readonly TodoComposer _composer = new();
     private string _externalPath;
     private AppWindow _appWindow = null!;
     private InputNonClientPointerSource? _titleInput;
@@ -73,7 +75,7 @@ public sealed partial class TodoWindow : Window
         SetTitleBar(TitleDragSurface);
         SystemBackdrop = new TransparentTintBackdrop(Colors.Transparent);
         TaskList.ItemsSource = _rows;
-        NewTaskBox.FontSize = _document.FontSize;
+        UpdateComposerMetrics();
         WindowRoot.AddHandler(UIElement.PointerWheelChangedEvent,
             new PointerEventHandler(WindowRoot_PointerWheelChanged), handledEventsToo: true);
 
@@ -153,8 +155,14 @@ public sealed partial class TodoWindow : Window
     internal async Task ApplyGlobalThemeAsync(NoteTheme theme)
     {
         _document.Theme = theme;
-        ApplyTheme();
-        await FlushAsync();
+        try { ApplyTheme(); }
+        catch (Exception ex)
+        {
+            AppLogger.Error("待办主题外观应用失败", ex);
+            throw;
+        }
+        if (!await FlushAsync())
+            throw new IOException(AppStrings.Get("NoteThemeDocumentSaveFailed"));
     }
 
     internal void RebindExternalPath(string path)
@@ -228,6 +236,7 @@ public sealed partial class TodoWindow : Window
     {
         UpdateTitle();
         AutomationProperties.SetName(NewTaskBox, AppStrings.Get("TodoAddPlaceholder"));
+        AutomationProperties.SetName(AddTaskButton, AppStrings.Get("TodoAddPlaceholder"));
         AutomationProperties.SetName(ColorButton, AppStrings.Get("TodoColor"));
         ToolTipService.SetToolTip(ColorButton, AppStrings.Get("TodoColor"));
         AutomationProperties.SetName(SeparatorsButton, AppStrings.Get("TodoSeparators"));
@@ -297,19 +306,60 @@ public sealed partial class TodoWindow : Window
 
     private void NewTaskBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (e.Key == Windows.System.VirtualKey.Escape)
+        {
+            e.Handled = true;
+            _composer.Cancel();
+            RefreshComposer(focusAdd: true);
+            return;
+        }
         if (e.Key != Windows.System.VirtualKey.Enter) return;
         e.Handled = true;
-        try
+        if (_composer.Submit(_document) is not PortableTodoTask task) return;
+        _rows.Add(new TodoRow(task, _document.FontSize, _host.State.GlobalSettings.TodoShowSeparators));
+        RefreshComposer(focusAdd: true);
+        ScheduleSave();
+        _ = DispatcherQueue.TryEnqueue(() => NewTaskEntry.StartBringIntoView());
+    }
+
+    private void AddTaskButton_Click(object sender, RoutedEventArgs e)
+    {
+        _composer.Begin();
+        RefreshComposer();
+        NewTaskBox.Focus(FocusState.Programmatic);
+    }
+
+    private void NewTaskBox_TextChanged(object sender, TextChangedEventArgs e) =>
+        _composer.Text = NewTaskBox.Text;
+
+    private void NewTaskBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        _composer.Blur();
+        RefreshComposer();
+    }
+
+    private void RefreshComposer(bool focusAdd = false)
+    {
+        NewTaskBox.Text = _composer.Text;
+        AddTaskButton.Visibility = _composer.IsEditing ? Visibility.Collapsed : Visibility.Visible;
+        NewTaskBox.Visibility = _composer.IsEditing ? Visibility.Visible : Visibility.Collapsed;
+        if (focusAdd) AddTaskButton.Focus(FocusState.Programmatic);
+    }
+
+    private void UpdateComposerMetrics()
+    {
+        NewTaskBox.FontSize = _document.FontSize;
+        AddTaskButton.FontSize = _document.FontSize;
+        // Measure one ordinary text line, independent of wrapped/finished rows.
+        var line = new TextBlock
         {
-            PortableTodoTask task = TodoRules.Add(_document, NewTaskBox.Text);
-            _rows.Add(new TodoRow(task, _document.FontSize, _host.State.GlobalSettings.TodoShowSeparators));
-            NewTaskBox.Text = string.Empty;
-            ScheduleSave();
-        }
-        catch (ArgumentException)
-        {
-            // Empty input is intentionally ignored.
-        }
+            Text = "Ag中", FontSize = _document.FontSize,
+            FontFamily = NewTaskBox.FontFamily
+        };
+        line.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        // Matches row padding 8+4 and the checkbox target (20 plus top margin 1).
+        NewTaskEntry.Height = Math.Max(40, Math.Max(21, line.DesiredSize.Height) + 12 +
+            (_host.State.GlobalSettings.TodoShowSeparators ? 1 : 0));
     }
 
     private void TaskCheckTarget_Tapped(object sender, TappedRoutedEventArgs e)
@@ -464,7 +514,7 @@ public sealed partial class TodoWindow : Window
         if (next == _document.FontSize) return;
         _document.FontSize = next;
         foreach (TodoRow row in _rows) row.FontSize = next;
-        NewTaskBox.FontSize = next;
+        UpdateComposerMetrics();
         ScheduleSave();
         e.Handled = true;
     }
@@ -490,7 +540,11 @@ public sealed partial class TodoWindow : Window
     {
         if (sender is not ToggleMenuFlyoutItem { Tag: NoteTheme theme }) return;
         try { await _host.SetNoteThemeAsync(theme); }
-        catch (Exception ex) { ShowError(AppStrings.Format("TodoSaveErrorFormat", ex.Message)); }
+        catch (Exception ex)
+        {
+            AppLogger.Error("无法同步全局待办主题", ex);
+            ShowError(AppStrings.Format("NoteThemeChangeErrorFormat", ex.Message));
+        }
     }
 
     internal void ApplySeparatorSetting()
@@ -498,6 +552,7 @@ public sealed partial class TodoWindow : Window
         bool enabled = _host.State.GlobalSettings.TodoShowSeparators;
         SeparatorsButton.IsChecked = enabled;
         foreach (TodoRow row in _rows) row.SetSeparators(enabled);
+        UpdateComposerMetrics();
     }
 
     private async void SeparatorsButton_Click(object sender, RoutedEventArgs e)
@@ -532,12 +587,26 @@ public sealed partial class TodoWindow : Window
         input.Color = ColorHelper.FromArgb(24, colors.TextColor.R, colors.TextColor.G, colors.TextColor.B);
         border.Color = colors.BorderColor;
         separator.Color = colors.BorderColor;
-        WindowRoot.Resources["TextControlBackgroundPointerOver"] = input;
-        WindowRoot.Resources["TextControlBackgroundFocused"] = input;
-        WindowRoot.Resources["TextControlForegroundPointerOver"] = text;
-        WindowRoot.Resources["TextControlForegroundFocused"] = text;
-        WindowRoot.Resources["TextControlBorderBrushPointerOver"] = border;
-        WindowRoot.Resources["TextControlBorderBrushFocused"] = border;
+        _themeBrushes.Set(WindowRoot.Resources, "TextControlBackgroundPointerOver", input.Color);
+        _themeBrushes.Set(WindowRoot.Resources, "TextControlBackgroundFocused", input.Color);
+        _themeBrushes.Set(WindowRoot.Resources, "TextControlForegroundPointerOver", text.Color);
+        _themeBrushes.Set(WindowRoot.Resources, "TextControlForegroundFocused", text.Color);
+        _themeBrushes.Set(WindowRoot.Resources, "TextControlBorderBrushPointerOver", border.Color);
+        _themeBrushes.Set(WindowRoot.Resources, "TextControlBorderBrushFocused", border.Color);
+        Color addColor = ColorHelper.FromArgb(12, colors.TextColor.R, colors.TextColor.G, colors.TextColor.B);
+        Color addBorder = ColorHelper.FromArgb(80, colors.BorderColor.R, colors.BorderColor.G, colors.BorderColor.B);
+        ((SolidColorBrush)WindowRoot.Resources["TodoAddBrush"]).Color = addColor;
+        ((SolidColorBrush)WindowRoot.Resources["TodoAddBorderBrush"]).Color = addBorder;
+        _themeBrushes.Set(NewTaskBox.Resources, "TextControlBackgroundPointerOver", addColor);
+        _themeBrushes.Set(NewTaskBox.Resources, "TextControlBackgroundFocused", addColor);
+        _themeBrushes.Set(NewTaskBox.Resources, "TextControlBorderBrushPointerOver", addBorder);
+        _themeBrushes.Set(NewTaskBox.Resources, "TextControlBorderBrushFocused", colors.AccentColor);
+        _themeBrushes.Set(AddTaskButton.Resources, "ButtonBackgroundPointerOver", ColorHelper.FromArgb(24, colors.TextColor.R, colors.TextColor.G, colors.TextColor.B));
+        _themeBrushes.Set(AddTaskButton.Resources, "ButtonBackgroundPressed", ColorHelper.FromArgb(36, colors.TextColor.R, colors.TextColor.G, colors.TextColor.B));
+        _themeBrushes.Set(AddTaskButton.Resources, "ButtonForegroundPointerOver", colors.TextColor);
+        _themeBrushes.Set(AddTaskButton.Resources, "ButtonForegroundPressed", colors.TextColor);
+        _themeBrushes.Set(AddTaskButton.Resources, "ButtonBorderBrushPointerOver", addBorder);
+        _themeBrushes.Set(AddTaskButton.Resources, "ButtonBorderBrushPressed", colors.AccentColor);
         WindowFrame.Background = editor;
         WindowFrame.BorderBrush = border;
         DragTitleBar.Background = surface;
@@ -545,12 +614,12 @@ public sealed partial class TodoWindow : Window
         TodoTitleEditor.Foreground = text;
         ColorButton.Foreground = accent;
         SeparatorsButton.Foreground = text;
-        SeparatorsButton.Resources["ToggleButtonBackgroundChecked"] = new SolidColorBrush(
+        _themeBrushes.Set(SeparatorsButton.Resources, "ToggleButtonBackgroundChecked",
             ColorHelper.FromArgb(68, colors.AccentColor.R, colors.AccentColor.G, colors.AccentColor.B));
-        SeparatorsButton.Resources["ToggleButtonBackgroundCheckedPointerOver"] = new SolidColorBrush(
+        _themeBrushes.Set(SeparatorsButton.Resources, "ToggleButtonBackgroundCheckedPointerOver",
             ColorHelper.FromArgb(88, colors.AccentColor.R, colors.AccentColor.G, colors.AccentColor.B));
-        SeparatorsButton.Resources["ToggleButtonForegroundChecked"] = text;
-        SeparatorsButton.Resources["ToggleButtonForegroundCheckedPointerOver"] = text;
+        _themeBrushes.Set(SeparatorsButton.Resources, "ToggleButtonForegroundChecked", text.Color);
+        _themeBrushes.Set(SeparatorsButton.Resources, "ToggleButtonForegroundCheckedPointerOver", text.Color);
         CloseButton.Foreground = text;
         TaskList.Foreground = text;
     }

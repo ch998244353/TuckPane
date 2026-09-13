@@ -432,4 +432,7 @@
   <data name="UpdateReleaseNotes" xml:space="preserve"><value>リリースノート</value></data>
   <data name="UpdateNoNotes" xml:space="preserve"><value>新しいリリースノートはありません。</value></data>
   <data name="UpdateBackupLocation" xml:space="preserve"><value>設定のバックアップ：{0}</value></data>
+  <data name="NoteThemeChangeErrorFormat" xml:space="preserve"><value>テーマの同期が完了しませんでした：{0}</value></data>
+  <data name="NoteThemeSyncErrorFormat" xml:space="preserve"><value>テーマは適用されましたが、{0} 個のウィンドウまたはフォルダーを同期できませんでした。再試行してください。</value></data>
+  <data name="NoteThemeDocumentSaveFailed" xml:space="preserve"><value>テーマを変更した文書を保存できませんでした。ファイルが存在し、書き込み可能か確認してください。</value></data>
 </root>

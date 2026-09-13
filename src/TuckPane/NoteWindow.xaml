@@ -7,7 +7,7 @@
         CornerRadius="8">
         <Grid x:Name="WindowRoot">
             <Grid.RowDefinitions>
-                <RowDefinition Height="44" />
+                <RowDefinition Height="26.4" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
@@ -41,7 +41,8 @@
                     x:Name="NoteTitleEditor"
                     Grid.Column="0"
                     MinWidth="100"
-                    Margin="-4,3,8,3"
+                    Margin="-4,1,8,1"
+                    MinHeight="0"
                     Padding="4,0"
                     VerticalContentAlignment="Center"
                     Background="Transparent"
@@ -55,8 +56,9 @@
                 <Button
                     x:Name="ColorButton"
                     Grid.Column="1"
-                    Width="34"
-                    Height="34"
+                    Width="20.4"
+                    Height="20.4"
+                    MinWidth="0" MinHeight="0"
                     Margin="0,0,2,0"
                     Background="Transparent"
                     BorderThickness="0"
@@ -65,13 +67,14 @@
                     Padding="0"
                     VerticalContentAlignment="Center"
                     Click="ColorButton_Click">
-                    <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="16" Glyph="&#xE790;" />
+                    <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="9.6" Glyph="&#xE790;" />
                 </Button>
                 <ToggleButton
                     x:Name="RuledLinesButton"
                     Grid.Column="2"
-                    Width="34"
-                    Height="34"
+                    Width="20.4"
+                    Height="20.4"
+                    MinWidth="0" MinHeight="0"
                     Margin="0,0,2,0"
                     Background="Transparent"
                     BorderThickness="0"
@@ -80,13 +83,14 @@
                     Padding="0"
                     VerticalContentAlignment="Center"
                     Click="RuledLinesButton_Click">
-                    <SymbolIcon Symbol="Bullets" />
+                    <Viewbox Width="12" Height="12"><SymbolIcon Symbol="Bullets" /></Viewbox>
                 </ToggleButton>
                 <Button
                     x:Name="CloseButton"
                     Grid.Column="3"
-                    Width="34"
-                    Height="34"
+                    Width="20.4"
+                    Height="20.4"
+                    MinWidth="0" MinHeight="0"
                     Background="Transparent"
                     BorderThickness="0"
                     CornerRadius="8"
@@ -94,7 +98,7 @@
                     Padding="0"
                     VerticalContentAlignment="Center"
                     Click="CloseButton_Click">
-                    <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="14" Glyph="&#xE711;" />
+                    <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="8.4" Glyph="&#xE711;" />
                 </Button>
             </Grid>
 

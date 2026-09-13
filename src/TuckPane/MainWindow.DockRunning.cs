@@ -51,12 +51,20 @@ public sealed partial class MainWindow
             dot.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
             if (!open) continue;
             if (dot.Fill is not SolidColorBrush brush || brush.Color != color) dot.Fill = new SolidColorBrush(color);
-            var icon = GetRenderedDockIcon(visual, includeBounce: false);
-            Canvas.SetLeft(dot, origin.X + icon.Center.X - 2);
-            double centerY = HorizontalHover
-                ? _hoverSurfaceBounds.Bottom - Math.Max(5, _dockGeometry.BottomInset / 2)
-                : visual.IconBounds.Bottom + 5;
-            Canvas.SetTop(dot, origin.Y + centerY - 2);
+            if (HorizontalHover)
+            {
+                var icon = GetRenderedDockIcon(visual, includeBounce: false);
+                Canvas.SetLeft(dot, origin.X + icon.Center.X - 2);
+                double centerY = _hoverSurfaceBounds.Bottom - Math.Max(5, _dockGeometry.BottomInset / 2);
+                Canvas.SetTop(dot, origin.Y + centerY - 2);
+            }
+            else
+            {
+                var center = DockVisualMath.VerticalRunningDotCenter(_hoverSurfaceBounds.X,
+                    (float)_dockGeometry.LeftInset, visual.IconBounds, visual.Presented ? visual.Translation.Y : 0);
+                Canvas.SetLeft(dot, origin.X + center.X - 2);
+                Canvas.SetTop(dot, origin.Y + center.Y - 2);
+            }
         }
     }
 }

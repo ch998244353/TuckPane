@@ -201,21 +201,8 @@ internal static class SettingsDockAdjustmentChecks
 
     private static void CheckVerticalGeometry()
     {
+        VerticalDockVisualChecks.CheckGeometry();
         DockGeometry geometry = DockLayoutMath.Calculate(3, 64, DockOrientation.Vertical);
-        Require(geometry.Width == 96 && geometry.CrossInset == 16,
-            "A vertical Dock with 64 DIP icons must provide 16 DIP of room on each side.");
-        for (int index = 0; index < geometry.Count; index++)
-        {
-            Vector2 center = geometry.ItemCenter(index);
-            Require(center.X == geometry.Width / 2 &&
-                    center.X - geometry.IconSize / 2 == geometry.HorizontalInset,
-                "Every icon must remain centered within the widened surface.");
-            Require(geometry.Contains(new Vector2(88, center.Y)) &&
-                    !geometry.Contains(new Vector2(97, center.Y)) &&
-                    geometry.ContainsIcon(center, index, 1) &&
-                    !geometry.ContainsIcon(new Vector2(88, center.Y), index, 1),
-                "New right-side padding must accept surface input without enlarging the baseline icon hit area.");
-        }
         Vector2 windowCenter = new(-713.2f, 429.2f);
         NativeMethods.RECT bounds = DockLayoutMath.CalculateBounds(geometry, windowCenter, 1.25);
         Require(bounds.Width == 120 &&

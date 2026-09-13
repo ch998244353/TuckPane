@@ -12,10 +12,11 @@
                 <SolidColorBrush x:Key="TodoInputBrush" Color="#18FFFFFF" />
                 <SolidColorBrush x:Key="TodoBorderBrush" Color="White" />
                 <SolidColorBrush x:Key="TodoSeparatorBrush" Color="White" Opacity="0.5" />
+                <SolidColorBrush x:Key="TodoAddBrush" Color="#0CFFFFFF" />
+                <SolidColorBrush x:Key="TodoAddBorderBrush" Color="#50FFFFFF" />
             </Grid.Resources>
             <Grid.RowDefinitions>
-                <RowDefinition Height="44" />
-                <RowDefinition Height="Auto" />
+                <RowDefinition Height="26.4" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
@@ -47,7 +48,8 @@
                     x:Name="TodoTitleEditor"
                     Grid.Column="0"
                     MinWidth="100"
-                    Margin="-4,3,8,3"
+                    Margin="-4,1,8,1"
+                    MinHeight="0"
                     Padding="4,0"
                     VerticalContentAlignment="Center"
                     Background="Transparent"
@@ -61,60 +63,49 @@
                 <Button
                     x:Name="ColorButton"
                     Grid.Column="1"
-                    Width="34"
-                    Height="34"
+                    Width="20.4"
+                    Height="20.4"
+                    MinWidth="0" MinHeight="0"
                     Margin="0,0,2,0"
                     Background="Transparent"
                     BorderThickness="0"
                     CornerRadius="8"
                     Padding="0"
                     Click="ColorButton_Click">
-                    <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="16" Glyph="&#xE790;" />
+                    <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="9.6" Glyph="&#xE790;" />
                 </Button>
                 <ToggleButton
                     x:Name="SeparatorsButton"
                     Grid.Column="2"
-                    Width="34"
-                    Height="34"
+                    Width="20.4"
+                    Height="20.4"
+                    MinWidth="0" MinHeight="0"
                     Margin="0,0,2,0"
                     Background="Transparent"
                     BorderThickness="0"
                     CornerRadius="8"
                     Padding="0"
                     Click="SeparatorsButton_Click">
-                    <SymbolIcon Symbol="Bullets" />
+                    <Viewbox Width="12" Height="12"><SymbolIcon Symbol="Bullets" /></Viewbox>
                 </ToggleButton>
                 <Button
                     x:Name="CloseButton"
                     Grid.Column="3"
-                    Width="34"
-                    Height="34"
+                    Width="20.4"
+                    Height="20.4"
+                    MinWidth="0" MinHeight="0"
                     Background="Transparent"
                     BorderThickness="0"
                     CornerRadius="8"
                     Padding="0"
                     Click="CloseButton_Click">
-                    <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="14" Glyph="&#xE711;" />
+                    <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="8.4" Glyph="&#xE711;" />
                 </Button>
             </Grid>
 
-            <TextBox
-                x:Name="NewTaskBox"
-                Grid.Row="1"
-                Margin="16,10,16,10"
-                Padding="12,8"
-                Background="{StaticResource TodoInputBrush}"
-                BorderBrush="{StaticResource TodoBorderBrush}"
-                BorderThickness="1"
-                CornerRadius="8"
-                Foreground="{StaticResource TodoTextBrush}"
-                HorizontalContentAlignment="Left"
-                KeyDown="NewTaskBox_KeyDown"
-                TextAlignment="Left" />
-
             <ListView
                 x:Name="TaskList"
-                Grid.Row="2"
+                Grid.Row="1"
                 Margin="8,0,8,10"
                 Padding="0"
                 AllowDrop="True"
@@ -122,7 +113,33 @@
                 CanReorderItems="True"
                 DragItemsCompleted="TaskList_DragItemsCompleted"
                 ReorderMode="Enabled"
-                SelectionMode="None">
+                SelectionMode="None"
+                HorizontalContentAlignment="Stretch">
+                <ListView.Footer>
+                    <Grid x:Name="NewTaskEntry" Margin="6,2" MinHeight="40"
+                          HorizontalAlignment="Stretch">
+                        <Button x:Name="AddTaskButton" Content="+"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                MinWidth="0" MinHeight="0" Padding="0" CornerRadius="8"
+                                Background="{StaticResource TodoAddBrush}"
+                                BorderBrush="{StaticResource TodoAddBorderBrush}"
+                                Foreground="{StaticResource TodoTextBrush}"
+                                Click="AddTaskButton_Click" />
+                        <TextBox x:Name="NewTaskBox" Visibility="Collapsed"
+                                 MinHeight="0" Padding="8,0" CornerRadius="8"
+                                 VerticalContentAlignment="Center"
+                                 FontFamily="{ThemeResource ContentControlThemeFontFamily}"
+                                 Background="{StaticResource TodoAddBrush}"
+                                 BorderBrush="{StaticResource TodoAddBorderBrush}"
+                                 Foreground="{StaticResource TodoTextBrush}"
+                                 HorizontalContentAlignment="Left" TextAlignment="Left"
+                                 AcceptsReturn="False" TextWrapping="NoWrap"
+                                 TextChanged="NewTaskBox_TextChanged"
+                                 LostFocus="NewTaskBox_LostFocus"
+                                 KeyDown="NewTaskBox_KeyDown" />
+                    </Grid>
+                </ListView.Footer>
                 <ListView.Resources>
                     <ResourceDictionary>
                         <ResourceDictionary.ThemeDictionaries>
@@ -266,7 +283,6 @@
             <InfoBar
                 x:Name="ErrorBar"
                 Grid.Row="1"
-                Grid.RowSpan="2"
                 Margin="10"
                 HorizontalAlignment="Stretch"
                 VerticalAlignment="Top"

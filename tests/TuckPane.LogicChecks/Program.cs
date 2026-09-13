@@ -7,6 +7,20 @@ using Windows.Storage;
 using System.Text.Json;
 using System.Xml.Linq;
 
+if (args is ["--note-todo-42"])
+{
+    await NoteTodo42Checks.RunAsync();
+    return;
+}
+
+if (args.Any(argument => argument.StartsWith("--note-save-failure", StringComparison.Ordinal)))
+{
+    if (args is not ["--note-save-failure"])
+        throw new ArgumentException("Expected --note-save-failure with no additional arguments.");
+    await NoteSaveFailureChecks.RunAsync();
+    return;
+}
+
 if (args.Any(argument => argument.StartsWith("--stability", StringComparison.Ordinal)))
 {
     if (args is not ["--stability", string stabilityArea])
@@ -43,6 +57,12 @@ if (args is ["--sep11-fixes", string sep11Area])
 if (args is ["--seven-features", string sevenFeatureArea])
 {
     await SevenFeatureChecks.RunAsync(sevenFeatureArea);
+    return;
+}
+
+if (args is ["--vertical-dock-visuals"])
+{
+    VerticalDockVisualChecks.Run();
     return;
 }
 

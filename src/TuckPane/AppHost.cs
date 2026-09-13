@@ -671,46 +671,37 @@ public sealed partial class AppHost : IDisposable
             Path.GetFullPath(AppPaths.ResolveStoragePath(item)).TrimEnd(Path.DirectorySeparatorChar)
                 .Equals(directory.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase));
         string oldFileName = Path.GetFileName(fullPath);
-        string newFileName = Path.GetFileName(targetPath);
         int orderIndex = organizer?.ItemOrder.FindIndex(item =>
             item.Equals(oldFileName, StringComparison.OrdinalIgnoreCase)) ?? -1;
         bool wasHidden = _trayHiddenExternalNotes.Contains(fullPath);
         _externalNoteWindows.TryGetValue(fullPath, out NoteWindow? window);
 
-        File.Move(fullPath, targetPath);
-        _externalNoteWindows.Remove(fullPath);
-        _trayHiddenExternalNotes.Remove(fullPath);
-        if (window is not null) _externalNoteWindows[targetPath] = window;
-        if (wasHidden) _trayHiddenExternalNotes.Add(targetPath);
-        if (orderIndex >= 0) organizer!.ItemOrder[orderIndex] = newFileName;
         try
         {
-            if (orderIndex >= 0) await SaveStateAsync();
+            await NoteRenameTransaction.RenameAsync(
+                fullPath,
+                targetPath,
+                () => window?.BeginDirectoryRenameAsync() ?? Task.CompletedTask,
+                () => window?.EndDirectoryRename(),
+                (oldPath, newPath) =>
+                {
+                    _externalNoteWindows.Remove(oldPath);
+                    _trayHiddenExternalNotes.Remove(oldPath);
+                    if (window is not null) _externalNoteWindows[newPath] = window;
+                    if (wasHidden) _trayHiddenExternalNotes.Add(newPath);
+                    if (orderIndex >= 0) organizer!.ItemOrder[orderIndex] = Path.GetFileName(newPath);
+                },
+                newPath => window?.RebindExternalPath(newPath),
+                () => orderIndex >= 0 ? SaveStateAsync() : Task.CompletedTask);
         }
-        catch (Exception saveError)
+        finally
         {
-            try
+            // Refresh only after the save gate is released, including a failed rollback that kept the new name.
+            if (organizer is not null && _windows.TryGetValue(organizer.Id, out MainWindow? owner))
             {
-                File.Move(targetPath, fullPath);
+                try { await owner.RefreshNotesAsync(); }
+                catch (Exception ex) { AppLogger.Error($"便携便签改名后刷新失败：{targetPath}", ex); }
             }
-            catch (Exception rollbackError)
-            {
-                AppLogger.Error($"便携便签改名状态保存失败：{targetPath}", saveError);
-                AppLogger.Error($"无法回滚便携便签改名：{targetPath}", rollbackError);
-                return targetPath;
-            }
-            if (orderIndex >= 0) organizer!.ItemOrder[orderIndex] = oldFileName;
-            _externalNoteWindows.Remove(targetPath);
-            if (window is not null) _externalNoteWindows[fullPath] = window;
-            _trayHiddenExternalNotes.Remove(targetPath);
-            if (wasHidden) _trayHiddenExternalNotes.Add(fullPath);
-            throw;
-        }
-
-        if (organizer is not null && _windows.TryGetValue(organizer.Id, out MainWindow? owner))
-        {
-            try { await owner.RefreshNotesAsync(); }
-            catch (Exception ex) { AppLogger.Error($"便携便签改名后刷新失败：{targetPath}", ex); }
         }
         return targetPath;
     }
@@ -829,42 +820,52 @@ public sealed partial class AppHost : IDisposable
 
     internal async Task SetNoteThemeAsync(NoteTheme theme)
     {
-        if (!Enum.IsDefined(theme)) throw new ArgumentOutOfRangeException(nameof(theme));
-        NoteTheme previous = State.GlobalSettings.NoteTheme;
-        State.GlobalSettings.NoteTheme = theme;
-        foreach (NoteDefinition note in State.Organizers.SelectMany(organizer => organizer.Notes)) note.Theme = theme;
-        try
-        {
-            await SaveStateAsync();
-        }
-        catch
-        {
-            State.GlobalSettings.NoteTheme = previous;
-            foreach (NoteDefinition note in State.Organizers.SelectMany(organizer => organizer.Notes)) note.Theme = previous;
-            throw;
-        }
+        if (!_dispatcher.HasThreadAccess)
+            throw new InvalidOperationException("Note themes must be selected on the UI dispatcher.");
+        IReadOnlyList<NoteThemeFailure> failures = await _noteThemeSynchronization.SetAsync(
+            State.GlobalSettings, () => State.Organizers.SelectMany(organizer => organizer.Notes).ToArray(),
+            theme, SaveStateAsync, () => CaptureNoteThemeTargets(theme));
+        foreach (NoteThemeFailure failure in failures)
+            AppLogger.Error($"主题同步失败：{failure.Target}", failure.Error);
+        if (failures.Count > 0)
+            throw new InvalidOperationException(AppStrings.Format("NoteThemeSyncErrorFormat", failures.Count),
+                new AggregateException(failures.Select(failure => failure.Error)));
+    }
 
-        foreach (NoteWindow window in _noteWindows.Values.Concat(_externalNoteWindows.Values))
-            await window.ApplyGlobalThemeAsync(theme);
-        foreach (TodoWindow window in _externalTodoWindows.Values)
-            await window.ApplyGlobalThemeAsync(theme);
+    private readonly NoteThemeSynchronization _noteThemeSynchronization = new();
 
+    private IReadOnlyList<NoteThemeTarget> CaptureNoteThemeTargets(NoteTheme theme)
+    {
+        var targets = new List<NoteThemeTarget>();
+        foreach (NoteWindow window in _noteWindows.Values.Concat(_externalNoteWindows.Values).ToArray())
+            targets.Add(new($"note:{window.Id}", () => window.ApplyGlobalThemeAsync(theme)));
+        foreach (TodoWindow window in _externalTodoWindows.Values.ToArray())
+            targets.Add(new($"todo:{window.ExternalPath}", () => window.ApplyGlobalThemeAsync(theme)));
         var openNotePaths = _externalNoteWindows.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var openTodoPaths = _externalTodoWindows.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var visitedRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (OrganizerDefinition organizer in State.Organizers)
+        foreach (OrganizerDefinition organizer in State.Organizers.ToArray())
         {
             string root;
             try { root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppPaths.ResolveStoragePath(organizer))); }
             catch (Exception ex)
             {
-                AppLogger.Error($"无法解析便签主题同步目录：{organizer.Id}", ex);
+                targets.Add(new($"directory:{organizer.Id}", () => Task.FromException(ex)));
                 continue;
             }
             if (!visitedRoots.Add(root)) continue;
-            _ = await _noteStore.ApplyThemeToTopLevelPortableFilesAsync(root, theme, openNotePaths);
-            _ = await _noteStore.ApplyThemeToTopLevelTodoFilesAsync(root, theme, openTodoPaths);
+            targets.Add(new($"note-files:{root}", async () =>
+            {
+                IReadOnlyList<string> failed = await _noteStore.ApplyThemeToTopLevelPortableFilesAsync(root, theme, openNotePaths);
+                if (failed.Count > 0) throw new IOException(string.Join(Environment.NewLine, failed));
+            }));
+            targets.Add(new($"todo-files:{root}", async () =>
+            {
+                IReadOnlyList<string> failed = await _noteStore.ApplyThemeToTopLevelTodoFilesAsync(root, theme, openTodoPaths);
+                if (failed.Count > 0) throw new IOException(string.Join(Environment.NewLine, failed));
+            }));
         }
+        return targets;
     }
 
     internal async Task DeleteNoteAsync(Guid organizerId, Guid noteId)

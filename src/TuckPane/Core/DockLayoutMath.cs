@@ -8,13 +8,15 @@ internal readonly record struct DockGeometry(double Width, double Height, double
     double EndInset, double CrossInset, double CornerRadius, int Count, DockOrientation Orientation)
 {
     internal double HorizontalInset => Orientation == DockOrientation.Horizontal ? EndInset : CrossInset;
+    internal double LeftInset => Orientation == DockOrientation.Vertical ? CrossInset * 1.2 : EndInset;
+    internal double RightInset => Orientation == DockOrientation.Vertical ? CrossInset * .8 : EndInset;
     internal double VerticalInset => Orientation == DockOrientation.Vertical ? EndInset : CrossInset;
     internal double TopInset => Orientation == DockOrientation.Horizontal ? CrossInset * .75 : EndInset;
     internal double BottomInset => Orientation == DockOrientation.Horizontal ? CrossInset * 1.25 : EndInset;
 
     internal Vector2 ItemCenter(int index) => Orientation == DockOrientation.Horizontal
         ? new((float)(EndInset + IconSize / 2 + index * Pitch), (float)(TopInset + IconSize / 2))
-        : new((float)(Width / 2), (float)(EndInset + IconSize / 2 + index * Pitch));
+        : new((float)(LeftInset + IconSize / 2), (float)(EndInset + IconSize / 2 + index * Pitch));
 
     internal bool Contains(Vector2 point)
     {

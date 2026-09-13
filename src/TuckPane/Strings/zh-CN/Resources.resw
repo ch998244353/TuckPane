@@ -432,4 +432,7 @@
   <data name="UpdateReleaseNotes" xml:space="preserve"><value>版本说明</value></data>
   <data name="UpdateNoNotes" xml:space="preserve"><value>暂无新版本说明。</value></data>
   <data name="UpdateBackupLocation" xml:space="preserve"><value>配置备份：{0}</value></data>
+  <data name="NoteThemeChangeErrorFormat" xml:space="preserve"><value>主题未完全同步：{0}</value></data>
+  <data name="NoteThemeSyncErrorFormat" xml:space="preserve"><value>主题已应用，但有 {0} 个窗口或目录同步失败。请重试。</value></data>
+  <data name="NoteThemeDocumentSaveFailed" xml:space="preserve"><value>主题文档未能保存，请检查文件是否存在且可写。</value></data>
 </root>

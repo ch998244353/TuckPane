@@ -7,6 +7,12 @@ internal readonly record struct DockTipPlacement(HoverRect Bounds, DockTipSide S
 
 internal static class DockVisualMath
 {
+    // All coordinates are in the hover viewport. Only the layout displacement
+    // moves a vertical running dot; magnification and launch bounce do not.
+    internal static Vector2 VerticalRunningDotCenter(float surfaceLeft, float leftInset,
+        HoverRect baselineIcon, float translationY) =>
+        new(surfaceLeft + leftInset / 2, baselineIcon.Center.Y + translationY);
+
     internal static HoverRect TipWorkArea(HoverRect workArea)
     {
         float insetX = Math.Min(8, Math.Max(0, (workArea.Width - 1) / 2));

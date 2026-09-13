@@ -432,4 +432,7 @@ Storage path: {2}</value></data>
   <data name="UpdateReleaseNotes" xml:space="preserve"><value>Release notes</value></data>
   <data name="UpdateNoNotes" xml:space="preserve"><value>No new release notes.</value></data>
   <data name="UpdateBackupLocation" xml:space="preserve"><value>Settings backup: {0}</value></data>
+  <data name="NoteThemeChangeErrorFormat" xml:space="preserve"><value>Theme synchronization did not complete: {0}</value></data>
+  <data name="NoteThemeSyncErrorFormat" xml:space="preserve"><value>The theme was applied, but {0} windows or folders could not be synchronized. Please retry.</value></data>
+  <data name="NoteThemeDocumentSaveFailed" xml:space="preserve"><value>The themed document could not be saved. Check that the file exists and is writable.</value></data>
 </root>

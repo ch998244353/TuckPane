@@ -116,9 +116,9 @@ public sealed partial class MainWindow
         ItemsScrollView.Margin = new Thickness(0);
         ItemsScrollView.HorizontalScrollMode = ScrollingScrollMode.Disabled;
         ItemsScrollView.VerticalScrollMode = ScrollingScrollMode.Disabled;
-        ItemsRepeater.Margin = new Thickness(_dockGeometry.HorizontalInset, _dockGeometry.TopInset,
-            _dockGeometry.HorizontalInset, _dockGeometry.BottomInset);
-        ItemsRepeater.Width = Math.Max(1, _dockGeometry.Width - 2 * _dockGeometry.HorizontalInset);
+        ItemsRepeater.Margin = new Thickness(_dockGeometry.LeftInset, _dockGeometry.TopInset,
+            _dockGeometry.RightInset, _dockGeometry.BottomInset);
+        ItemsRepeater.Width = Math.Max(1, _dockGeometry.Width - _dockGeometry.LeftInset - _dockGeometry.RightInset);
         ItemsRepeater.Height = Math.Max(1, _dockGeometry.Height - _dockGeometry.TopInset - _dockGeometry.BottomInset);
         // A Dock is one unbroken axis. UniformGridLayout can wrap the last
         // element after a rounded size/spacing change into a clipped second row.
