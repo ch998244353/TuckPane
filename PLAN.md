@@ -30,7 +30,7 @@
 - [ ] 主题原因证据、修复完成与回读
 - [x] 标题栏完成与回读（44→26.4，34→20.4，文字15不变）
 - [x] 定向检查及 Release 编译通过（2026-09-13；三组 PASS；无 GUI）
-- [ ] 4.2.0 候选产物与源码提交对应
+- [x] 4.2.0 候选产物与源码提交对应：800d59f
 - [ ] CW 本机部署与校验
 - [ ] 用户手测通过
 - [ ] 正式发布并校验
@@ -51,3 +51,12 @@
 - XML 静态检查通过：页脚归属、双标题栏26.4、按钮20.4、标题15、输入默认隐藏及圆角8。git diff --check 通过。
 - sub-agent 独立只读审查未发现可证实现缺陷；不包含 footer 真正宽度/高字号渲染确认。
 - 资源参考：[WinUI ResourceDictionary Insert](https://github.com/microsoft/microsoft-ui-xaml/blob/main/dxaml/xcp/dxaml/lib/ResourceDictionary_partial.cpp#L143)、[官方共享 Brush 文档](https://learn.microsoft.com/en-us/windows/apps/develop/platform/xaml/brushes)。源码契约支持稳定资源引用策略，但不证明本机 COM 根因。
+
+## 候选产物与安装前回读
+- 源码候选提交：`800d59f`（包含用户确认保留的既有未提交改动）；尚未推送发布标签。
+- 构建：`scripts/build-release.ps1 -Version 4.2.0 -OutputName v4.2.0-candidate`，退出 0。日志 `artifacts/v4.2-work/build-release.log`。
+- 产物目录：`artifacts/release/v4.2.0-candidate`；setup.exe 346857125 bytes，portable.zip 129782375 bytes，SHA256SUMS.txt 203 bytes。
+- 打包校验 PASS：两附件 SHA-256；ZIP 内 543 个清单文件与本地 publish 全部哈希一致；EXE 和 Updater 版本均 4.2.0.0。证据 `artifacts/v4.2-work/package-check.json`。
+- 安装前回读完成：只能用户正常退出后部署，不能强杀、不能自动启动。当前仍检测到 `app/current/TuckPane.exe` PID 26940，因此未安装、未调用 CW 部署、未触及 app/current。
+- 已准备并通过 PowerShell 语法解析的确定性安装脚本：`artifacts/v4.2-work/install-candidate.ps1`。待退出后交 CW 的 command 模式执行；脚本验证候选清单→备份 app/current→复制并核验→保留额外文件；失败恢复备份。
+- 下一步：确认进程已退出后调用 CW 执行脚本、验收 install-result.json，更新本计划，再交用户手测。原生 COM 候选修复门槛仍待手测，不能据逻辑 PASS 发布正式版。
