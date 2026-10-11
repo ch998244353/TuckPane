@@ -69,7 +69,7 @@ foreach ($version in @('3.0.9', '3.1.0')) {
     if (-not (Test-Path -LiteralPath (Join-Path $publish 'licenses'))) {
         Copy-Item -LiteralPath (Join-Path $productionRoot 'licenses') -Destination $publish -Recurse
     }
-    Copy-Item -LiteralPath (Join-Path $publish 'TuckPane.exe') -Destination (Join-Path $publish '00-启动 TuckPane.exe')
+    & (Join-Path $PSScriptRoot 'publish-portable-launcher.ps1') -PublishDirectory $publish
     Write-Manifest $publish $version
     $installed = Join-Path $runRoot "installed-payload-$version"
     Copy-Directory $publish $installed

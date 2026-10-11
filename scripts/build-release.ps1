@@ -1,9 +1,9 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '4.2.0',
+    [string]$Version = '4.2.1',
     [ValidatePattern('^[a-zA-Z0-9.-]+$')]
-    [string]$OutputName = 'v4.2.0'
+    [string]$OutputName = 'v4.2.1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -121,12 +121,7 @@ $publishLicenses = Join-Path $publishRoot 'licenses'
 New-Item -ItemType Directory -Path $publishLicenses -Force | Out-Null
 Copy-Item -Path (Join-Path $projectRoot 'licenses\*') -Destination $publishLicenses -Recurse -Force
 
-$portableLauncher = Join-Path $publishRoot '00-启动 TuckPane.exe'
-Copy-Item -LiteralPath (Join-Path $publishRoot 'TuckPane.exe') -Destination $portableLauncher
-if ((Get-FileHash -LiteralPath $portableLauncher -Algorithm SHA256).Hash -ne
-    (Get-FileHash -LiteralPath (Join-Path $publishRoot 'TuckPane.exe') -Algorithm SHA256).Hash) {
-    throw 'Portable launcher does not match TuckPane.exe.'
-}
+& (Join-Path $PSScriptRoot 'publish-portable-launcher.ps1') -PublishDirectory $publishRoot
 
 $privateArtifacts = @(Get-ChildItem -LiteralPath $publishRoot -Recurse -File | Where-Object {
     $_.Extension -eq '.pdb' -or $_.Name -in @('state.json', 'state.json.bak') -or $_.Extension -eq '.log'
@@ -141,6 +136,8 @@ Get-ChildItem -LiteralPath $publishRoot -File -Recurse | Sort-Object FullName | 
     $programFiles[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 @{ Version = $Version; Files = $programFiles } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $publishRoot 'update-files.json') -Encoding utf8
+
+& (Join-Path $PSScriptRoot 'check-portable-launcher.ps1') -PublishDirectory $publishRoot
 
 $isccCandidates = @(
     (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),

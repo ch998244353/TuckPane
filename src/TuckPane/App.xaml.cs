@@ -32,6 +32,7 @@ public static class Program
         {
             AppLogger.Record(DiagnosticArea.Runtime, DiagnosticStage.Failed, exception: ex);
             try { AppLogger.FlushAsync().Wait(TimeSpan.FromMilliseconds(300)); } catch { }
+            StartupFailure.Show(ex);
             return 1;
         }
     }
@@ -61,7 +62,7 @@ public static class Program
         });
         AppLogger.Lifecycle("message-loop-ended", "source=Application.Start");
         try { AppLogger.FlushAsync().Wait(TimeSpan.FromMilliseconds(300)); } catch { }
-        return 0;
+        return Environment.ExitCode;
     }
 
     private static string CreateInstanceKey()
@@ -133,6 +134,7 @@ public partial class App : Application
         {
             AppLogger.Error("TuckPane 初始化失败。", ex);
             AppLogger.Lifecycle("exit-request", $"source=OnLaunched reason=initialization-failed type={ex.GetType().FullName} hresult=0x{ex.HResult:X8}");
+            StartupFailure.Show(ex);
             Exit();
         }
     }
