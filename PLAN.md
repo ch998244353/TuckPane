@@ -12,9 +12,14 @@
 ## 发布门槛
 - [x] 审核相对 v4.2.0 的差异，确认只有本次修复、专项检查和发布元数据。
 - [x] 本地 Release 编译及无界面启动器专项通过；不运行 GUI/鼠标/旧全量测试。
-- [ ] 提交并推送 main 与 v4.2.1 标签，由既有 GitHub Actions 构建并发布。
-- [ ] 核对 Actions、latest Release、三个附件大小及哈希、ZIP 内全部清单文件、主程序/更新器版本。
+- [x] 提交并推送 main 与 v4.2.1 标签，由既有 GitHub Actions 构建并发布。
+- [x] 核对 Actions、latest Release、附件元数据和已下载 SHA256SUMS.txt；三个 GitHub 服务端摘要与校验清单一致。
+- [ ] 完整下载云端安装包/ZIP 并复核内容：TLS/EOF 后持续停滞，未完成；部分下载保留为 .partial，不作为完整包交付。
 - [x] 记录真实 WinUI 首次启动、托盘、错误弹窗和用户真实更新仍待手测。
 
 ## 验证记录
 - 本地构建成功，主程序/更新器为 4.2.1.0；启动器专项全部通过，构建期源码快照未变化，未运行真实应用或修改已安装版本。
+
+- 已发布：https://github.com/ch998244353/TuckPane/releases/tag/v4.2.1 。标签提交 690d9f3d1c6ccc7c33abf4080638ad760a21f1f5，Actions 38152182368 成功（3m41s），latest 为 v4.2.1。
+- 本地 ZIP 546 个文件哈希、setup/portable 校验清单和主程序/更新器 4.2.1.0 已核对；正式附件的本机完整下载复核受网络阻塞，不能等同于本地产物复核。
+- 原工作区和安装程序未改动；GUI/真实更新仍待用户手测。发布证据在独立工作区 artifacts/release-evidence/publication-result.json。
