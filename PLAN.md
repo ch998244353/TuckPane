@@ -1,5 +1,14 @@
 # TuckPane 性能、交互与稳定性优化
 
+## GitHub 4.2.12 发布（2026-11-28）
+
+- 用户要求将本机当前版本发送到 GitHub；当前源码和安装版本均为 4.2.12，目标仓库为 `ch998244353/TuckPane`。
+- 本地已有变更先保存为提交 `1918de0`，再合并 GitHub `main` 的 4.2.1 启动器修复及发布记录（`690d9f3`、`fc3328e`），保留当前 4.2.12 功能与既有发布历史。
+- 统一 README 下载地址、发布说明和应用清单版本；沿用现有标签触发的 GitHub Actions，由同一源码提交生成安装包、便携包及 SHA-256 校验文件。
+- 本地发布前门槛通过：版本元数据、发布脚本语法和 `git diff --check` 均通过。隔离目录 `artifacts/checks/v4.2.12-github` 的 Release x64 编译成功、0 错误；PRI 生成报告 5 条与带版本号的输出目录名有关的限定符警告。
+- 七项非 GUI 定向检查通过：`--vertical-dock-visuals`、`--dock-stability running-samples`、`--dock-stability resize`、`--dock-stability hover`、`--drag-drop-fixes dock`、`--stability drop`、`--stability storage`。结果在 `artifacts/release-evidence/v4.2.12-github/local-checks.json`。
+- 云端发布待推送标签后核验；不运行桌面 GUI 自动化，不修改本机安装及用户数据。
+
 ## 基线与范围
 
 本机容器的活动工作树是 `source`，已安装的 4.2.10 位于 `app/current`。`release-4.2.1` 是历史工作树。沿用活动工作树的已有变更，只覆盖本主 Plan；窗口对齐专题计划保留。版本选择 4.2.11，以超越现已安装的 4.2.10。用户目录与程序目录分离，本机仍在用 `%USERPROFILE%\GlassFolder` 和 `%LOCALAPPDATA%\GlassFolder` 兼容根。沿用旧状态结构、真实收纳目录、便签/待办格式、拖拽操作协商及安装 AppId。
