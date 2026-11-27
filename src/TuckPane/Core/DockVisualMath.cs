@@ -1,4 +1,5 @@
 using System.Numerics;
+using TuckPane.Models;
 
 namespace TuckPane.Core;
 
@@ -7,11 +8,12 @@ internal readonly record struct DockTipPlacement(HoverRect Bounds, DockTipSide S
 
 internal static class DockVisualMath
 {
-    // All coordinates are in the hover viewport. Only the layout displacement
-    // moves a vertical running dot; magnification and launch bounce do not.
-    internal static Vector2 VerticalRunningDotCenter(float surfaceLeft, float leftInset,
-        HoverRect baselineIcon, float translationY) =>
-        new(surfaceLeft + leftInset / 2, baselineIcon.Center.Y + translationY);
+    // Coordinates are relative to the expanded content layer. Keep the dot in its
+    // gutter while following the icon along the Dock's layout axis.
+    internal static Vector2 RunningDotCenter(DockGeometry dock, float surfaceHeight, Vector2 iconCenter) =>
+        dock.Orientation == DockOrientation.Horizontal
+            ? new(iconCenter.X, surfaceHeight - Math.Max(5, (float)dock.BottomInset / 2))
+            : new((float)dock.LeftInset / 2, iconCenter.Y);
 
     internal static HoverRect TipWorkArea(HoverRect workArea)
     {

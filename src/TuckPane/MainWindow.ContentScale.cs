@@ -12,8 +12,11 @@ public sealed partial class MainWindow
 
     private (double Width, double Height) GetScaledGridCellSize(double width, double height)
     {
-        double scale = ContentScale;
-        var cell = DisplayPlacementService.CalculateItemCellSizeDip(width / scale, height / scale, _definition.Layout);
-        return (cell.Width * scale, cell.Height * scale);
+        if (_canvasResize is null && _host.UsesUnifiedExpanded(_definition))
+        {
+            double unifiedCell = _host.State.GlobalSettings.UniformIconExpandedCellDip;
+            return (unifiedCell, unifiedCell);
+        }
+        return DisplayPlacementService.CalculateScaledItemCellSizeDip(width, height, _definition.Layout, ContentScale);
     }
 }

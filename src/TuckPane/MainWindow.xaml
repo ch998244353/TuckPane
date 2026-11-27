@@ -425,6 +425,10 @@
                                         Text="{Binding Name}"
                                         TextAlignment="Center"
                                         TextTrimming="CharacterEllipsis" />
+                                    <TextBox x:Name="ItemNameEditor" Visibility="Collapsed"
+                                        MinWidth="0" MinHeight="24" Padding="3,0"
+                                        FontFamily="Segoe UI Variable Text" AcceptsReturn="False"
+                                        KeyDown="ItemNameEditor_KeyDown" LostFocus="ItemNameEditor_LostFocus" />
                                 </StackPanel>
                             </Border>
                         </DataTemplate>

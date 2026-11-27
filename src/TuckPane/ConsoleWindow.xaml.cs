@@ -24,7 +24,6 @@ namespace TuckPane;
 
 public sealed partial class ConsoleWindow : Window
 {
-    private const double ConsoleCornerRadiusDip = 18;
     private readonly AppHost _host;
     private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private readonly Windows.UI.ViewManagement.AccessibilitySettings _accessibilitySettings = new();
@@ -46,7 +45,6 @@ public sealed partial class ConsoleWindow : Window
     private readonly ThemeBackdrop _themeBackdrop = new(ThemeTarget.Settings, "settings");
     private readonly ThemeSurface _themeSurface;
     private readonly ThemeEdgeSurface _settingsEdgeSurface;
-    private RectangleClip? _consoleContentClip;
     private XamlRoot? _consoleXamlRoot;
     private bool _closingPermanently;
     private bool _componentReady;
@@ -108,7 +106,7 @@ public sealed partial class ConsoleWindow : Window
         _themeBackdrop.Attach(ConsoleSurfaceHost);
         _themeSurface = new ThemeSurface(ConsoleSurfaceHost);
         _settingsEdgeSurface = new ThemeEdgeSurface(SettingsEdgeOverlay);
-        ConsoleSurfaceHost.CornerRadius = new CornerRadius(ConsoleCornerRadiusDip);
+        ConsoleSurfaceHost.CornerRadius = new CornerRadius(0);
         ConsoleContentLayer.Loaded += ConsoleContentLayer_Loaded;
         ConsoleContentLayer.SizeChanged += ConsoleContentLayer_SizeChanged;
         _errorInfoBarTimer = DispatcherQueue.CreateTimer();
@@ -126,6 +124,7 @@ public sealed partial class ConsoleWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(TitleBarDragRegion);
         _componentReady = true;
+        InitializeUnifiedExpandedControls();
         _defaultAddName = AppStrings.DefaultOrganizerName;
         _loadingDefaultName = true;
         AddNameBox.Text = _defaultAddName;
@@ -197,7 +196,8 @@ public sealed partial class ConsoleWindow : Window
         // The theme backdrop owns all desktop sampling and blur.  Keep the
         // native chrome from extending any frame into the client area so DWM
         // cannot add an independent sheet-of-glass blur.
-        _chrome = new NativeWindowChromeController(Hwnd, DispatcherQueue, extendClientFrame: false, applyBorderLast: true);
+        _chrome = new NativeWindowChromeController(Hwnd, DispatcherQueue, extendClientFrame: false, applyBorderLast: true,
+            preferSystemCorners: true);
         Activated += ConsoleWindow_Activated;
         Closed += ConsoleWindow_Closed;
         ApplyNativeWindowChrome();
@@ -212,7 +212,9 @@ public sealed partial class ConsoleWindow : Window
         ApplyConsoleSurfacePalette();
         Color background = GetSurfaceBrush("ConsolePageSurfaceBrush").Color;
         ThemeValues theme = new(ToArgb(background), 0, BlurStrength: 0, SolidColorMode: true, SolidOpacity: 1);
-        ConsoleRoot.Background = new SolidColorBrush(Colors.Transparent);
+        // Fill the full client area; DWM owns the one external rounded outline.
+        // An independent 18-DIP transparent cutout exposed a gap inside that frame.
+        ConsoleRoot.Background = new SolidColorBrush(background);
         const bool useEffects = false;
         _themeBackdrop.SetTheme(theme, useEffects);
         _themeSurface.SetTheme(theme, useEffects);
@@ -225,6 +227,7 @@ public sealed partial class ConsoleWindow : Window
 
     public void RefreshAll(Guid? selectId = null)
     {
+        UpdateUnifiedExpandedControls();
         UpdateThemeControls();
         UpdateStartupToggle();
         UpdateFolderMenuControls();
@@ -296,6 +299,7 @@ public sealed partial class ConsoleWindow : Window
         MissingStorageInfo.Title = AppStrings.Get("MissingStorage");
         ApplyLocalizedTree(ConsoleRoot);
         UpdateOrganizerPreferenceControls();
+        UpdateUnifiedExpandedControls();
         UpdateFolderMenuControls();
         PopulateDisplayCombos();
         ApplyTypography(ConsoleRoot);
@@ -484,12 +488,6 @@ public sealed partial class ConsoleWindow : Window
         ConsoleContentLayer.Loaded -= ConsoleContentLayer_Loaded;
         ConsoleContentLayer.SizeChanged -= ConsoleContentLayer_SizeChanged;
         AttachConsoleXamlRoot(null);
-        if (_consoleContentClip is not null)
-        {
-            ElementCompositionPreview.GetElementVisual(ConsoleContentLayer).Clip = null;
-            _consoleContentClip.Dispose();
-            _consoleContentClip = null;
-        }
         try { _themeBackdrop.DetachAndClose(); }
         catch (Exception ex) { AppLogger.Error("Console backdrop close failed.", ex); }
         _host.ThemeChanged -= Host_ThemeChanged;
@@ -533,26 +531,12 @@ public sealed partial class ConsoleWindow : Window
     private void UpdateConsoleSurfaceGeometry()
     {
         if (!ConsoleContentLayer.IsLoaded) return;
-        RoundedSurfaceGeometry surface = RoundedSurfaceGeometry.Create(
-            ConsoleContentLayer.ActualWidth, ConsoleContentLayer.ActualHeight,
-            ConsoleCornerRadiusDip, ConsoleContentLayer.XamlRoot?.RasterizationScale ?? 1);
-        ConsoleSurfaceHost.CornerRadius = new CornerRadius(surface.Radius);
-        _themeSurface.SetCornerRadius(surface.Radius);
-        _settingsEdgeSurface.SetCornerRadius(surface.Radius);
-
-        Visual contentVisual = ElementCompositionPreview.GetElementVisual(ConsoleContentLayer);
-        contentVisual.BorderMode = CompositionBorderMode.Soft;
-        _consoleContentClip ??= contentVisual.Compositor.CreateRectangleClip();
-        _consoleContentClip.Left = 0;
-        _consoleContentClip.Top = 0;
-        _consoleContentClip.Right = surface.Width;
-        _consoleContentClip.Bottom = surface.Height;
-        Vector2 radius = new(surface.Radius);
-        _consoleContentClip.TopLeftRadius = radius;
-        _consoleContentClip.TopRightRadius = radius;
-        _consoleContentClip.BottomLeftRadius = radius;
-        _consoleContentClip.BottomRightRadius = radius;
-        contentVisual.Clip = _consoleContentClip;
+        ConsoleSurfaceHost.CornerRadius = new CornerRadius(0);
+        _themeSurface.SetCornerRadius(0);
+        _settingsEdgeSurface.SetCornerRadius(0);
+        ElementCompositionPreview.GetElementVisual(ConsoleContentLayer).Clip = null;
+        // Includes monitor DPI changes. No extra XAML alpha edge is introduced.
+        _chrome?.QueueApply();
     }
 
     private void ApplyNativeWindowChrome(bool refreshFrame = false)
@@ -1809,7 +1793,11 @@ public sealed partial class ConsoleWindow : Window
         ManageColumnsSlider.SetModelValue(source.Layout.Columns);
         ManageCompactScaleSlider.SetModelValue(source.CompactScale);
         ManageCanvasScaleSlider.SetModelValue(source.CanvasScale);
-        ManageItemScaleSlider.SetModelValue(source.ItemScale);
+        ManageItemScaleSlider.Minimum = .5;
+        ManageItemScaleSlider.Maximum = DisplayPlacementService.MaximumItemScale;
+        ManageItemScaleSlider.SetModelValue(OrganizerKinds.IsRegular(source.PlacementMode)
+            ? OrganizerContentScale.IconItemScale(source.ItemScale, source.IconContentScale)
+            : source.ItemScale);
         string path = AppPaths.ResolveStoragePath(source);
         ManagePathBox.Text = path;
         bool missing = !Directory.Exists(path);
@@ -1832,7 +1820,9 @@ public sealed partial class ConsoleWindow : Window
                     ManageDockIconSizeSlider.Value, ManageDockSpacingSlider.Value);
             return;
         }
-        UpdateManageControls();
+        _handlingUnifiedManageInput = true;
+        try { UpdateManageControls(); }
+        finally { _handlingUnifiedManageInput = false; }
         ManageNameError.Visibility = ManagedPlacementMode != OrganizerPlacementMode.Station &&
             string.IsNullOrWhiteSpace(ManageNameBox.Text) ? Visibility.Visible : Visibility.Collapsed;
         _manageChangeVersion++;
@@ -1881,9 +1871,10 @@ public sealed partial class ConsoleWindow : Window
         (int rows, int columns) = ReadGridDimensions(ManageRowsSlider, ManageColumnsSlider, station);
         var layout = new OrganizerLayout { Mode = OrganizerLayoutMode.Grid, Rows = rows, Columns = columns };
         MainWindow? window = _selectedId is Guid id ? _host.Windows.FirstOrDefault(item => item.OrganizerId == id) : null;
+        if (UpdateUnifiedManageControls()) { _adjustingManageControls = false; return; }
         DisplayInfo display = station
             ? DisplayPlacementService.GetDisplay(SelectedDisplayDevice(ManageDisplayCombo))
-            : window is null ? GetPrimaryDisplay() : DisplayPlacementService.ForBounds(window.CompactBounds);
+            : window?.UnifiedExpandedDisplay ?? GetPrimaryDisplay();
         double canvas = ManageCanvasScaleSlider.Value;
         double maximumItemScale;
         if (station)
@@ -1906,25 +1897,11 @@ public sealed partial class ConsoleWindow : Window
             }
             if (ManageCanvasScaleSlider.Value < ManageCanvasScaleSlider.Minimum) ManageCanvasScaleSlider.SetModelValue(ManageCanvasScaleSlider.Minimum);
             canvas = ManageCanvasScaleSlider.Value;
-            if (_editing?.ManualCanvasBaseWidthDip is double manualWidth &&
-                _editing.ManualCanvasBaseHeightDip is double manualHeight)
-            {
-                NativeMethods.RECT work = DisplayPlacementService.GetExpandedWorkArea(display);
-                double availablePanelHeightDip = Math.Max(
-                    1,
-                    work.Height / display.Scale - DisplayPlacementService.ExpandedTitleBandDip);
-                double fit = Math.Min(1, Math.Min(
-                    work.Width / display.Scale / (manualWidth * canvas),
-                    availablePanelHeightDip / (manualHeight * canvas)));
-                maximumItemScale = DisplayPlacementService.CalculateMaximumItemScaleForExpandedSize(
-                    layout,
-                    manualWidth * canvas * fit,
-                    manualHeight * canvas * fit);
-            }
-            else
-            {
-                maximumItemScale = DisplayPlacementService.CalculateMaximumItemScale(display, layout, canvas);
-            }
+            bool keepManualSize = _editing is { Layout: var currentLayout } &&
+                currentLayout.Rows == rows && currentLayout.Columns == columns;
+            maximumItemScale = DisplayPlacementService.CalculateMaximumIconItemScaleForPanel(
+                display, layout, canvas, keepManualSize ? _editing?.ManualCanvasBaseWidthDip : null,
+                keepManualSize ? _editing?.ManualCanvasBaseHeightDip : null, _editing?.IconContentScale ?? 1);
         }
         ManageItemScaleSlider.Maximum = maximumItemScale;
         if (ManageItemScaleSlider.Value > ManageItemScaleSlider.Maximum) ManageItemScaleSlider.SetModelValue(ManageItemScaleSlider.Maximum);
@@ -1965,7 +1942,9 @@ public sealed partial class ConsoleWindow : Window
         (_editing.Layout.Rows, _editing.Layout.Columns) = (rows, columns);
         _editing.CompactScale = ManageCompactScaleSlider.Value;
         _editing.CanvasScale = ManageCanvasScaleSlider.Value;
-        _editing.ItemScale = ManageItemScaleSlider.Value;
+        bool unified = !station && UnifiedExpandedSize.Get(_host.State.GlobalSettings, _editing.ExpandedContentMode).Enabled;
+        _editing.ItemScale = station || unified ? ManageItemScaleSlider.Value
+            : OrganizerContentScale.StoreIconItemScale(ManageItemScaleSlider.Value, _editing.IconContentScale);
         return Clone(_editing);
     }
 

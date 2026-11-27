@@ -4,6 +4,15 @@ internal static class OrganizerContentScale
 {
     internal static double Normalize(double scale) => double.IsFinite(scale) ? Math.Clamp(scale, .1, 4) : 1;
 
+    internal static double IconItemScale(double storedScale, double contentScale) =>
+        NormalizeIconItemScale(storedScale * Normalize(contentScale));
+
+    internal static double StoreIconItemScale(double scale, double contentScale) =>
+        NormalizeIconItemScale(scale) / Normalize(contentScale);
+
+    private static double NormalizeIconItemScale(double scale) =>
+        double.IsFinite(scale) ? Math.Clamp(scale, .5, 1.65) : 1;
+
     // Bounds and content share one factor; a constrained axis must never scale independently.
     internal static (double Min, double Max) FactorRange(double width, double height,
         double minimumWidth, double minimumHeight, double maximumWidth, double maximumHeight,

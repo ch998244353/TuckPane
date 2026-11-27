@@ -32,6 +32,8 @@ public sealed partial class TodoWindow : Window
     private readonly WindowThemeBrushes _themeBrushes = new();
     private readonly NoteStore _store;
     private readonly PortableTodoDocument _document;
+    private readonly TodoPlacementRecovery _placementRecovery;
+    private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private readonly ObservableCollection<TodoRow> _rows;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _saveTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _completionTimer;
@@ -59,6 +61,8 @@ public sealed partial class TodoWindow : Window
     private bool _renaming;
     private bool _renameCommitInProgress;
     private bool _syncingTaskCheckBox;
+    private bool _saveErrorVisible;
+    private int _taskEditRequest;
 
     internal TodoWindow(AppHost host, NoteStore store, string path, PortableTodoDocument document)
     {
@@ -66,6 +70,8 @@ public sealed partial class TodoWindow : Window
         _store = store;
         _externalPath = Path.GetFullPath(path);
         _document = document;
+        _placementRecovery = new TodoPlacementRecovery(document.Placement);
+        _document.Placement = _placementRecovery.CaptureForSave(document.Placement);
         bool removedExpired = TodoRules.RemoveExpired(_document, DateTimeOffset.UtcNow) > 0;
         _rows = new ObservableCollection<TodoRow>(_document.Tasks.Select(task =>
             new TodoRow(task, _document.FontSize, _host.State.GlobalSettings.TodoShowSeparators)));
@@ -76,6 +82,7 @@ public sealed partial class TodoWindow : Window
         SystemBackdrop = new TransparentTintBackdrop(Colors.Transparent);
         TaskList.ItemsSource = _rows;
         UpdateComposerMetrics();
+        _uiSettings.TextScaleFactorChanged += TextScaleFactorChanged;
         WindowRoot.AddHandler(UIElement.PointerWheelChangedEvent,
             new PointerEventHandler(WindowRoot_PointerWheelChanged), handledEventsToo: true);
 
@@ -241,6 +248,8 @@ public sealed partial class TodoWindow : Window
         ToolTipService.SetToolTip(ColorButton, AppStrings.Get("TodoColor"));
         AutomationProperties.SetName(SeparatorsButton, AppStrings.Get("TodoSeparators"));
         ToolTipService.SetToolTip(SeparatorsButton, AppStrings.Get("TodoSeparators"));
+        AutomationProperties.SetName(MinimizeButton, AppStrings.Get("WindowMinimize"));
+        ToolTipService.SetToolTip(MinimizeButton, AppStrings.Get("WindowMinimize"));
         AutomationProperties.SetName(CloseButton, AppStrings.Get("CloseTodo"));
         ToolTipService.SetToolTip(CloseButton, AppStrings.Get("CloseTodo"));
         foreach (TodoRow row in _rows) row.ApplyLanguage();
@@ -287,13 +296,19 @@ public sealed partial class TodoWindow : Window
         try
         {
             _document.Tasks = _rows.Select(row => row.Task).ToList();
+            _document.Placement = _placementRecovery.CaptureForSave(_document.Placement);
             await _store.SaveTodoAsync(_externalPath, _document);
+            if (_saveErrorVisible)
+            {
+                ErrorBar.IsOpen = false;
+                _saveErrorVisible = false;
+            }
             return true;
         }
         catch (Exception ex)
         {
             AppLogger.Error($"无法保存待办：{_externalPath}", ex);
-            ShowError(AppStrings.Format("TodoSaveErrorFormat", ex.Message));
+            ShowError(AppStrings.Format("TodoSaveErrorFormat", ex.Message), isSaveError: true);
             return false;
         }
     }
@@ -317,6 +332,7 @@ public sealed partial class TodoWindow : Window
         e.Handled = true;
         if (_composer.Submit(_document) is not PortableTodoTask task) return;
         _rows.Add(new TodoRow(task, _document.FontSize, _host.State.GlobalSettings.TodoShowSeparators));
+        UpdateComposerMetrics();
         RefreshComposer(focusAdd: true);
         ScheduleSave();
         _ = DispatcherQueue.TryEnqueue(() => NewTaskEntry.StartBringIntoView());
@@ -354,13 +370,21 @@ public sealed partial class TodoWindow : Window
         var line = new TextBlock
         {
             Text = "Ag中", FontSize = _document.FontSize,
-            FontFamily = NewTaskBox.FontFamily
+            FontFamily = NewTaskBox.FontFamily,
+            IsTextScaleFactorEnabled = NewTaskBox.IsTextScaleFactorEnabled
         };
         line.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        // Matches row padding 8+4 and the checkbox target (20 plus top margin 1).
-        NewTaskEntry.Height = Math.Max(40, Math.Max(21, line.DesiredSize.Height) + 12 +
-            (_host.State.GlobalSettings.TodoShowSeparators ? 1 : 0));
+        double height = TodoRowMetrics.SingleLineHeight(
+            _document.FontSize, line.DesiredSize.Height, _host.State.GlobalSettings.TodoShowSeparators);
+        NewTaskEntry.Height = height;
+        foreach (TodoRow row in _rows) row.SingleLineHeight = height;
     }
+
+    private void TextScaleFactorChanged(Windows.UI.ViewManagement.UISettings sender, object args) =>
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_permanentClose) UpdateComposerMetrics();
+        });
 
     private void TaskCheckTarget_Tapped(object sender, TappedRoutedEventArgs e)
     {
@@ -382,26 +406,9 @@ public sealed partial class TodoWindow : Window
         ScheduleSave();
     }
 
-    private void UndoTask_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: TodoRow row }) return;
-        TodoRules.SetDone(row.Task, done: false, DateTimeOffset.UtcNow);
-        row.RefreshVisual(DateTimeOffset.UtcNow);
-        SyncTaskCheckBox(row);
-        RefreshCompletionTimer();
-        ScheduleSave();
-    }
-
     private void TaskCheckBox_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
     {
         if (sender is CheckBox box && args.NewValue is TodoRow row) SetTaskCheckBoxState(box, row.Done);
-    }
-
-    private void SyncTaskCheckBox(TodoRow row)
-    {
-        if (TaskList.ContainerFromItem(row) is not ListViewItem container) return;
-        CheckBox? box = FindDescendant<CheckBox>(container, candidate => ReferenceEquals(candidate.Tag, row));
-        if (box is not null) SetTaskCheckBoxState(box, row.Done);
     }
 
     private void SetTaskCheckBoxState(CheckBox box, bool isChecked)
@@ -433,19 +440,83 @@ public sealed partial class TodoWindow : Window
 
     private void BeginTaskEdit(TodoRow row)
     {
+        int request = ++_taskEditRequest;
+        SyncRealizedTaskTypography(row);
         row.BeginEdit();
         _ = DispatcherQueue.TryEnqueue(() =>
         {
+            if (request != _taskEditRequest || !row.IsEditing) return;
             if (TaskList.ContainerFromItem(row) is not ListViewItem container) return;
             TextBox? editor = FindDescendant<TextBox>(container, candidate => ReferenceEquals(candidate.Tag, row));
-            editor?.Focus(FocusState.Programmatic);
-            editor?.SelectAll();
+            if (editor is null || !ReferenceEquals(editor.DataContext, row) ||
+                editor.Visibility != Visibility.Visible) return;
+            if (editor.Parent is not Grid content) return;
+            SyncTaskTypography(content);
+            editor.ApplyTemplate();
+            if (editor is Controls.TaskEditorTextBox taskEditor) taskEditor.SynchronizeTemplateTypography();
+            if (!editor.Focus(FocusState.Programmatic)) return;
+            // Focus initializes the native input view. Select only after its
+            // presenter has inherited this row's font, including recycled rows.
+            _ = DispatcherQueue.TryEnqueue(() =>
+            {
+                if (request != _taskEditRequest || !row.IsEditing ||
+                    !ReferenceEquals(editor.DataContext, row) || !ReferenceEquals(editor.Tag, row) ||
+                    editor.Visibility != Visibility.Visible || editor.FocusState == FocusState.Unfocused) return;
+                SyncTaskTypography(content);
+                if (editor is Controls.TaskEditorTextBox focusedEditor) focusedEditor.SynchronizeTemplateTypography();
+                editor.SelectAll();
+            });
         });
+    }
+
+    private void TaskRow_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Grid content) SyncTaskTypography(content);
+    }
+
+    private void TaskRow_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
+    {
+        if (sender is Grid content) SyncTaskTypography(content);
+    }
+
+    private void SyncRealizedTaskTypography(TodoRow row)
+    {
+        if (TaskList.ContainerFromItem(row) is not ListViewItem container) return;
+        TextBox? editor = FindDescendant<TextBox>(container, candidate => ReferenceEquals(candidate.Tag, row));
+        if (editor?.Parent is Grid content && ReferenceEquals(content.DataContext, row))
+            SyncTaskTypography(content);
+    }
+
+    private static void SyncTaskTypography(Grid content)
+    {
+        if (content.DataContext is not TodoRow row) return;
+        TextBlock? text = content.Children.OfType<TextBlock>().FirstOrDefault();
+        TextBox? editor = content.Children.OfType<TextBox>().FirstOrDefault();
+        if (text is null || editor is null) return;
+
+        // Bind directly to this row, including when a collapsed editor is reused.
+        // Keep a live binding so a font change during editing reaches both controls.
+        text.SetBinding(TextBlock.FontSizeProperty, new Microsoft.UI.Xaml.Data.Binding
+        {
+            Source = row, Path = new PropertyPath(nameof(TodoRow.FontSize)),
+            Mode = Microsoft.UI.Xaml.Data.BindingMode.OneWay
+        });
+        editor.SetBinding(Control.FontSizeProperty, new Microsoft.UI.Xaml.Data.Binding
+        {
+            Source = row, Path = new PropertyPath(nameof(TodoRow.FontSize)),
+            Mode = Microsoft.UI.Xaml.Data.BindingMode.OneWay
+        });
+        editor.FontFamily = text.FontFamily;
+        editor.FontWeight = text.FontWeight;
+        editor.FontStyle = text.FontStyle;
+        editor.FontStretch = text.FontStretch;
+        editor.CharacterSpacing = text.CharacterSpacing;
+        editor.IsTextScaleFactorEnabled = text.IsTextScaleFactorEnabled;
     }
 
     private void TaskEditor_KeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (sender is not TextBox { Tag: TodoRow row }) return;
+        if (sender is not TextBox { Tag: TodoRow row } editor) return;
         if (e.Key == Windows.System.VirtualKey.Escape)
         {
             row.CancelEdit();
@@ -453,21 +524,26 @@ public sealed partial class TodoWindow : Window
         }
         else if (e.Key == Windows.System.VirtualKey.Enter)
         {
-            CommitTaskEdit(row);
             e.Handled = true;
+            string currentText = editor.Text;
+            CommitTaskEdit(row, currentText);
+            // Collapsing the focused editor lets XAML choose another tab stop.
+            // Restore the row only for Enter; a pointer-driven LostFocus keeps
+            // the user's chosen destination. Commit first to make reentry inert.
+            if (TaskList.ContainerFromItem(row) is ListViewItem container)
+                _ = container.Focus(FocusState.Programmatic);
         }
     }
 
     private void TaskEditor_LostFocus(object sender, RoutedEventArgs e)
     {
-        if (sender is TextBox { Tag: TodoRow row }) CommitTaskEdit(row);
+        if (sender is TextBox { Tag: TodoRow row } editor) CommitTaskEdit(row, editor.Text);
     }
 
-    private void CommitTaskEdit(TodoRow row)
+    private void CommitTaskEdit(TodoRow row, string currentText)
     {
-        if (!row.IsEditing) return;
-        if (TodoRules.UpdateText(row.Task, row.EditText)) ScheduleSave();
-        row.EndEdit();
+        // TextBox.Text may not have reached the two-way binding source before Enter.
+        if (row.CommitEdit(currentText)) ScheduleSave();
     }
 
     private void TaskList_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
@@ -513,7 +589,11 @@ public sealed partial class TodoWindow : Window
             OrganizerNoteRules.MaximumFontSize);
         if (next == _document.FontSize) return;
         _document.FontSize = next;
-        foreach (TodoRow row in _rows) row.FontSize = next;
+        foreach (TodoRow row in _rows)
+        {
+            row.FontSize = next;
+            SyncRealizedTaskTypography(row);
+        }
         UpdateComposerMetrics();
         ScheduleSave();
         e.Handled = true;
@@ -620,8 +700,18 @@ public sealed partial class TodoWindow : Window
             ColorHelper.FromArgb(88, colors.AccentColor.R, colors.AccentColor.G, colors.AccentColor.B));
         _themeBrushes.Set(SeparatorsButton.Resources, "ToggleButtonForegroundChecked", text.Color);
         _themeBrushes.Set(SeparatorsButton.Resources, "ToggleButtonForegroundCheckedPointerOver", text.Color);
+        MinimizeButton.Foreground = text;
+        _themeBrushes.Set(MinimizeButton.Resources, "ButtonBackgroundPointerOver", ColorHelper.FromArgb(24, text.Color.R, text.Color.G, text.Color.B));
+        _themeBrushes.Set(MinimizeButton.Resources, "ButtonBackgroundPressed", ColorHelper.FromArgb(42, text.Color.R, text.Color.G, text.Color.B));
+        _themeBrushes.Set(MinimizeButton.Resources, "ButtonForegroundPointerOver", text.Color);
+        _themeBrushes.Set(MinimizeButton.Resources, "ButtonForegroundPressed", text.Color);
         CloseButton.Foreground = text;
         TaskList.Foreground = text;
+    }
+
+    private void MinimizeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_appWindow.Presenter is OverlappedPresenter presenter) presenter.Minimize();
     }
 
     private async void CloseButton_Click(object sender, RoutedEventArgs e) => await HideAsync();
@@ -710,11 +800,7 @@ public sealed partial class TodoWindow : Window
 
     private void RestorePlacement()
     {
-        PortableNotePlacement placement = _document.Placement ?? new PortableNotePlacement
-        {
-            WidthDip = 360,
-            HeightDip = 480
-        };
+        PortableNotePlacement placement = _placementRecovery.CaptureForSave(_document.Placement);
         DisplayInfo display = DisplayPlacementService.GetDisplay(placement.MonitorDevice);
         int width = (int)Math.Round(placement.WidthDip * display.Scale);
         int height = (int)Math.Round(placement.HeightDip * display.Scale);
@@ -738,7 +824,8 @@ public sealed partial class TodoWindow : Window
 
     private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
     {
-        if (_restoringPlacement || (!args.DidPositionChange && !args.DidSizeChange)) return;
+        if (_restoringPlacement || (!args.DidPositionChange && !args.DidSizeChange) ||
+            sender.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Restored }) return;
         if (args.DidSizeChange)
         {
             DisplayInfo currentDisplay = DisplayPlacementService.ForBounds(new NativeMethods.RECT
@@ -763,14 +850,16 @@ public sealed partial class TodoWindow : Window
         }
         if (!NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds)) return;
         DisplayInfo display = DisplayPlacementService.ForBounds(bounds);
-        _document.Placement = new PortableNotePlacement
+        PortableNotePlacement? placement = _placementRecovery.CaptureWindowChange(new PortableNotePlacement
         {
             MonitorDevice = display.Device,
             XDip = (bounds.Left - display.Work.Left) / display.Scale,
             YDip = (bounds.Top - display.Work.Top) / display.Scale,
             WidthDip = bounds.Width / display.Scale,
             HeightDip = bounds.Height / display.Scale
-        };
+        }, sender.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Restored });
+        if (placement is null) return;
+        _document.Placement = placement;
         ScheduleSave();
     }
 
@@ -783,6 +872,7 @@ public sealed partial class TodoWindow : Window
 
     private void TodoWindow_Closed(object sender, WindowEventArgs args)
     {
+        _uiSettings.TextScaleFactorChanged -= TextScaleFactorChanged;
         _saveTimer.Stop();
         _completionTimer.Stop();
         _chrome?.Dispose();
@@ -790,8 +880,9 @@ public sealed partial class TodoWindow : Window
         _saveGate.Dispose();
     }
 
-    private void ShowError(string message)
+    private void ShowError(string message, bool isSaveError = false)
     {
+        _saveErrorVisible = isSaveError;
         ErrorBar.Message = message;
         ErrorBar.IsOpen = true;
     }
@@ -815,6 +906,7 @@ public sealed partial class TodoWindow : Window
         private string _editText;
         private double _opacity = 1;
         private bool _showSeparators;
+        private double _singleLineHeight;
 
         internal TodoRow(PortableTodoTask task, double fontSize, bool showSeparators = false)
         {
@@ -831,14 +923,22 @@ public sealed partial class TodoWindow : Window
         public TextDecorations TextDecorations => Done
             ? Windows.UI.Text.TextDecorations.Strikethrough
             : Windows.UI.Text.TextDecorations.None;
-        public Visibility UndoVisibility => Done ? Visibility.Visible : Visibility.Collapsed;
-        public string UndoLabel => AppStrings.Get("TodoUndo");
         public string EditLabel => AppStrings.Get("TodoEdit");
         public string DeleteLabel => AppStrings.Get("TodoDelete");
         public Visibility TextVisibility => _isEditing ? Visibility.Collapsed : Visibility.Visible;
         public Visibility EditorVisibility => _isEditing ? Visibility.Visible : Visibility.Collapsed;
         public bool IsEditing => _isEditing;
         public double CheckBoxSize => _fontSize * .8;
+        public double SingleLineHeight
+        {
+            get => _singleLineHeight;
+            set
+            {
+                if (_singleLineHeight == value) return;
+                _singleLineHeight = value;
+                OnPropertyChanged();
+            }
+        }
         public Thickness SeparatorThickness => new(0, 0, 0, _showSeparators ? 1 : 0);
 
         internal void SetSeparators(bool enabled)
@@ -876,6 +976,7 @@ public sealed partial class TodoWindow : Window
         {
             _editText = Task.Text;
             _isEditing = true;
+            OnPropertyChanged(nameof(FontSize));
             OnPropertyChanged(nameof(EditText));
             OnPropertyChanged(nameof(TextVisibility));
             OnPropertyChanged(nameof(EditorVisibility));
@@ -885,6 +986,15 @@ public sealed partial class TodoWindow : Window
         {
             _editText = Task.Text;
             EndEdit();
+        }
+
+        internal bool CommitEdit(string currentText)
+        {
+            if (!_isEditing) return false;
+            bool changed = TodoRules.UpdateText(Task, currentText);
+            // EndEdit clears the editing flag before notifications can trigger LostFocus.
+            EndEdit();
+            return changed;
         }
 
         internal void EndEdit()
@@ -902,12 +1012,10 @@ public sealed partial class TodoWindow : Window
             Opacity = TodoRules.GetOpacity(Task, now);
             OnPropertyChanged(nameof(Done));
             OnPropertyChanged(nameof(TextDecorations));
-            OnPropertyChanged(nameof(UndoVisibility));
         }
 
         internal void ApplyLanguage()
         {
-            OnPropertyChanged(nameof(UndoLabel));
             OnPropertyChanged(nameof(EditLabel));
             OnPropertyChanged(nameof(DeleteLabel));
         }

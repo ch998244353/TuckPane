@@ -74,7 +74,7 @@ public sealed partial class MainWindow
         _applyingDockLayout = true;
         try
         {
-            _dockGeometry = DockLayoutMath.Calculate(_items.Count, _definition.DockIconSizeDip,
+            _dockGeometry = DockLayoutMath.Calculate(DockDisplayCount, _definition.DockIconSizeDip,
                 _definition.DockOrientation, _definition.DockSpacingFactor);
             DisplayInfo display = DisplayPlacementService.GetDisplay(_definition.DockCenter?.MonitorDevice);
             if (_definition.DockCenter is not { } center || !string.Equals(center.MonitorDevice, display.Device, StringComparison.OrdinalIgnoreCase))
@@ -107,7 +107,7 @@ public sealed partial class MainWindow
     private void ApplyDockContentLayout()
     {
         BeginHoverLayoutChange();
-        _dockGeometry = DockLayoutMath.Calculate(_items.Count, _definition.DockIconSizeDip,
+        _dockGeometry = DockLayoutMath.Calculate(DockDisplayCount, _definition.DockIconSizeDip,
             _definition.DockOrientation, _definition.DockSpacingFactor);
         ExpandedViewContextMenu.ShouldConstrainToRootBounds = false;
         ExpandedTitleRow.Height = new GridLength(0);
@@ -126,7 +126,7 @@ public sealed partial class MainWindow
             ? Orientation.Horizontal : Orientation.Vertical;
         _dockLayout.Spacing = _dockGeometry.Pitch - _dockGeometry.IconSize;
         if (!ReferenceEquals(ItemsRepeater.Layout, _dockLayout)) ItemsRepeater.Layout = _dockLayout;
-        DockEmptyAddButton.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        DockEmptyAddButton.Visibility = _items.Count == 0 && _dockIncomingGap is null ? Visibility.Visible : Visibility.Collapsed;
         DockEmptyAddButton.Width = DockEmptyAddButton.Height = _dockGeometry.IconSize;
         DockEmptyAddButton.Margin = new Thickness(0, _dockGeometry.TopInset, 0, _dockGeometry.BottomInset);
         DockEmptyAddIcon.FontSize = _dockGeometry.IconSize * .5;

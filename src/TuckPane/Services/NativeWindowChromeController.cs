@@ -11,6 +11,7 @@ internal sealed class NativeWindowChromeController : IDisposable
     private readonly NativeMethods.SubclassProc _subclass;
     private readonly bool _extendClientFrame;
     private readonly bool _applyBorderLast;
+    private readonly bool _preferSystemCorners;
     private int _visibleFrameThickness = 1;
     private bool _disposed;
     private bool _applyQueued;
@@ -20,12 +21,14 @@ internal sealed class NativeWindowChromeController : IDisposable
         IntPtr window,
         DispatcherQueue dispatcher,
         bool extendClientFrame = true,
-        bool applyBorderLast = false)
+        bool applyBorderLast = false,
+        bool preferSystemCorners = false)
     {
         _window = window;
         _dispatcher = dispatcher;
         _extendClientFrame = extendClientFrame;
         _applyBorderLast = applyBorderLast;
+        _preferSystemCorners = preferSystemCorners;
         _subclass = WindowProc;
         _ = NativeMethods.SetWindowSubclass(window, _subclass, SubclassId, IntPtr.Zero);
         Apply(refreshFrame: true);
@@ -75,6 +78,13 @@ internal sealed class NativeWindowChromeController : IDisposable
         // Console's title-bar and frame refresh may restore the system accent
         // border. Its final native write must suppress that border again.
         if (_applyBorderLast && NativeMethods.SupportsWindows11DwmAttributes) SuppressBorder();
+        if (_preferSystemCorners && NativeMethods.SupportsWindows11DwmAttributes)
+        {
+            int preference = NativeMethods.DWMWCP_ROUND;
+            LogResult(NativeMethods.DwmSetWindowAttribute(
+                _window, NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE, ref preference, sizeof(int)),
+                "DwmSetWindowAttribute(DWMWA_WINDOW_CORNER_PREFERENCE)");
+        }
     }
 
     private void SuppressBorder()

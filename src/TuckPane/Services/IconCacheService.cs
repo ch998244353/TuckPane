@@ -17,7 +17,8 @@ public sealed class IconCacheService
     private const int FallbackSize = 32;
     private const int MaximumShortcutIconDepth = 4;
     private const string CacheVersion = "v8-resource-icon-bounds";
-    private readonly Dictionary<string, (string Identity, BitmapImage Image)> _memoryCache = new(StringComparer.OrdinalIgnoreCase);
+    private const int MaximumMemoryIcons = 128;
+    private readonly OrderedDictionary<string, (string Identity, BitmapSource Image)> _memoryCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal static IntPtr CreateDragBitmap(string path, int size)
     {
@@ -36,54 +37,50 @@ public sealed class IconCacheService
         }
     }
 
-    public Task<BitmapImage?> GetIconAsync(string path, bool refresh = false) =>
+    public Task<BitmapSource?> GetIconAsync(string path, bool refresh = false) =>
         GetIconCoreAsync(path, refresh, dockPresentation: false);
 
-    internal Task<BitmapImage?> GetDockIconAsync(string path, bool refresh = false) =>
+    internal Task<BitmapSource?> GetDockIconAsync(string path, bool refresh = false) =>
         GetIconCoreAsync(path, refresh, dockPresentation: true);
 
-    private async Task<BitmapImage?> GetIconCoreAsync(string path, bool refresh, bool dockPresentation)
+    private async Task<BitmapSource?> GetIconCoreAsync(string path, bool refresh, bool dockPresentation)
     {
-        AppPaths.EnsureCreated();
         string key = Path.GetFullPath(path);
-        string identity = await Task.Run(() => BuildCacheIdentity(key));
         string memoryKey = dockPresentation ? $"dock-visible-v1|{key}" : key;
+        if (!refresh && TryGetMemoryIcon(memoryKey, identity: null) is { } hotImage) return hotImage;
+
+        string identity = await Task.Run(() => BuildCacheIdentity(key));
         if (dockPresentation) identity = $"dock-visible-v1|{identity}";
-        if (_memoryCache.TryGetValue(memoryKey, out var cached) &&
-            (!refresh || string.Equals(cached.Identity, identity, StringComparison.Ordinal)))
-        {
-            return cached.Image;
-        }
+        if (TryGetMemoryIcon(memoryKey, identity) is { } currentImage) return currentImage;
         _memoryCache.Remove(memoryKey);
 
         string cachePath = Path.Combine(AppPaths.IconCacheRoot, $"{Hash(identity)}.png");
-        if (!File.Exists(cachePath))
-        {
-            try
-            {
-                await RefreshAsync(key, cachePath, dockPresentation);
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error($"Shell 图标提取失败：{key}", ex);
-            }
-        }
+        IconSnapshot? snapshot = await Task.Run(() => LoadIconSnapshotAsync(key, cachePath, dockPresentation));
+        if (snapshot is null) return null;
 
-        if (!File.Exists(cachePath)) return null;
-        try
+        var image = new WriteableBitmap(snapshot.Width, snapshot.Height);
+        using (Stream pixels = image.PixelBuffer.AsStream())
+            pixels.Write(snapshot.Pixels);
+        image.Invalidate();
+
+        // A per-class icon is usable now, but a later refresh can retry the real item.
+        if (!snapshot.IsTypeIcon)
         {
-            StorageFile file = await StorageFile.GetFileFromPathAsync(cachePath);
-            using IRandomAccessStream stream = await file.OpenAsync(FileAccessMode.Read);
-            var image = new BitmapImage();
-            await image.SetSourceAsync(stream);
-            _memoryCache[memoryKey] = (identity, image);
-            return image;
+            _memoryCache.Remove(memoryKey);
+            if (_memoryCache.Count == MaximumMemoryIcons) _memoryCache.RemoveAt(0);
+            _memoryCache.Add(memoryKey, (identity, image));
         }
-        catch (Exception ex)
-        {
-            AppLogger.Error($"图标缓存读取失败：{cachePath}", ex);
-            return null;
-        }
+        return image;
+    }
+
+    private BitmapSource? TryGetMemoryIcon(string key, string? identity)
+    {
+        if (!_memoryCache.TryGetValue(key, out var cached) ||
+            (identity is not null && !string.Equals(cached.Identity, identity, StringComparison.Ordinal))) return null;
+
+        _memoryCache.Remove(key);
+        _memoryCache.Add(key, cached);
+        return cached.Image;
     }
 
     internal static string BuildCacheIdentity(string path)
@@ -151,29 +148,83 @@ public sealed class IconCacheService
         return Path.GetFullPath(normalized);
     }
 
-    private static async Task RefreshAsync(string path, string cachePath, bool dockPresentation)
+    internal static async Task<IconSnapshot?> LoadIconSnapshotAsync(string path, string cachePath, bool dockPresentation)
     {
-        IconSnapshot? thumbnail = await TryExtractImageThumbnailAsync(path);
-        IconSnapshot snapshot = thumbnail ?? await Task.Run(() =>
+        if (File.Exists(cachePath))
         {
-            IconSnapshot shellIcon = ExtractShellIconPixels(path);
-            return dockPresentation ? NormalizeDockIcon(shellIcon) : shellIcon;
-        });
-        StorageFolder cacheFolder = await StorageFolder.GetFolderFromPathAsync(AppPaths.IconCacheRoot);
+            try
+            {
+                byte[] encoded = await File.ReadAllBytesAsync(cachePath);
+                // Keep the WinRT decoder off the file so it cannot leave the PNG mapped after the read.
+                using var stream = new InMemoryRandomAccessStream();
+                await stream.WriteAsync(encoded.AsBuffer());
+                stream.Seek(0);
+                BitmapDecoder decoder = await BitmapDecoder.CreateAsync(stream);
+                using SoftwareBitmap bitmap = await decoder.GetSoftwareBitmapAsync(
+                    BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+                IconSnapshot cached = CopyIconPixels(bitmap);
+                if (cached.HasVisiblePixels()) return cached;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"图标缓存读取失败：{cachePath}", ex);
+            }
+        }
+
+        return await RefreshAsync(path, cachePath, dockPresentation);
+    }
+
+    private static async Task<IconSnapshot?> RefreshAsync(string path, string cachePath, bool dockPresentation)
+    {
+        IconSnapshot? snapshot = await TryExtractImageThumbnailAsync(path);
+        if (snapshot?.HasVisiblePixels() != true)
+        {
+            try
+            {
+                snapshot = await Task.Run(() => ExtractShellIconPixels(path));
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"Shell 图标提取失败：{path}", ex);
+            }
+
+            if (snapshot?.HasVisiblePixels() != true)
+                return await Task.Run(() => TryExtractTypeIconPixels(path, dockPresentation));
+            if (dockPresentation) snapshot = NormalizeDockIcon(snapshot);
+        }
+
+        try
+        {
+            await WriteIconCacheAsync(cachePath, snapshot);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"图标缓存写入失败：{cachePath}", ex);
+        }
+        return snapshot;
+    }
+
+    private static async Task WriteIconCacheAsync(string cachePath, IconSnapshot snapshot)
+    {
+        string directory = Path.GetDirectoryName(cachePath)!;
+        await Task.Run(() => Directory.CreateDirectory(directory)).ConfigureAwait(false);
+        StorageFolder cacheFolder = await StorageFolder.GetFolderFromPathAsync(directory);
         string temporaryName = $"{Path.GetFileNameWithoutExtension(cachePath)}.{Guid.NewGuid():N}.tmp";
         StorageFile temporary = await cacheFolder.CreateFileAsync(temporaryName, CreationCollisionOption.FailIfExists);
         try
         {
-            using IRandomAccessStream output = await temporary.OpenAsync(FileAccessMode.ReadWrite);
-            using SoftwareBitmap bitmap = SoftwareBitmap.CreateCopyFromBuffer(
-                snapshot.Pixels.AsBuffer(),
-                BitmapPixelFormat.Bgra8,
-                snapshot.Width,
-                snapshot.Height,
-                BitmapAlphaMode.Premultiplied);
-            BitmapEncoder encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
-            encoder.SetSoftwareBitmap(bitmap);
-            await encoder.FlushAsync();
+            using (IRandomAccessStream output = await temporary.OpenAsync(FileAccessMode.ReadWrite))
+            {
+                using SoftwareBitmap bitmap = SoftwareBitmap.CreateCopyFromBuffer(
+                    snapshot.Pixels.AsBuffer(),
+                    BitmapPixelFormat.Bgra8,
+                    snapshot.Width,
+                    snapshot.Height,
+                    BitmapAlphaMode.Premultiplied);
+                BitmapEncoder encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
+                encoder.SetSoftwareBitmap(bitmap);
+                await encoder.FlushAsync();
+            }
             File.Move(temporary.Path, cachePath, overwrite: true);
         }
         finally
@@ -204,16 +255,21 @@ public sealed class IconCacheService
             using SoftwareBitmap bitmap = await decoder.GetSoftwareBitmapAsync(
                 BitmapPixelFormat.Bgra8,
                 BitmapAlphaMode.Premultiplied);
-            uint byteCount = checked((uint)(bitmap.PixelWidth * bitmap.PixelHeight * 4));
-            var buffer = new Windows.Storage.Streams.Buffer(byteCount);
-            bitmap.CopyToBuffer(buffer);
-            return new IconSnapshot(buffer.ToArray(), bitmap.PixelWidth, bitmap.PixelHeight);
+            return CopyIconPixels(bitmap);
         }
         catch (Exception ex)
         {
             AppLogger.Error($"图片缩略图提取失败，已回退 Shell 图标：{path}", ex);
             return null;
         }
+    }
+
+    private static IconSnapshot CopyIconPixels(SoftwareBitmap bitmap)
+    {
+        uint byteCount = checked((uint)(bitmap.PixelWidth * bitmap.PixelHeight * 4));
+        var buffer = new Windows.Storage.Streams.Buffer(byteCount);
+        bitmap.CopyToBuffer(buffer);
+        return new IconSnapshot(buffer.ToArray(), bitmap.PixelWidth, bitmap.PixelHeight);
     }
 
     internal static IconSnapshot ExtractShellIconPixels(string path)
@@ -516,15 +572,43 @@ public sealed class IconCacheService
         }
     }
 
-    private static IntPtr GetFallbackIcon(string path)
+    private static IconSnapshot? TryExtractTypeIconPixels(string path, bool dockPresentation)
+    {
+        bool isDirectory = Directory.Exists(path);
+        string extension = Path.GetExtension(path);
+        string lookup = isDirectory ? "folder" : string.IsNullOrEmpty(extension) ? "file" : extension;
+        uint attributes = isDirectory ? NativeMethods.FILE_ATTRIBUTE_DIRECTORY : NativeMethods.FILE_ATTRIBUTE_NORMAL;
+        try
+        {
+            IntPtr icon = GetFallbackIcon(lookup, attributes, NativeMethods.SHGFI_USEFILEATTRIBUTES);
+            try
+            {
+                var snapshot = new IconSnapshot(DrawIconPixels(icon, FallbackSize), FallbackSize, FallbackSize);
+                if (!snapshot.HasVisiblePixels()) return null;
+                if (dockPresentation) snapshot = NormalizeDockIcon(snapshot);
+                return snapshot with { IsTypeIcon = true };
+            }
+            finally
+            {
+                _ = NativeMethods.DestroyIcon(icon);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"Windows 类型图标提取失败：{path}", ex);
+            return null;
+        }
+    }
+
+    private static IntPtr GetFallbackIcon(string path, uint attributes = 0, uint flags = 0)
     {
         var shellInfo = new NativeMethods.SHFILEINFO { DisplayName = string.Empty, TypeName = string.Empty };
         UIntPtr result = NativeMethods.SHGetFileInfo(
             path,
-            0,
+            attributes,
             ref shellInfo,
             (uint)Marshal.SizeOf<NativeMethods.SHFILEINFO>(),
-            NativeMethods.SHGFI_ICON | NativeMethods.SHGFI_LARGEICON);
+            NativeMethods.SHGFI_ICON | NativeMethods.SHGFI_LARGEICON | flags);
         if (result == UIntPtr.Zero || shellInfo.Icon == IntPtr.Zero)
         {
             throw new InvalidOperationException($"Windows Shell 未返回图标：{path}");
@@ -687,5 +771,13 @@ public sealed class IconCacheService
     internal sealed record IconSnapshot(byte[] Pixels, int Width, int Height)
     {
         internal int Size => Width;
+        internal bool IsTypeIcon { get; init; }
+
+        internal bool HasVisiblePixels()
+        {
+            for (int index = 3; index < Pixels.Length; index += 4)
+                if (Pixels[index] >= 16) return true;
+            return false;
+        }
     }
 }

@@ -19,18 +19,26 @@ internal static class IncomingDropOperation
     }
 
     internal static async Task RunAsync(Action complete, Func<IDisposable> holdIncoming,
-        Func<IDisposable> holdMode, Func<Task> action, Action reset)
+        Func<IDisposable> holdMode, Func<Action, Task> action, Action reset)
     {
+        bool completed = false;
+        void FinishDeferral()
+        {
+            if (completed) return;
+            completed = true;
+            try { reset(); }
+            finally { complete(); }
+        }
+
         try
         {
             using var incoming = holdIncoming();
             using var mode = holdMode();
-            await action();
+            await action(FinishDeferral);
         }
         finally
         {
-            try { reset(); }
-            finally { complete(); }
+            FinishDeferral();
         }
     }
 }

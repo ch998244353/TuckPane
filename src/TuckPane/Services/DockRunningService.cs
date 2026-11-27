@@ -1,14 +1,21 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
 using TuckPane.Core;
 
 namespace TuckPane.Services;
 
-// External discovery runs on one background STA per completed sample. No UI calls,
-// application launches, title guesses or PID lifetime assumptions are made here.
-internal sealed class DockRunningService
+// Shell COM objects and file identities are owned by one lazily started background STA.
+internal sealed class DockRunningService : IDisposable
 {
     private readonly Dictionary<string, (long Stamp, long Length, DockItemIdentity Identity)> _identities = new(StringComparer.OrdinalIgnoreCase);
+    private readonly BlockingCollection<(string[] Paths, TaskCompletionSource<Dictionary<string, bool>> Completion)> _requests = new(1);
+    private readonly object _sync = new();
+    private readonly Func<string[], Dictionary<string, bool>> _sample;
+    private Thread? _worker;
+    private bool _disposed;
+
+    internal DockRunningService(Func<string[], Dictionary<string, bool>>? sample = null) => _sample = sample ?? Sample;
 
     private long _requestedEpoch, _cacheEpoch;
     internal void Invalidate() => Interlocked.Increment(ref _requestedEpoch);
@@ -16,14 +23,51 @@ internal sealed class DockRunningService
     internal Task<Dictionary<string, bool>> SampleAsync(string[] paths)
     {
         var completion = new TaskCompletionSource<Dictionary<string, bool>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var thread = new Thread(() =>
+        lock (_sync)
         {
-            try { completion.SetResult(Sample(paths)); }
-            catch (Exception ex) { completion.SetException(ex); }
-        }) { IsBackground = true, Name = "TuckPane Dock open-state" };
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_worker is null)
+            {
+                var worker = new Thread(Work) { IsBackground = true, Name = "TuckPane Dock open-state" };
+                worker.SetApartmentState(ApartmentState.STA);
+                worker.Start();
+                _worker = worker;
+            }
+            if (!_requests.TryAdd((paths, completion))) throw new InvalidOperationException("A Dock sample is already queued.");
+        }
         return completion.Task;
+    }
+
+    private void Work()
+    {
+        try
+        {
+            foreach (var request in _requests.GetConsumingEnumerable())
+            {
+                lock (_sync)
+                {
+                    if (_disposed) { request.Completion.SetCanceled(); continue; }
+                }
+                try { request.Completion.SetResult(_sample(request.Paths)); }
+                catch (Exception ex) { request.Completion.SetException(ex); }
+            }
+        }
+        finally
+        {
+            lock (_sync) _requests.Dispose();
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_sync)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (_worker is null) _requests.Dispose();
+            else _requests.CompleteAdding();
+        }
+        // An in-flight COM call still belongs to this STA. Shutdown never joins it.
     }
 
     private Dictionary<string, bool> Sample(string[] paths)
@@ -112,6 +156,7 @@ internal sealed class DockRunningService
     {
         var result = new List<DockOpenWindow>();
         var processes = new Dictionary<uint, (string? Path, string? Id)>();
+        var path = new StringBuilder(32768);
         (string? Path, string? Id) Identity(IntPtr hwnd)
         {
             NativeMethods.GetWindowThreadProcessId(hwnd, out uint pid);
@@ -120,7 +165,8 @@ internal sealed class DockRunningService
             if (process == IntPtr.Zero) return default;
             try
             {
-                var path = new StringBuilder(32768); int length = path.Capacity;
+                path.Clear();
+                int length = path.Capacity;
                 string? executable = QueryFullProcessImageName(process, 0, path, ref length) ? path.ToString() : null;
                 uint idLength = 0;
                 string? id = null;

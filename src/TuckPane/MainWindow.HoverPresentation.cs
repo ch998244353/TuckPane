@@ -46,9 +46,12 @@ public sealed partial class MainWindow
             _hoverLayoutPending = false;
             InvalidateHoverGeometry();
             UpdateDockInputRegion();
-            if (!HoverViewportVisible || !UseCustomAnimations || HoverInteractionBusy) return;
-            UpdateHoverGeometry();
-            RenderHoverPresentation();
+            if (HoverViewportVisible && UseCustomAnimations && !HoverInteractionBusy)
+            {
+                UpdateHoverGeometry();
+                RenderHoverPresentation();
+            }
+            else UpdateDockRunningVisuals();
         });
     }
 
@@ -74,7 +77,7 @@ public sealed partial class MainWindow
                 var stackCopy = new StackPanel { Orientation = stack.Orientation, Spacing = stack.Spacing };
                 Mirror(stackCopy, StackPanel.OrientationProperty, stack, nameof(StackPanel.Orientation));
                 Mirror(stackCopy, StackPanel.SpacingProperty, stack, nameof(StackPanel.Spacing));
-                foreach (FrameworkElement child in stack.Children.OfType<FrameworkElement>())
+                foreach (FrameworkElement child in stack.Children.OfType<FrameworkElement>().Where(child => child is not TextBox))
                     stackCopy.Children.Add(CloneHoverContent(child, item));
                 copy = stackCopy;
                 break;
@@ -182,6 +185,7 @@ public sealed partial class MainWindow
     private void ForwardHoverPress(Border host, HoverItemVisual item, PointerRoutedEventArgs args)
     {
         if (args.Handled || !args.GetCurrentPoint(WindowRoot).Properties.IsLeftButtonPressed) return;
+        if (TryHandleCanvasResizePress(args)) return;
         Point point = args.GetCurrentPoint(ItemsScrollView).Position;
         if (HoverItemAtViewportPoint(point) != host) return;
         Vector2 pivot = IsCompactList ? new(item.BaseBounds.X, item.BaseBounds.Center.Y) : item.BaseBounds.Center;

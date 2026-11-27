@@ -96,7 +96,7 @@ public sealed partial class MainWindow
     private bool HoverInteractionBusy => _changingExpansionMode || _pressActive || _widgetDragging ||
         _canvasResize is not null || _itemReorderSession is not null || _shellDragActive || _shellDropFinalizing ||
         _shellPromotionPending || _itemDragLanding || _nativeItemMotionRenderingSubscribed ||
-        _dragHasLocalFile || _shellContextMenuOpen || _contextMenuActivated || _overlayOpenCount > 0 || _addingItem;
+        _dragHasLocalFile || _dockIncomingGap is not null || _shellContextMenuOpen || _contextMenuActivated || _overlayOpenCount > 0 || _addingItem;
 
     private void RefreshHoverAvailability()
     {
@@ -536,7 +536,13 @@ public sealed partial class MainWindow
         _hoverAnchor.Reset();
         _dockHoverMotion.Reset();
         _hoverPressedHost = null;
-        foreach ((Border host, HoverItemVisual item) in _hoverItems) ResetHoverVisual(host, item);
+        bool resetDockDots = false;
+        foreach ((Border host, HoverItemVisual item) in _hoverItems)
+        {
+            if (item.Presented && _dockDots.ContainsKey(host)) resetDockDots = true;
+            ResetHoverVisual(host, item);
+        }
+        if (resetDockDots) UpdateDockRunningVisuals();
         _hoverGeometryDirty = _hoverTargetsDirty = true;
         StopHoverRendering();
         _hoverPointerGuard?.Stop();

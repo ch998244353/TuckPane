@@ -428,10 +428,8 @@ public sealed class NoteStore
         if (document.Html is null || document.Html.Length > MaximumHtmlLength)
             throw new InvalidDataException("The portable note HTML is invalid or too large.");
         if (document.Placement is not { } placement) return;
-        if (placement.MonitorDevice is null ||
-            !double.IsFinite(placement.XDip) || !double.IsFinite(placement.YDip) ||
-            !double.IsFinite(placement.WidthDip) || !double.IsFinite(placement.HeightDip) ||
-            placement.WidthDip is < 280 or > 1600 || placement.HeightDip is < 220 or > 1200)
+        if (!NotePlacementRecovery.IsValidGeometry(placement.MonitorDevice,
+            placement.XDip, placement.YDip, placement.WidthDip, placement.HeightDip))
             throw new InvalidDataException("The portable note placement is invalid.");
     }
 

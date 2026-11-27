@@ -72,7 +72,7 @@ TuckPane 是一款适用于 Windows 10 22H2 与 Windows 11 x64 的桌面文件�
 当前版本：**4.0.0**。完整发布说明请查看 [4.0.0 Release](https://github.com/ch998244353/TuckPane/releases/tag/v4.0.0)。
 
 - [TuckPane-4.0.0-win-x64-setup.exe](https://github.com/ch998244353/TuckPane/releases/download/v4.0.0/TuckPane-4.0.0-win-x64-setup.exe)：推荐使用的当前用户离线安装器，创建开始菜单和桌面快捷方式。
-- [TuckPane-4.0.0-win-x64-portable.zip](https://github.com/ch998244353/TuckPane/releases/download/v4.0.0/TuckPane-4.0.0-win-x64-portable.zip)：解压后双击 `00-启动 TuckPane.exe`。
+- [TuckPane-4.0.0-win-x64-portable.zip](https://github.com/ch998244353/TuckPane/releases/download/v4.0.0/TuckPane-4.0.0-win-x64-portable.zip)：完整解压后双击 `TuckPane.exe`。包含启动器修复的构建中，`00-启动 TuckPane.exe` 会转发启动同目录主程序；请保留完整文件，不要重命名 `TuckPane.exe`。
 - [SHA256SUMS.txt](https://github.com/ch998244353/TuckPane/releases/download/v4.0.0/SHA256SUMS.txt)：两个下载文件的 SHA-256 校验值。
 
 3.0.2 尚无应用内更新入口：首次升级请运行 4.0.0 安装包覆盖原安装，或把便携包解压到独立程序目录；原有数据根继续保留。使用 4.0.0 后，可通过“设置 → 更新”获取后续版本。

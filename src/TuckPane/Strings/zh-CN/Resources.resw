@@ -442,4 +442,26 @@
   <data name="NoteCopyImage" xml:space="preserve"><value>复制图片</value></data>
   <data name="NoteDeleteImage" xml:space="preserve"><value>删除图片</value></data>
   <data name="NoteImagePasteError" xml:space="preserve"><value>无法读取剪贴板中的图片或文字，请重新复制后再试。</value></data>
+  <data name="UniformExpandedSizes" xml:space="preserve"><value>统一展开大小</value></data>
+  <data name="UniformCompactExpandedTitle" xml:space="preserve"><value>统一精简模式展开大小</value></data>
+  <data name="UniformIconExpandedTitle" xml:space="preserve"><value>统一图标模式展开大小</value></data>
+  <data name="UniformExpandedWidth" xml:space="preserve"><value>宽度</value></data>
+  <data name="UniformExpandedHeight" xml:space="preserve"><value>高度</value></data>
+  <data name="UniformExpandedCell" xml:space="preserve"><value>单元大小</value></data>
+  <data name="UniformExpandedContent" xml:space="preserve"><value>内容比例</value></data>
+  <data name="UniformExpandedDipValue" xml:space="preserve"><value>{0:0} 逻辑像素</value></data>
+  <data name="UniformExpandedIconHint" xml:space="preserve"><value>统一单元大小，行列数仍由各窗口决定。</value></data>
+  <data name="UniformExpandedLimitHint" xml:space="preserve"><value>已按同模式窗口的共同可用空间限制大小或内容比例。</value></data>
+  <data name="UniformExpandedSaveError" xml:space="preserve"><value>无法保存统一展开大小</value></data>
+  <data name="UniformExpandedLinkedHint" xml:space="preserve"><value>已开启统一展开大小，在此调整会同步所有同模式窗口。</value></data>
+  <data name="ContextOpenFile" xml:space="preserve"><value>打开</value></data>
+  <data name="ContextCutFile" xml:space="preserve"><value>剪切</value></data>
+  <data name="ContextDeleteFile" xml:space="preserve"><value>删除</value></data>
+  <data name="ContextFileProperties" xml:space="preserve"><value>属性</value></data>
+  <data name="FilePropertiesFailed" xml:space="preserve"><value>无法打开文件属性。</value></data>
+  <data name="ContextShowMoreOptions" xml:space="preserve"><value>显示更多选项</value></data>
+  <data name="ContextMenuLoading" xml:space="preserve"><value>正在读取菜单…</value></data>
+  <data name="FileMenuFallback" xml:space="preserve"><value>无法读取完整系统菜单，已显示基础操作。可重试或在资源管理器中操作。</value></data>
+  <data name="FileMenuInitializationTimeout" xml:space="preserve"><value>系统菜单初始化超过 5 秒，已取消本次打开。窗口仍可操作。</value></data>
+  <data name="FileMenuSessionBusy" xml:space="preserve"><value>上一次系统菜单仍在处理或退出，请稍后重试。窗口仍可操作。</value></data>
 </root>

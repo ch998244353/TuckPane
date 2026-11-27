@@ -442,4 +442,26 @@ Storage path: {2}</value></data>
   <data name="NoteCopyImage" xml:space="preserve"><value>Copy image</value></data>
   <data name="NoteDeleteImage" xml:space="preserve"><value>Delete image</value></data>
   <data name="NoteImagePasteError" xml:space="preserve"><value>Unable to read the clipboard image or text. Copy it again and retry.</value></data>
+  <data name="UniformExpandedSizes" xml:space="preserve"><value>Use uniform expanded sizes</value></data>
+  <data name="UniformCompactExpandedTitle" xml:space="preserve"><value>Use one expanded size for compact mode</value></data>
+  <data name="UniformIconExpandedTitle" xml:space="preserve"><value>Use one expanded size for icon mode</value></data>
+  <data name="UniformExpandedWidth" xml:space="preserve"><value>Width</value></data>
+  <data name="UniformExpandedHeight" xml:space="preserve"><value>Height</value></data>
+  <data name="UniformExpandedCell" xml:space="preserve"><value>Cell size</value></data>
+  <data name="UniformExpandedContent" xml:space="preserve"><value>Content scale</value></data>
+  <data name="UniformExpandedDipValue" xml:space="preserve"><value>{0:0} logical pixels</value></data>
+  <data name="UniformExpandedIconHint" xml:space="preserve"><value>Cell sizes are synchronized. Each window keeps its own number of rows and columns.</value></data>
+  <data name="UniformExpandedLimitHint" xml:space="preserve"><value>The size or content scale has been limited to fit the available space in all windows using the same mode.</value></data>
+  <data name="UniformExpandedSaveError" xml:space="preserve"><value>Could not save the uniform expanded size</value></data>
+  <data name="UniformExpandedLinkedHint" xml:space="preserve"><value>Uniform expanded sizes are enabled. Changes here apply to all windows using the same mode.</value></data>
+  <data name="ContextOpenFile" xml:space="preserve"><value>Open</value></data>
+  <data name="ContextCutFile" xml:space="preserve"><value>Cut</value></data>
+  <data name="ContextDeleteFile" xml:space="preserve"><value>Delete</value></data>
+  <data name="ContextFileProperties" xml:space="preserve"><value>Properties</value></data>
+  <data name="FilePropertiesFailed" xml:space="preserve"><value>Could not open file properties.</value></data>
+  <data name="ContextShowMoreOptions" xml:space="preserve"><value>Show more options</value></data>
+  <data name="ContextMenuLoading" xml:space="preserve"><value>Loading menu…</value></data>
+  <data name="FileMenuFallback" xml:space="preserve"><value>The system menu could not be loaded. Basic commands are shown. Retry or use File Explorer.</value></data>
+  <data name="FileMenuInitializationTimeout" xml:space="preserve"><value>The system menu took longer than 5 seconds to initialize. Opening was cancelled; the window is still available.</value></data>
+  <data name="FileMenuSessionBusy" xml:space="preserve"><value>The previous system menu is still working or closing. Please try again later; the window is still available.</value></data>
 </root>

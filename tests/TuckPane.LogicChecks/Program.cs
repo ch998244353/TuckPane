@@ -7,6 +7,111 @@ using Windows.Storage;
 using System.Text.Json;
 using System.Xml.Linq;
 
+if (args.Length > 0 && args[0] == "--file-menu-cursor-placement")
+{
+    if (args is not ["--file-menu-cursor-placement"])
+        throw new ArgumentException("Expected --file-menu-cursor-placement with no additional arguments.");
+    FileMenuCursorPlacementChecks.Run();
+    return;
+}
+
+if (args.Length > 0 && args[0] == "--file-menu-recovery")
+{
+    if (args is not ["--file-menu-recovery"])
+        throw new ArgumentException("Expected --file-menu-recovery with no additional arguments.");
+    await FileMenuRecoveryChecks.RunAsync();
+    return;
+}
+
+if (args.Length > 0 && args[0] == "--file-menu-placement")
+{
+    if (args is not ["--file-menu-placement"])
+        throw new ArgumentException("Expected --file-menu-placement with no additional arguments.");
+    FileMenuPlacementChecks.Run();
+    return;
+}
+
+if (args.Any(argument => argument.StartsWith("--font-file-menu-422", StringComparison.Ordinal)))
+{
+    if (args is not ["--font-file-menu-422", string area] || area is not ("todo" or "menu"))
+        throw new ArgumentException("Expected --font-file-menu-422 <todo|menu>; choose one focused group.");
+    Environment.SetEnvironmentVariable("TUCKPANE_TEST_ROOT", Path.Combine(Path.GetTempPath(), "TuckPane-422-focused-" + Guid.NewGuid().ToString("N")));
+    try { await FontFileMenu422Checks.RunAsync(area); }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"FAIL font-file-menu-422 {area}: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+    return;
+}
+
+if (args.Length > 0 && args[0] == "--oct03-fixes")
+{
+    if (args.Length > 2) throw new ArgumentException("Expected --oct03-fixes [todo|menu|corners].");
+    await Oct03FixChecks.RunAsync(args.Length == 2 ? args[1] : null);
+    return;
+}
+
+if (args.Any(argument => argument.StartsWith("--drag-drop-fixes", StringComparison.Ordinal)))
+{
+    if (args.Length is < 1 or > 2 || args[0] != "--drag-drop-fixes")
+        throw new ArgumentException("Expected --drag-drop-fixes [boundary|dock|layering].");
+    await DragDropFixChecks.RunAsync(args.Length == 2 ? args[1] : null);
+    return;
+}
+
+if (args is ["--nested-preview-edge"])
+{
+    NestedPreviewEdgeChecks.Run();
+    return;
+}
+
+if (args.Any(argument => argument.StartsWith("--organizer-preview-glass", StringComparison.Ordinal)))
+{
+    if (args is not ["--organizer-preview-glass"])
+        throw new ArgumentException("Expected --organizer-preview-glass with no additional arguments.");
+    OrganizerPreviewGlassChecks.Run();
+    return;
+}
+
+if (args.Any(argument => argument.StartsWith("--note-todo-window-fixes", StringComparison.Ordinal)))
+{
+    if (args is not ["--note-todo-window-fixes"])
+        throw new ArgumentException("Expected --note-todo-window-fixes with no additional arguments.");
+    await NoteTodoWindowFixChecks.RunAsync();
+    return;
+}
+
+if (args.Any(argument => argument.StartsWith("--todo-edit-focus-font", StringComparison.Ordinal)))
+{
+    if (args is not ["--todo-edit-focus-font"])
+        throw new ArgumentException("Expected --todo-edit-focus-font with no additional arguments.");
+    TodoEditFixChecks.RunFocusFont();
+    return;
+}
+
+if (args is ["--unified-expanded-size"])
+{
+    await UnifiedExpandedSizeChecks.RunAsync();
+    return;
+}
+
+if (args.Any(argument => argument.StartsWith("--todo-edit-fixes", StringComparison.Ordinal)))
+{
+    if (args is not ["--todo-edit-fixes"])
+        throw new ArgumentException("Expected --todo-edit-fixes with no additional arguments.");
+    TodoEditFixChecks.Run();
+    return;
+}
+
+if (args.Any(argument => argument.StartsWith("--note-save-placement", StringComparison.Ordinal)))
+{
+    if (args is not ["--note-save-placement"])
+        throw new ArgumentException("Expected --note-save-placement with no additional arguments.");
+    await NoteSavePlacementChecks.RunAsync();
+    return;
+}
+
 if (args.Length > 0 && args[0] == "--sep13-interactions")
 {
     if (args is not [_, string area]) throw new ArgumentException("Expected --sep13-interactions <resize|menu|shortcut>.");
@@ -2242,6 +2347,19 @@ if (args.Length is 1 or 2 && args[0] == "--organizer-icon-content")
                     icon.Pixels.Where((_, index) => index % 4 == 3).Any(alpha => alpha > 0),
                 $"{extension} 没有返回可见 Shell 图标或通用回退。");
         }
+
+        string iconCacheFile = Path.Combine(root, "cache", "fixture.png");
+        var fresh = await IconCacheService.LoadIconSnapshotAsync(outerShortcutPath, iconCacheFile, dockPresentation: false);
+        Require(fresh?.HasVisiblePixels() == true && File.Exists(iconCacheFile),
+            "A cold cache must create its own directory and persist the extracted icon.");
+        var cached = await IconCacheService.LoadIconSnapshotAsync(outerShortcutPath, iconCacheFile, dockPresentation: false);
+        Require(cached?.HasVisiblePixels() == true && Similarity(fresh!, cached) >= .95,
+            "The PNG cache must reload visible pixels from disk.");
+        await File.WriteAllTextAsync(iconCacheFile, "corrupt PNG");
+        var repaired = await IconCacheService.LoadIconSnapshotAsync(outerShortcutPath, iconCacheFile, dockPresentation: false);
+        Require(repaired?.HasVisiblePixels() == true && Similarity(fresh!, repaired) >= .95 &&
+                (await File.ReadAllBytesAsync(iconCacheFile)).AsSpan(0, 4).SequenceEqual(new byte[] { 137, 80, 78, 71 }),
+            "Corrupt PNGs must recover and be replaced by a persisted icon.");
 
         var organizer = new OrganizerDefinition
         {

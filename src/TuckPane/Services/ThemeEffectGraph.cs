@@ -33,6 +33,18 @@ internal static class ThemeEffectGraph
         if (!plan.RequiresHostBackdrop)
             throw new InvalidOperationException("A colour-only theme must bypass the sampled effect graph.");
 
+        // Untinted previews sample the host directly, without the regular
+        // window theme's neutral balancing or colour-composition layers.
+        if (plan.TintOpacity == 0 && plan.LuminosityOpacity == 0)
+            return new GaussianBlurEffect
+            {
+                Name = "Blur",
+                BlurAmount = plan.BlurAmount,
+                BorderMode = EffectBorderMode.Hard,
+                Optimization = EffectOptimization.Balanced,
+                Source = backdrop
+            };
+
         var balancedBackdrop = new CompositeEffect { Name = "BalancedBackdrop", Mode = CanvasComposite.SourceOver };
         balancedBackdrop.Sources.Add(backdrop);
         balancedBackdrop.Sources.Add(new OpacityEffect

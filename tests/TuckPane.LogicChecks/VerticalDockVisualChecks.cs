@@ -9,7 +9,7 @@ internal static class VerticalDockVisualChecks
         CheckGeometry();
         CheckRunningDot();
         CheckHoverBounds();
-        Console.WriteLine("PASS --vertical-dock-visuals: 3:2 padding at 32/64/128 DIP; fixed dot column and layout displacement; three-item hover boundaries. No GUI or input automation.");
+        Console.WriteLine("PASS --vertical-dock-visuals: 3:2 padding at 32/64/128 DIP; running-dot placement after resize or reorientation; three-item hover boundaries. No GUI or input automation.");
     }
 
     internal static void CheckGeometry()
@@ -35,13 +35,23 @@ internal static class VerticalDockVisualChecks
 
     private static void CheckRunningDot()
     {
-        // Nonzero viewport origin catches accidental mixing of content/viewport coordinates.
-        var icon = new HoverRect(9.2f, 40, 64, 64);
-        foreach (float shift in new[] { 0f, -13f, 21f })
+        foreach (double size in new[] { 32d, 128d })
         {
-            Vector2 center = DockVisualMath.VerticalRunningDotCenter(-10, 19.2f, icon, shift);
-            Near(center.X, -.4, "Fixed midpoint in the resting left gutter");
-            Near(center.Y, 72 + shift, "Only layout translation moves the dot");
+            // The same running item can remain open across a resize and rotation.
+            DockGeometry horizontal = DockLayoutMath.Calculate(3, size, DockOrientation.Horizontal);
+            Vector2 horizontalIcon = horizontal.ItemCenter(1);
+            Vector2 horizontalDot = DockVisualMath.RunningDotCenter(horizontal, (float)horizontal.Height, horizontalIcon);
+            Near(horizontalDot.X, horizontalIcon.X, "Horizontal dot follows the arranged icon");
+            Near(horizontalDot.Y, horizontal.Height - Math.Max(5, horizontal.BottomInset / 2), "Horizontal dot stays in the bottom gutter");
+
+            DockGeometry vertical = DockLayoutMath.Calculate(3, size, DockOrientation.Vertical);
+            foreach (float shift in new[] { 0f, -13f, 21f })
+            {
+                Vector2 verticalIcon = vertical.ItemCenter(1) + new Vector2(0, shift);
+                Vector2 verticalDot = DockVisualMath.RunningDotCenter(vertical, (float)vertical.Height, verticalIcon);
+                Near(verticalDot.X, vertical.LeftInset / 2, "Vertical dot stays in the left gutter");
+                Near(verticalDot.Y, verticalIcon.Y, "Vertical dot follows the arranged icon and layout displacement");
+            }
         }
     }
 
@@ -65,8 +75,8 @@ internal static class VerticalDockVisualChecks
                 Require(dock.Contains(new(bounds.X, bounds.Y)) && dock.Contains(new(bounds.Right, bounds.Y)) &&
                     dock.Contains(new(bounds.X, bounds.Bottom)) && dock.Contains(new(bounds.Right, bounds.Bottom)),
                     $"Hovered icon {i} must stay within the rounded Dock.");
-                Vector2 dot = DockVisualMath.VerticalRunningDotCenter(0, (float)dock.LeftInset,
-                    items[i].Bounds, poses[i].Translation.Y);
+                Vector2 dot = DockVisualMath.RunningDotCenter(dock, (float)dock.Height,
+                    items[i].Bounds.Center + poses[i].Translation);
                 Near(dot.X, dock.LeftInset / 2, "Hover keeps the dot column fixed");
                 Near(dot.Y, bounds.Center.Y, "Dot follows the displayed icon center");
                 Require(dock.Contains(dot - new Vector2(2)) && dock.Contains(dot + new Vector2(2)),

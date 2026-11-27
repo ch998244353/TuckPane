@@ -57,16 +57,20 @@ public sealed partial class AppHost
         long version = _dockSnapshotVersion.Current;
         try
         {
-            Task<Dictionary<string, bool>> sampling = _dockRunningService.SampleAsync(_dockRunningPaths.ToArray());
+            Task<Dictionary<string, bool>> sampling = _dockRunningService.SampleAsync(_dockRunningPaths);
             try
             {
                 var snapshot = await sampling.WaitAsync(TimeSpan.FromSeconds(2));
-                if (!_dockStateDisposed && _dockSnapshotVersion.Accepts(version)) _dockOpenPaths = snapshot;
+                if (!_dockStateDisposed && _dockSnapshotVersion.Accepts(version))
+                {
+                    bool changed = DockRunningState.HasOpenPathChanges(_dockOpenPaths, snapshot);
+                    _dockOpenPaths = snapshot;
+                    if (changed) NotifyDockOpenStateChanged();
+                }
             }
             catch (TimeoutException)
             {
-                if (_dockSnapshotVersion.Accepts(version)) _dockOpenPaths.Clear();
-                NotifyDockOpenStateChanged();
+                ClearDockSample(version);
                 // Keep the single-worker gate until COM returns; discard late data.
                 // A stuck shell must not spawn another worker every second.
                 try { await sampling; } catch { }
@@ -74,14 +78,21 @@ public sealed partial class AppHost
         }
         catch (Exception ex)
         {
-            if (_dockSnapshotVersion.Accepts(version)) _dockOpenPaths.Clear();
+            ClearDockSample(version);
             AppLogger.Error("Dock 打开状态采集失败，本次不确认外部项目。", ex);
         }
         finally
         {
             _dockSampling = false;
-            NotifyDockOpenStateChanged();
         }
+    }
+
+    private void ClearDockSample(long version)
+    {
+        if (_dockStateDisposed || !_dockSnapshotVersion.Accepts(version)) return;
+        bool hadOpenPaths = _dockOpenPaths.ContainsValue(true);
+        _dockOpenPaths.Clear();
+        if (hadOpenPaths) NotifyDockOpenStateChanged();
     }
 
     internal bool IsDockItemOpen(WidgetItem item) => item.Kind switch
@@ -109,6 +120,7 @@ public sealed partial class AppHost
         _dockStateDisposed = true;
         _dockSnapshotVersion.Invalidate();
         _dockRunningTimer?.Stop();
+        _dockRunningService.Dispose();
         _dockOpenPaths.Clear();
     }
 }

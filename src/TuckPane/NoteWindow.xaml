@@ -19,6 +19,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Grid
                     x:Name="TitleDragSurface"
@@ -86,8 +87,24 @@
                     <Viewbox Width="12" Height="12"><SymbolIcon Symbol="Bullets" /></Viewbox>
                 </ToggleButton>
                 <Button
-                    x:Name="CloseButton"
+                    x:Name="MinimizeButton"
                     Grid.Column="3"
+                    Width="20.4"
+                    Height="20.4"
+                    MinWidth="0" MinHeight="0"
+                    Margin="0,0,2,0"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    HorizontalContentAlignment="Center"
+                    Padding="0"
+                    VerticalContentAlignment="Center"
+                    Click="MinimizeButton_Click">
+                    <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="8.4" Glyph="&#xE921;" />
+                </Button>
+                <Button
+                    x:Name="CloseButton"
+                    Grid.Column="4"
                     Width="20.4"
                     Height="20.4"
                     MinWidth="0" MinHeight="0"

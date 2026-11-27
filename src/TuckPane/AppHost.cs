@@ -128,6 +128,8 @@ public sealed partial class AppHost : IDisposable
         TransferQueue.StateChanged += (_, _) => _dispatcher.TryEnqueue(() => Console.UpdateTransferState());
 
         if (NormalizePositionedPlacementsOnStartup() | NormalizeStationPlacementsOnStartup()) await SaveStateAsync();
+        ReconcileUnifiedExpanded();
+        if (_unifiedExpandedChanges.Capture(State) is not null) await SaveStateAsync();
         foreach (OrganizerDefinition organizer in State.Organizers) CreateWindow(organizer);
         Console.RefreshAll();
         _ = Updates.CheckAsync(false);
@@ -212,6 +214,7 @@ public sealed partial class AppHost : IDisposable
             }
             State.Organizers.Add(draft);
             stateAdded = true;
+            ReconcileUnifiedExpanded();
             await SaveStateAsync();
             CreateWindow(draft);
             Console.RefreshAll();
@@ -1059,6 +1062,29 @@ public sealed partial class AppHost : IDisposable
         {
             return AppStrings.Get("StationEdgeOccupiedError");
         }
+        BeginUnifiedExpandedEdit(current);
+        var unifiedRequested = UnifiedExpandedSize.Get(State.GlobalSettings, edited.ExpandedContentMode);
+        bool sameContentMode = current.ExpandedContentMode == edited.ExpandedContentMode;
+        bool uniformCompactEditing = UsesUnifiedExpanded(current) && sameContentMode &&
+            current.ExpandedContentMode == OrganizerExpandedContentMode.CompactList;
+        if (UsesUnifiedExpanded(current) && sameContentMode)
+        {
+            if ((changes & OrganizerVisualChange.CanvasScale) != 0)
+            {
+                double previous = current.ExpandedContentMode == OrganizerExpandedContentMode.CompactList
+                    ? unifiedRequested.Width / 280 : unifiedRequested.Cell / 128;
+                double factor = edited.CanvasScale / Math.Max(.01, previous);
+                unifiedRequested = unifiedRequested with
+                {
+                    Width = unifiedRequested.Width * factor,
+                    Height = unifiedRequested.Height * factor,
+                    Cell = unifiedRequested.Cell * factor
+                };
+            }
+            if ((changes & OrganizerVisualChange.ItemScale) != 0)
+                unifiedRequested = unifiedRequested with { Content = edited.ItemScale };
+            UnifiedExpandedSize.Set(State.GlobalSettings, current.ExpandedContentMode, unifiedRequested);
+        }
         bool layoutChanged = current.Layout.Mode != edited.Layout.Mode ||
             current.Layout.Rows != edited.Layout.Rows ||
             current.Layout.Columns != edited.Layout.Columns;
@@ -1075,8 +1101,11 @@ public sealed partial class AppHost : IDisposable
             current.Position = edited.Position;
         current.Layout = new OrganizerLayout { Mode = edited.Layout.Mode, Rows = edited.Layout.Rows, Columns = edited.Layout.Columns };
         current.CompactScale = edited.CompactScale;
-        current.CanvasScale = edited.CanvasScale;
-        current.ItemScale = edited.ItemScale;
+        if (sameContentMode && !uniformCompactEditing)
+        {
+            current.CanvasScale = edited.CanvasScale;
+            current.ItemScale = edited.ItemScale;
+        }
         current.NameScale = edited.NameScale;
         current.CompactListItemScale = edited.CompactListItemScale;
         current.IconContentScale = edited.IconContentScale;
@@ -1090,6 +1119,7 @@ public sealed partial class AppHost : IDisposable
             current.ManualCanvasBaseHeightDip = null;
         }
         StateStore.Normalize(State);
+        ReconcileUnifiedExpanded();
         IEnumerable<Guid> affectedParentIds = previousContainmentChain;
         if (current.ContainerOrganizerId is Guid currentParent)
             affectedParentIds = affectedParentIds.Append(currentParent);
@@ -1622,10 +1652,10 @@ public sealed partial class AppHost : IDisposable
         _expandedWindow = source;
     }
 
-    internal void RaiseActiveCompactOrganizerDrags(MainWindow station)
+    internal void RaiseActiveCompactOrganizerDrags(MainWindow target)
     {
         foreach (MainWindow source in _windows.Values.Where(window =>
-                     !ReferenceEquals(window, station) && window.IsCompactOrganizerDragActive))
+                     !ReferenceEquals(window, target) && window.IsOrganizerDragVisualActive))
             source.RaiseActiveCompactOrganizerDrag();
     }
 
@@ -1721,12 +1751,15 @@ public sealed partial class AppHost : IDisposable
         if (ReferenceEquals(_organizerDragHoverSource, source) && _organizerDragHoverTarget is not null &&
             (DragBoundaryMath.Contains(_organizerDragHoverBounds, point) ||
              _organizerDragHoverTarget.ContainsScreenPoint(point)))
+        {
+            _organizerDragHoverTarget.UpdateIncomingDockGap(point, source);
             return;
+        }
 
         MainWindow? target = _windows.Values.FirstOrDefault(candidate =>
-            !ReferenceEquals(candidate, source) &&
+            (!ReferenceEquals(candidate, source) || candidate.IsDock && draggedOrganizerId != source.OrganizerId) &&
             candidate.OrganizerId != draggedOrganizerId &&
-            OrganizerKinds.IsRegular(candidate.DefinitionPlacementMode) &&
+            (OrganizerKinds.IsRegular(candidate.DefinitionPlacementMode) || candidate.IsDock) &&
             candidate.ContainerOrganizerId is null &&
             !OrganizerContainment.IsAncestor(State.Organizers, draggedOrganizerId, candidate.OrganizerId) &&
             (candidate.IsExpanded && candidate.ContainsScreenPoint(point) ||
@@ -1742,12 +1775,14 @@ public sealed partial class AppHost : IDisposable
         if (ReferenceEquals(_organizerDragHoverSource, source) &&
             ReferenceEquals(_organizerDragHoverTarget, target)) return;
 
+        _organizerDragHoverTarget?.ClearIncomingDockGap(source);
         _organizerDragHoverHold?.Dispose();
         _organizerDragHoverHold = target.HoldIncomingDrop();
         _organizerDragHoverSource = source;
         _organizerDragHoverTarget = target;
+        target.UpdateIncomingDockGap(point, source);
         _ = target.TryGetCompactDropBounds(out _organizerDragHoverBounds);
-        _organizerDragHoverTask = target.ExpandForOrganizerDragAsync();
+        _organizerDragHoverTask = target.IsDock ? Task.CompletedTask : target.ExpandForOrganizerDragAsync();
         _ = _organizerDragHoverTask.ContinueWith(
             _ => { }, TaskScheduler.Default);
     }
@@ -1766,6 +1801,7 @@ public sealed partial class AppHost : IDisposable
     internal void EndOrganizerDragHover(MainWindow source)
     {
         if (!ReferenceEquals(_organizerDragHoverSource, source)) return;
+        _organizerDragHoverTarget?.ClearIncomingDockGap(source);
         _organizerDragHoverHold?.Dispose();
         _organizerDragHoverHold = null;
         _organizerDragHoverSource = null;
@@ -1785,7 +1821,9 @@ public sealed partial class AppHost : IDisposable
                 OrganizerContainment.IsAncestor(State.Organizers, organizer.Id, target.OrganizerId)) continue;
             if (!target.TryGetOrganizerDropIndex(dropPoint, out int insertionIndex)) continue;
             using var receivingDrop = target.HoldIncomingDrop();
-            await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex);
+            target.ClearIncomingDockGap(refresh: false);
+            try { await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex); }
+            catch { await target.RefreshContainedOrganizerItemsAsync(); throw; }
             return true;
         }
         return false;
@@ -1801,7 +1839,9 @@ public sealed partial class AppHost : IDisposable
                 OrganizerContainment.IsAncestor(State.Organizers, organizer.Id, target.OrganizerId)) continue;
             if (!target.TryGetOrganizerDropIndex(dropPoint, out int insertionIndex)) continue;
             using var receivingDrop = target.HoldIncomingDrop();
-            await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex);
+            target.ClearIncomingDockGap(refresh: false);
+            try { await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex); }
+            catch { await target.RefreshContainedOrganizerItemsAsync(); throw; }
             return null;
         }
 

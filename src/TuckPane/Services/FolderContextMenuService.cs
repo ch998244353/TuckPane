@@ -95,7 +95,10 @@ internal sealed class FolderContextMenuService
         if (verb is null)
             return new(EnabledPreference(preference) ? FolderContextMenuStatus.Broken : FolderContextMenuStatus.Disabled,
                 Text(preference, "OwnerExecutable"));
-        if (target is null || !_fileExists(target) || (!_desktop && Text(verb, "MultiSelectModel") != "Single") ||
+        bool invalidSelectionModel = _desktop
+            ? verb.ContainsKey("MultiSelectModel")
+            : Text(verb, "MultiSelectModel") != "Single";
+        if (target is null || !_fileExists(target) || invalidSelectionModel ||
             string.IsNullOrWhiteSpace(Text(verb, "")))
             return new(FolderContextMenuStatus.Broken, target ?? Text(verb, "OwnerExecutable"));
         return new(SameExecutable(target, Executable) ? FolderContextMenuStatus.Enabled : FolderContextMenuStatus.OtherCopy, target);
@@ -121,11 +124,13 @@ internal sealed class FolderContextMenuService
         if (!_fileExists(Executable)) throw new FileNotFoundException(AppStrings.Get("FolderMenuExecutableMissing"), Executable);
         Change(() =>
         {
-            _store.Write(VerbPath, new Dictionary<string, object>
+            var values = new Dictionary<string, object>
             {
-                [""] = label, ["Icon"] = $"\"{Executable}\",0", ["MultiSelectModel"] = "Single",
+                [""] = label, ["Icon"] = $"\"{Executable}\",0",
                 ["OwnerExecutable"] = Executable
-            });
+            };
+            if (!_desktop) values["MultiSelectModel"] = "Single";
+            _store.Write(VerbPath, values);
             _store.Write(CommandPath, new Dictionary<string, object> { [""] = BuildCommand(Executable, _desktop) });
             _store.Write(PreferencePath, new Dictionary<string, object> { ["Enabled"] = 1, ["OwnerExecutable"] = Executable });
         });

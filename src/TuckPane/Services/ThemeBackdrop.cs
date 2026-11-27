@@ -33,6 +33,7 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
     private readonly ThemeTarget _themeTarget;
     private readonly string _surfaceName;
     private readonly bool _useRoundedMask;
+    private readonly ThemeBackdropMaterial _material;
     private RoundedSurfaceGeometry _roundedGeometry;
     private RoundedBackdropMask? _roundedMask;
     private Wuc.CompositionBrush? _maskedSourceBrush;
@@ -54,11 +55,13 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
 
     internal bool IsAvailable { get; private set; } = true;
 
-    internal ThemeBackdrop(ThemeTarget themeTarget = ThemeTarget.Organizer, string surfaceName = "local", bool useRoundedMask = false)
+    internal ThemeBackdrop(ThemeTarget themeTarget = ThemeTarget.Organizer, string surfaceName = "local", bool useRoundedMask = false,
+        ThemeBackdropMaterial material = ThemeBackdropMaterial.Theme)
     {
         _themeTarget = themeTarget;
         _surfaceName = surfaceName;
         _useRoundedMask = useRoundedMask;
+        _material = material;
     }
 
     internal void SetRoundedGeometry(RoundedSurfaceGeometry geometry)
@@ -195,7 +198,11 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
 
     internal void SetTheme(ThemeValues theme, bool useEffects)
     {
-        ThemeCompositionPlan next = ThemePalette.BuildCompositionPlan(theme, useEffects);
+        bool preview = _material == ThemeBackdropMaterial.OrganizerPreview;
+        if (preview) theme = OrganizerPreviewMaterial.Theme;
+        ThemeCompositionPlan next = preview
+            ? OrganizerPreviewMaterial.BuildPlan(useEffects)
+            : ThemePalette.BuildCompositionPlan(theme, useEffects);
         if (_hasTheme && _theme == theme && _plan == next) return;
         _hasTheme = true;
         _theme = theme;

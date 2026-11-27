@@ -189,6 +189,13 @@ public sealed class GlobalSettings
     public bool WindowAlignmentEnabled { get; set; }
     public bool RememberExpandedOrganizerPosition { get; set; }
     public bool UseUniformFloatingCompactScale { get; set; }
+    public bool UseUniformCompactExpandedSize { get; set; }
+    public double UniformCompactExpandedWidthDip { get; set; } = 280;
+    public double UniformCompactExpandedHeightDip { get; set; } = 360;
+    public double UniformCompactExpandedContentScale { get; set; } = 1;
+    public bool UseUniformIconExpandedSize { get; set; }
+    public double UniformIconExpandedCellDip { get; set; } = 128;
+    public double UniformIconExpandedContentScale { get; set; } = 1;
     public double UniformFloatingCompactScale { get; set; } = OrganizerLimits.DefaultCompactScale;
     public bool UseUniformPositionedCompactScale { get; set; }
     public double UniformPositionedCompactScale { get; set; } = OrganizerLimits.DefaultCompactScale;

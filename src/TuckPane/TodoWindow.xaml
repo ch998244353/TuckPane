@@ -1,7 +1,8 @@
 <Window
     x:Class="TuckPane.TodoWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:TuckPane.Controls">
     <Border
         x:Name="WindowFrame"
         BorderThickness="1"
@@ -23,6 +24,7 @@
             <Grid x:Name="DragTitleBar" Padding="14,0,6,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
@@ -89,8 +91,22 @@
                     <Viewbox Width="12" Height="12"><SymbolIcon Symbol="Bullets" /></Viewbox>
                 </ToggleButton>
                 <Button
-                    x:Name="CloseButton"
+                    x:Name="MinimizeButton"
                     Grid.Column="3"
+                    Width="20.4"
+                    Height="20.4"
+                    MinWidth="0" MinHeight="0"
+                    Margin="0,0,2,0"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    Padding="0"
+                    Click="MinimizeButton_Click">
+                    <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="8.4" Glyph="&#xE921;" />
+                </Button>
+                <Button
+                    x:Name="CloseButton"
+                    Grid.Column="4"
                     Width="20.4"
                     Height="20.4"
                     MinWidth="0" MinHeight="0"
@@ -116,7 +132,7 @@
                 SelectionMode="None"
                 HorizontalContentAlignment="Stretch">
                 <ListView.Footer>
-                    <Grid x:Name="NewTaskEntry" Margin="6,2" MinHeight="40"
+                    <Grid x:Name="NewTaskEntry" Margin="6,2" MinHeight="0"
                           HorizontalAlignment="Stretch">
                         <Button x:Name="AddTaskButton" Content="+"
                                 HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
@@ -130,6 +146,7 @@
                                  MinHeight="0" Padding="8,0" CornerRadius="8"
                                  VerticalContentAlignment="Center"
                                  FontFamily="{ThemeResource ContentControlThemeFontFamily}"
+                                 IsTextScaleFactorEnabled="True"
                                  Background="{StaticResource TodoAddBrush}"
                                  BorderBrush="{StaticResource TodoAddBorderBrush}"
                                  Foreground="{StaticResource TodoTextBrush}"
@@ -180,6 +197,7 @@
                 </ListView.Resources>
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
+                        <Setter Property="MinHeight" Value="0" />
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                         <Setter Property="Padding" Value="0" />
                         <Setter Property="Margin" Value="0,2" />
@@ -189,6 +207,7 @@
                     <DataTemplate>
                         <Border
                             Margin="6,0"
+                            MinHeight="{Binding SingleLineHeight}"
                             Padding="8,8,8,4"
                             BorderBrush="{StaticResource TodoSeparatorBrush}"
                             BorderThickness="{Binding SeparatorThickness}"
@@ -199,11 +218,10 @@
                                     <MenuFlyoutItem Click="DeleteTask_Click" Tag="{Binding}" Text="{Binding DeleteLabel}" />
                                 </MenuFlyout>
                             </Border.ContextFlyout>
-                            <Grid>
+                            <Grid Loaded="TaskRow_Loaded" DataContextChanged="TaskRow_DataContextChanged">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Grid
                                     Grid.Column="0"
@@ -237,8 +255,10 @@
                                     VerticalAlignment="Center"
                                     DoubleTapped="TaskText_DoubleTapped"
                                     FontFamily="{ThemeResource ContentControlThemeFontFamily}"
+                                    FontWeight="Normal"
                                     FontStretch="Normal"
                                     CharacterSpacing="0"
+                                    IsTextScaleFactorEnabled="True"
                                     FontSize="{Binding FontSize}"
                                     Foreground="{StaticResource TodoTextBrush}"
                                     Text="{Binding Text}"
@@ -246,14 +266,18 @@
                                     TextDecorations="{Binding TextDecorations}"
                                     TextWrapping="WrapWholeWords"
                                     Visibility="{Binding TextVisibility}" />
-                                <TextBox
+                                <controls:TaskEditorTextBox
                                     Grid.Column="1"
                                     Margin="-4,-5,4,-5"
                                     Padding="4"
                                     AcceptsReturn="False"
                                     Background="{StaticResource TodoInputBrush}"
                                     BorderBrush="{StaticResource TodoBorderBrush}"
-                                    FontFamily="Segoe UI Variable Text"
+                                    FontFamily="{ThemeResource ContentControlThemeFontFamily}"
+                                    FontWeight="Normal"
+                                    FontStretch="Normal"
+                                    CharacterSpacing="0"
+                                    IsTextScaleFactorEnabled="True"
                                     FontSize="{Binding FontSize}"
                                     Foreground="{StaticResource TodoTextBrush}"
                                     HorizontalAlignment="Stretch"
@@ -265,15 +289,6 @@
                                     TextAlignment="Left"
                                     TextWrapping="Wrap"
                                     Visibility="{Binding EditorVisibility}" />
-                                <Button
-                                    Grid.Column="2"
-                                    Margin="8,0,0,0"
-                                    Padding="8,2"
-                                    VerticalAlignment="Center"
-                                    Click="UndoTask_Click"
-                                    Content="{Binding UndoLabel}"
-                                    Tag="{Binding}"
-                                    Visibility="{Binding UndoVisibility}" />
                             </Grid>
                         </Border>
                     </DataTemplate>

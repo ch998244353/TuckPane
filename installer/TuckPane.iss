@@ -1,6 +1,6 @@
 #define MyAppName "TuckPane"
 #ifndef MyAppVersion
-  #define MyAppVersion "4.2.0"
+  #define MyAppVersion "4.2.12"
 #endif
 #ifndef PublishDir
   #define PublishDir "..\artifacts\publish\win-x64"
@@ -195,6 +195,8 @@ begin
   if RegKeyExists(HKCU, DesktopMenuKey) then
     if not DesktopMenuOwnedByThisInstall then Exit;
 
+  { Older in-app registration incorrectly applied a file-selection model to this zero-selection desktop verb. }
+  RegDeleteValue(HKCU, DesktopMenuKey, 'MultiSelectModel');
   Success := RegWriteStringValue(HKCU, DesktopMenuKey, 'OwnerExecutable', Executable);
   Success := RegWriteStringValue(HKCU, DesktopMenuKey, '', '新建收纳窗') and Success;
   Success := RegWriteStringValue(HKCU, DesktopMenuKey, 'Icon', '"' + Executable + '",0') and Success;

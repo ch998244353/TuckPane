@@ -1,5 +1,6 @@
 using System.Numerics;
 using TuckPane.Core;
+using TuckPane.Services;
 
 internal static class DockStabilityChecks
 {
@@ -12,6 +13,9 @@ internal static class DockStabilityChecks
                 break;
             case "hover":
                 Hover();
+                break;
+            case "running-samples":
+                RunningSamples();
                 break;
             default:
                 throw new ArgumentException($"Unknown Dock stability group: {area}.");
@@ -101,6 +105,89 @@ internal static class DockStabilityChecks
         }
         // Synthetic window handles exercise the production ownership policy;
         // native tooltip-instance identification and presented frames are not measured.
+    }
+
+    private static void RunningSamples()
+    {
+        var workers = new HashSet<int>();
+        using (var service = new DockRunningService(paths =>
+        {
+            Require(Thread.CurrentThread.IsBackground && Thread.CurrentThread.GetApartmentState() == ApartmentState.STA,
+                "Dock samples must stay on a background STA.");
+            workers.Add(Environment.CurrentManagedThreadId);
+            return new(StringComparer.OrdinalIgnoreCase) { [paths.Single()] = true };
+        }))
+        {
+            for (int index = 0; index < 60; index++)
+            {
+                string path = $@"C:\fixture\item-{index}.lnk";
+                var result = service.SampleAsync([path]).WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                Require(result.Count == 1 && result.TryGetValue(path, out bool isOpen) && isOpen,
+                    "Each sample must return its own result.");
+            }
+        }
+        Require(workers.Count == 1, $"60 sequential samples used {workers.Count} workers.");
+
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using (var service = new DockRunningService(_ =>
+        {
+            started.SetResult();
+            try
+            {
+                release.Task.GetAwaiter().GetResult();
+                return new(StringComparer.OrdinalIgnoreCase);
+            }
+            finally { finished.SetResult(); }
+        }))
+        {
+            _ = service.SampleAsync([@"C:\fixture\blocked.lnk"]);
+            try
+            {
+                started.Task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                Task.Run(service.Dispose).WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                Require(!finished.Task.IsCompleted, "Disposal waited for the blocked STA sample.");
+                try
+                {
+                    _ = service.SampleAsync([@"C:\fixture\after-dispose.lnk"])
+                        .WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                    throw new InvalidOperationException("The disposed worker accepted another sample.");
+                }
+                catch (ObjectDisposedException) { }
+            }
+            finally { release.TrySetResult(); }
+        }
+        finished.Task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+
+        Dictionary<string, bool> empty = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, bool> closed = new(StringComparer.OrdinalIgnoreCase) { [@"C:\fixture\editor.exe"] = false };
+        Dictionary<string, bool> open = new(StringComparer.OrdinalIgnoreCase) { [@"C:\fixture\editor.exe"] = true };
+        Dictionary<string, bool> openWithDifferentCase = new(StringComparer.OrdinalIgnoreCase)
+        {
+            [@"c:\FIXTURE\EDITOR.EXE"] = true,
+            [@"C:\fixture\closed.exe"] = false
+        };
+        Require(!DockRunningState.HasOpenPathChanges(empty, closed) &&
+                !DockRunningState.HasOpenPathChanges(closed, empty) &&
+                !DockRunningState.HasOpenPathChanges(open, openWithDifferentCase) &&
+                DockRunningState.HasOpenPathChanges(open, closed) &&
+                DockRunningState.HasOpenPathChanges(closed, open),
+            "Only transitions in the case-insensitive set of open paths should trigger updates.");
+
+        IReadOnlyDictionary<string, bool> previous = closed;
+        int notifications = 0;
+        const int sampleCount = 10_000;
+        const int samplesPerChange = 250;
+        for (int index = 0; index < sampleCount; index++)
+        {
+            bool itemOpen = (index + 1) / samplesPerChange % 2 == 1;
+            var next = itemOpen ? open : closed;
+            if (DockRunningState.HasOpenPathChanges(previous, next)) notifications++;
+            previous = next;
+        }
+        Require(notifications == 40, $"Expected 40 changed snapshots, found {notifications}.");
+        Console.WriteLine($"Dock sampling: {workers.Count} STA across 60 requests, {sampleCount} legacy notifications versus {notifications} change notifications.");
     }
 
     private static void Require(bool condition, string message)

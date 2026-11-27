@@ -48,7 +48,8 @@ public sealed partial class ConsoleWindow
         _themeSaveTimer.Stop();
         _hoverMagnificationSaveTimer?.Stop();
         if (_uniformCompactScaleApplyScheduled) ApplyPendingUniformCompactScaleChanges(null, EventArgs.Empty);
-        bool saved = await SaveHoverMagnificationSlidersAsync();
+        bool saved = await FlushUnifiedExpandedAsync();
+        saved = await SaveHoverMagnificationSlidersAsync() && saved;
         saved = await SaveUniformSlidersAsync() && saved;
         saved = await SaveNameSlidersAsync() && saved;
         saved = await SaveDelaySlidersAsync() && saved;

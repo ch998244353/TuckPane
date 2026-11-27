@@ -10,6 +10,16 @@ internal static class DockRunningState
     // Without a content-specific adapter its host process cannot prove it is open.
     internal static bool CanMatchExecutableShortcut(string? arguments) => string.IsNullOrWhiteSpace(arguments);
 
+    internal static bool HasOpenPathChanges(IReadOnlyDictionary<string, bool> before, IReadOnlyDictionary<string, bool> after)
+    {
+        // Missing paths and explicit false values have the same visual state.
+        foreach (var (path, open) in before)
+            if (open && (!after.TryGetValue(path, out bool current) || !current)) return true;
+        foreach (var (path, open) in after)
+            if (open && (!before.TryGetValue(path, out bool previous) || !previous)) return true;
+        return false;
+    }
+
     internal static bool IsOpen(DockItemIdentity identity, IReadOnlyList<DockOpenWindow> windows,
         IReadOnlyCollection<string> folders)
     {

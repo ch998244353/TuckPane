@@ -2,26 +2,13 @@
     x:Class="TuckPane.Controls.OrganizerPreviewControl"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <UserControl.Resources>
-        <LinearGradientBrush x:Key="PreviewSurfaceBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Offset="0" Color="#FFF8FAFC" />
-            <GradientStop Offset="0.58" Color="#FFE9EFF4" />
-            <GradientStop Offset="1" Color="#FFD8E2EA" />
-        </LinearGradientBrush>
-        <LinearGradientBrush x:Key="PreviewOutlineBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Offset="0" Color="#E8FFFFFF" />
-            <GradientStop Offset="0.52" Color="#788FA1B2" />
-            <GradientStop Offset="1" Color="#4F627587" />
-        </LinearGradientBrush>
-    </UserControl.Resources>
     <Grid IsHitTestVisible="False">
-        <Border x:Name="ShadowBorder" Margin="1,2,0,0" Background="#24192B3D" CornerRadius="10" />
+        <SystemBackdropElement x:Name="PreviewBackdropHost" Margin="0,0,1,2" CornerRadius="10" IsHitTestVisible="False" />
         <Border
             x:Name="SurfaceBorder"
             Margin="0,0,1,2"
             Padding="4"
-            Background="{StaticResource PreviewSurfaceBrush}"
-            BorderBrush="{StaticResource PreviewOutlineBrush}"
+            Background="Transparent"
             BorderThickness="1"
             CornerRadius="10">
             <Grid>
@@ -50,5 +37,29 @@
                 <Image x:Name="Preview3" Grid.Row="1" Grid.Column="1" Margin="2" Stretch="Uniform" />
             </Grid>
         </Border>
+        <Border x:Name="PreviewEdge" Margin="0,0,1,2" CornerRadius="10" IsHitTestVisible="False" />
+        <Grid x:Name="PreviewReflectionLayer" Margin="0,0,1,2" Visibility="Collapsed" IsHitTestVisible="False">
+            <Border CornerRadius="10" BorderThickness="1" IsHitTestVisible="False">
+                <Border.BorderBrush>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Offset="0" Color="#60FFFFFF" />
+                        <GradientStop Offset="0.22" Color="#38FFFFFF" />
+                        <GradientStop Offset="0.48" Color="#08FFFFFF" />
+                        <GradientStop Offset="0.68" Color="#00FFFFFF" />
+                        <GradientStop Offset="1" Color="#00FFFFFF" />
+                    </LinearGradientBrush>
+                </Border.BorderBrush>
+            </Border>
+            <Border Margin="1" CornerRadius="9" BorderThickness="0.5" IsHitTestVisible="False">
+                <Border.BorderBrush>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Offset="0" Color="#00FFFFFF" />
+                        <GradientStop Offset="0.5" Color="#00FFFFFF" />
+                        <GradientStop Offset="0.78" Color="#10FFFFFF" />
+                        <GradientStop Offset="1" Color="#30FFFFFF" />
+                    </LinearGradientBrush>
+                </Border.BorderBrush>
+            </Border>
+        </Grid>
     </Grid>
 </UserControl>

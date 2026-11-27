@@ -32,57 +32,55 @@ public sealed class StorageService
 
     public void EnsureCreated() => Directory.CreateDirectory(_itemsRoot);
 
-    public async Task<IReadOnlyList<TransferOutcome>> ImportBatchAsync(
+    public Task<IReadOnlyList<TransferOutcome>> ImportBatchAsync(
         IReadOnlyList<string> sourcePaths,
         IProgress<TransferProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        TransferBatchAsync(sourcePaths, progress, move: true, cancellationToken);
+
+    public Task<IReadOnlyList<TransferOutcome>> CopyBatchAsync(
+        IReadOnlyList<string> sourcePaths,
+        IProgress<TransferProgress>? progress,
+        CancellationToken cancellationToken) =>
+        TransferBatchAsync(sourcePaths, progress, move: false, cancellationToken);
+
+    private Task<IReadOnlyList<TransferOutcome>> TransferBatchAsync(
+        IReadOnlyList<string> sourcePaths, IProgress<TransferProgress>? progress, bool move,
+        CancellationToken cancellationToken) => Task.Run<IReadOnlyList<TransferOutcome>>(async () =>
     {
-        DropValidationResult validation = await Task.Run(() =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(_itemsRoot);
-            return DropValidator.ValidateBatch(sourcePaths, _itemsRoot, cancellationToken);
-        }, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        Directory.CreateDirectory(_itemsRoot);
+        DropValidationResult validation = DropValidator.ValidateBatch(sourcePaths, _itemsRoot, cancellationToken);
         if (!validation.IsValid) throw new InvalidOperationException(string.Join(Environment.NewLine, validation.Errors));
 
         var outcomes = new List<TransferOutcome>();
         foreach (string sourcePath in sourcePaths)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            TransferOutcome outcome = DropValidator.IsExecutable(sourcePath)
-                ? CreateExecutableShortcut(sourcePath)
-                : await Task.Run(() => MoveOneAsync(sourcePath, progress, cancellationToken), cancellationToken);
+            TransferOutcome outcome;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (DropValidator.IsExecutable(sourcePath))
+                    outcome = await CreateExecutableShortcutAsync(sourcePath, cancellationToken).ConfigureAwait(false);
+                else if (move)
+                    outcome = await MoveOneAsync(sourcePath, progress, cancellationToken).ConfigureAwait(false);
+                else
+                    outcome = await CopyOneAsync(sourcePath, progress, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && outcomes.Count > 0)
+            {
+                outcome = new(sourcePath, null, TransferStatus.Cancelled, AppStrings.Get(move ? "MoveCancelled" : "CopyCancelled"));
+            }
+            catch (Exception ex) when (outcomes.Count > 0 && ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                outcome = new(sourcePath, null, TransferStatus.Failed, ex.Message);
+            }
+
             outcomes.Add(outcome);
             if (outcome.Status is TransferStatus.Failed or TransferStatus.Cancelled) break;
         }
         return outcomes;
-    }
-
-    public async Task<IReadOnlyList<TransferOutcome>> CopyBatchAsync(
-        IReadOnlyList<string> sourcePaths,
-        IProgress<TransferProgress>? progress,
-        CancellationToken cancellationToken)
-    {
-        DropValidationResult validation = await Task.Run(() =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(_itemsRoot);
-            return DropValidator.ValidateBatch(sourcePaths, _itemsRoot, cancellationToken);
-        }, cancellationToken);
-        if (!validation.IsValid) throw new InvalidOperationException(string.Join(Environment.NewLine, validation.Errors));
-
-        var outcomes = new List<TransferOutcome>();
-        foreach (string sourcePath in sourcePaths)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            TransferOutcome outcome = DropValidator.IsExecutable(sourcePath)
-                ? CreateExecutableShortcut(sourcePath)
-                : await Task.Run(() => CopyOneAsync(sourcePath, progress, cancellationToken), cancellationToken);
-            outcomes.Add(outcome);
-            if (outcome.Status is TransferStatus.Failed or TransferStatus.Cancelled) break;
-        }
-        return outcomes;
-    }
+    }, cancellationToken);
 
     internal TransferOutcome AddFileShortcut(string sourcePath) => AddItemShortcut(sourcePath);
 
@@ -314,25 +312,21 @@ public sealed class StorageService
         return new(source, null, TransferStatus.Failed, "目标目录冲突过于频繁，源项目已保留。");
     }
 
-    private TransferOutcome CreateExecutableShortcut(string sourcePath)
+    private Task<TransferOutcome> CreateExecutableShortcutAsync(string sourcePath, CancellationToken cancellationToken)
     {
-        try
+        var completion = new TaskCompletionSource<TransferOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
         {
-            string source = Path.GetFullPath(sourcePath);
-            string destination = GetUniquePath(Path.Combine(_itemsRoot, Path.GetFileNameWithoutExtension(source) + ".lnk"), isDirectory: false);
-            Type shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException(AppStrings.Get("ShellUnavailable"));
-            dynamic shell = Activator.CreateInstance(shellType)!;
-            dynamic shortcut = shell.CreateShortcut(destination);
-            shortcut.TargetPath = source;
-            shortcut.WorkingDirectory = Path.GetDirectoryName(source)!;
-            shortcut.Save();
-            return new(source, destination, TransferStatus.ShortcutCreated, AppStrings.Get("ShortcutCreated"));
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error($"创建程序快捷方式失败：{sourcePath}", ex);
-            return new(sourcePath, null, TransferStatus.Failed, ex.Message);
-        }
+            try
+            {
+                if (cancellationToken.IsCancellationRequested) completion.SetCanceled(cancellationToken);
+                else completion.SetResult(AddItemShortcut(sourcePath));
+            }
+            catch (Exception ex) { completion.SetException(ex); }
+        }) { IsBackground = true, Name = "TuckPane executable shortcut" };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return completion.Task;
     }
 
     private async Task<TransferOutcome> MoveOneAsync(

@@ -15,7 +15,7 @@ internal static class StabilityInteractionChecks
             Task operation = IncomingDropOperation.RunAsync(() => complete++,
                 () => { incoming++; return new Cleanup(() => incoming--); },
                 () => { mode++; return new Cleanup(() => mode--); },
-                () => release.Task, () => reset++);
+                _ => release.Task, () => reset++);
             Require(!operation.IsCompleted && incoming == 1 && mode == 1 && reset == 0 && complete == 0,
                 "A delayed drop must hold both guards and defer completion.");
             Exception? error = null;
@@ -34,11 +34,74 @@ internal static class StabilityInteractionChecks
         {
             await IncomingDropOperation.RunAsync(() => completedAfterResetFailure++,
                 () => new Cleanup(() => { }), () => new Cleanup(() => { }),
-                () => Task.CompletedTask, () => throw new IOException("expected reset failure"));
+                _ => Task.CompletedTask, () => throw new IOException("expected reset failure"));
         }
         catch (IOException ex) when (ex.Message == "expected reset failure") { }
         Require(completedAfterResetFailure == 1, "A reset failure must still complete the deferral.");
-        Console.WriteLine("PASS --stability drop: actual result operation mapping, delayed success/failure/cancellation guard release and reset-failure deferral completion; no drag or UI automation.");
+        await CheckEarlyDropCompletionAsync();
+        await CheckDropTransfersAsync();
+        Console.WriteLine("PASS --stability drop: effect mapping, deferral and guard cleanup, partial cancellation and executable shortcut preservation; isolated files, no GUI.");
+    }
+
+    private static async Task CheckEarlyDropCompletionAsync()
+    {
+        int incoming = 0, mode = 0, reset = 0, complete = 0;
+        var finishPresentation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task operation = IncomingDropOperation.RunAsync(() => complete++,
+            () => { incoming++; return new Cleanup(() => incoming--); },
+            () => { mode++; return new Cleanup(() => mode--); },
+            seal =>
+            {
+                seal();
+                seal();
+                return finishPresentation.Task;
+            }, () => reset++);
+        Require(!operation.IsCompleted && incoming == 1 && mode == 1 && complete == 1,
+            "A sealed drop must release its deferral once while presentation and both guards remain active.");
+        finishPresentation.SetException(new IOException("expected presentation failure"));
+        bool failed = false;
+        try { await operation; }
+        catch (IOException ex) when (ex.Message == "expected presentation failure") { failed = true; }
+        Require(failed && incoming == 0 && mode == 0 && reset == 1 && complete == 1,
+            "Presentation failure must release both guards and leave the deferral completed exactly once.");
+    }
+
+    private static async Task CheckDropTransfersAsync()
+    {
+        string root = Environment.GetEnvironmentVariable("TUCKPANE_TEST_ROOT") ??
+            throw new InvalidOperationException("The drop checks require the isolated stability test directory.");
+        string source = Directory.CreateDirectory(Path.Combine(root, "drop-source")).FullName;
+        var storage = new StorageService(Path.Combine(root, "drop-destination"));
+        string first = Path.Combine(source, "first.txt");
+        string second = Path.Combine(source, "second.txt");
+        File.WriteAllText(first, "first file");
+        File.WriteAllText(second, "second file");
+        using var cancellation = new CancellationTokenSource();
+        string moved = Path.Combine(storage.ItemsRoot, "first.txt");
+        IReadOnlyList<TransferOutcome> outcomes = await storage.ImportBatchAsync([first, second],
+            new InlineTransferProgress(cancellation.Cancel), cancellation.Token);
+        Require(outcomes.Count == 2 && outcomes[0] is { Status: TransferStatus.Moved } firstOutcome &&
+            firstOutcome.DestinationPath == moved && outcomes[1] is { Status: TransferStatus.Cancelled } secondOutcome &&
+            secondOutcome.SourcePath == second,
+            "Batch cancellation must return both the completed move and the next cancelled item.");
+        Require(!File.Exists(first) && File.ReadAllText(moved) == "first file" &&
+            File.ReadAllText(second) == "second file" && !File.Exists(Path.Combine(storage.ItemsRoot, "second.txt")),
+            "Partial cancellation must preserve the moved content and leave the unprocessed source in place.");
+        Require(IncomingDropOperation.ResultOperation(DataPackageOperation.Move, DataPackageOperation.Move, outcomes) ==
+            DataPackageOperation.None, "A partial transfer must not report Move to the drag source.");
+
+        string executable = Path.Combine(source, "entry.exe");
+        string existing = Path.Combine(storage.ItemsRoot, "entry.lnk");
+        File.WriteAllText(executable, "inert shortcut target");
+        File.WriteAllText(existing, "existing shortcut name");
+        TransferOutcome shortcut = (await storage.ImportBatchAsync([executable], null, CancellationToken.None)).Single();
+        Require(shortcut is { Status: TransferStatus.ShortcutCreated, DestinationPath: string destination } &&
+            !destination.Equals(existing, StringComparison.OrdinalIgnoreCase) &&
+            ShellLinkTarget.TryRead(destination, out string target, out _) &&
+            target.Equals(executable, StringComparison.OrdinalIgnoreCase),
+            "An executable drop must write a separately named Shell shortcut resolving to the original path.");
+        Require(File.ReadAllText(executable) == "inert shortcut target" && File.ReadAllText(existing) == "existing shortcut name",
+            "Shortcut creation must preserve the executable and the existing destination.");
     }
 
     private static void CheckDropResult()
@@ -184,6 +247,11 @@ internal static class StabilityInteractionChecks
                 callback.Contains("_watcherDebounceTimer.Start();", StringComparison.Ordinal) &&
                 !System.Text.RegularExpressions.Regex.IsMatch(callback, @"if\s*\([^\r\n]*sender[^\r\n]*\)[^\r\n]*return"),
             "Source-only: a queued obsolete sender must preserve the merged timer refresh; only the current sender resets recovery health.");
+    }
+
+    private sealed class InlineTransferProgress(Action report) : IProgress<TransferProgress>
+    {
+        public void Report(TransferProgress value) => report();
     }
 
     private sealed class Cleanup(Action release) : IDisposable

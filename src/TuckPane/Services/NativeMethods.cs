@@ -133,6 +133,9 @@ internal static class NativeMethods
     internal const uint TPM_RETURNCMD = 0x0100;
     internal const uint SHGFI_ICON = 0x000000100;
     internal const uint SHGFI_LARGEICON = 0x000000000;
+    internal const uint SHGFI_USEFILEATTRIBUTES = 0x000000010;
+    internal const uint FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
+    internal const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
     internal const uint SHGFI_ADDOVERLAYS = 0x000000020;
     internal const uint SHGFI_OVERLAYINDEX = 0x000000040;
     internal const uint SHGFI_SYSICONINDEX = 0x000004000;

@@ -442,4 +442,26 @@
   <data name="NoteCopyImage" xml:space="preserve"><value>画像をコピー</value></data>
   <data name="NoteDeleteImage" xml:space="preserve"><value>画像を削除</value></data>
   <data name="NoteImagePasteError" xml:space="preserve"><value>クリップボードの画像またはテキストを読み取れません。コピーし直してください。</value></data>
+  <data name="UniformExpandedSizes" xml:space="preserve"><value>展開時のサイズを統一</value></data>
+  <data name="UniformCompactExpandedTitle" xml:space="preserve"><value>コンパクトモードの展開時サイズを統一</value></data>
+  <data name="UniformIconExpandedTitle" xml:space="preserve"><value>アイコンモードの展開時サイズを統一</value></data>
+  <data name="UniformExpandedWidth" xml:space="preserve"><value>幅</value></data>
+  <data name="UniformExpandedHeight" xml:space="preserve"><value>高さ</value></data>
+  <data name="UniformExpandedCell" xml:space="preserve"><value>セルのサイズ</value></data>
+  <data name="UniformExpandedContent" xml:space="preserve"><value>コンテンツの表示倍率</value></data>
+  <data name="UniformExpandedDipValue" xml:space="preserve"><value>{0:0} 論理ピクセル</value></data>
+  <data name="UniformExpandedIconHint" xml:space="preserve"><value>セルのサイズを統一します。行数と列数は各ウィンドウで個別に設定できます。</value></data>
+  <data name="UniformExpandedLimitHint" xml:space="preserve"><value>同じモードのすべてのウィンドウに収まるよう、サイズまたはコンテンツの表示倍率を制限しました。</value></data>
+  <data name="UniformExpandedSaveError" xml:space="preserve"><value>展開時のサイズの統一設定を保存できません</value></data>
+  <data name="UniformExpandedLinkedHint" xml:space="preserve"><value>展開時のサイズの統一が有効です。ここでの変更は、同じモードのすべてのウィンドウに反映されます。</value></data>
+  <data name="ContextOpenFile" xml:space="preserve"><value>開く</value></data>
+  <data name="ContextCutFile" xml:space="preserve"><value>切り取り</value></data>
+  <data name="ContextDeleteFile" xml:space="preserve"><value>削除</value></data>
+  <data name="ContextFileProperties" xml:space="preserve"><value>プロパティ</value></data>
+  <data name="FilePropertiesFailed" xml:space="preserve"><value>ファイルのプロパティを開けませんでした。</value></data>
+  <data name="ContextShowMoreOptions" xml:space="preserve"><value>その他のオプションを表示</value></data>
+  <data name="ContextMenuLoading" xml:space="preserve"><value>メニューを読み込み中…</value></data>
+  <data name="FileMenuFallback" xml:space="preserve"><value>システムメニューを読み込めないため基本操作を表示しています。再試行するかエクスプローラーを使用してください。</value></data>
+  <data name="FileMenuInitializationTimeout" xml:space="preserve"><value>システムメニューの初期化が 5 秒を超えたため、表示を中止しました。ウィンドウは引き続き操作できます。</value></data>
+  <data name="FileMenuSessionBusy" xml:space="preserve"><value>前のシステムメニューが処理中または終了中です。しばらくしてから再試行してください。ウィンドウは引き続き操作できます。</value></data>
 </root>

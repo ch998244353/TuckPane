@@ -31,18 +31,16 @@ public sealed class StateStore
 
     public Task SaveAsync(AppStateV2 state) => SaveAsync(state, null);
 
-    internal async Task SaveAsync(AppStateV2 state, Action? snapshotCaptured)
+    internal async Task SaveAsync(AppStateV2 state, Action? snapshotCaptured, Func<Task>? beforeSnapshot = null)
     {
         await _saveGate.WaitAsync();
         try
         {
+            if (beforeSnapshot is not null) await beforeSnapshot();
             snapshotCaptured?.Invoke();
-            Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
-            string temporary = _statePath + ".tmp";
+            // Normalization reads and mutates the live model. Freeze the JSON on its owner before handing off I/O.
             string json = JsonSerializer.Serialize(Normalize(state), JsonOptions);
-            await File.WriteAllTextAsync(temporary, json);
-            if (File.Exists(_statePath)) File.Copy(_statePath, _backupPath, overwrite: true);
-            await MoveIntoPlaceAsync(temporary, _statePath);
+            await PersistSnapshotAsync(json, _statePath);
         }
         finally
         {
@@ -55,19 +53,36 @@ public sealed class StateStore
         await _saveGate.WaitAsync();
         try
         {
-            string temporary = _statePath + ".tmp";
-            if (!legacyPath.Equals(_backupPath, StringComparison.OrdinalIgnoreCase))
-            {
-                File.Copy(legacyPath, _backupPath, overwrite: true);
-            }
-            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(state, JsonOptions));
-            await MoveIntoPlaceAsync(temporary, _statePath);
+            string? backupSource = legacyPath.Equals(_backupPath, StringComparison.OrdinalIgnoreCase) ? null : legacyPath;
+            await PersistSnapshotAsync(JsonSerializer.Serialize(state, JsonOptions), backupSource);
         }
         finally
         {
             _saveGate.Release();
         }
     }
+
+    private Task PersistSnapshotAsync(string json, string? backupSource) => Task.Run(async () =>
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
+        string temporary = _statePath + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporary, json).ConfigureAwait(false);
+            if (backupSource is not null && File.Exists(backupSource))
+                File.Copy(backupSource, _backupPath, overwrite: true);
+            await MoveIntoPlaceAsync(temporary, _statePath).ConfigureAwait(false);
+        }
+        catch
+        {
+            try { File.Delete(temporary); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                AppLogger.Error("Unable to remove temporary state snapshot.", ex);
+            }
+            throw;
+        }
+    });
 
     private static async Task MoveIntoPlaceAsync(string temporary, string destination)
     {
@@ -250,6 +265,8 @@ public sealed class StateStore
         state.GlobalSettings.UniformFloatingCompactScale = GlobalSettings.NormalizeCompactScale(
             OrganizerPlacementMode.Floating,
             state.GlobalSettings.UniformFloatingCompactScale);
+        foreach (var mode in new[] { OrganizerExpandedContentMode.Icon, OrganizerExpandedContentMode.CompactList })
+            UnifiedExpandedSize.Set(state.GlobalSettings, mode, UnifiedExpandedSize.Get(state.GlobalSettings, mode));
         state.GlobalSettings.UniformPositionedCompactScale = GlobalSettings.NormalizeCompactScale(
             OrganizerPlacementMode.Positioned,
             state.GlobalSettings.UniformPositionedCompactScale);
@@ -329,7 +346,11 @@ public sealed class StateStore
             organizer.IconContentScale = OrganizerContentScale.Normalize(organizer.IconContentScale);
             organizer.CompactListContentScale = OrganizerContentScale.Normalize(organizer.CompactListContentScale);
             organizer.CanvasScale = Math.Clamp(organizer.CanvasScale, .1, 1.2);
-            organizer.ItemScale = Math.Clamp(organizer.ItemScale, .5, 1.65);
+            organizer.ItemScale = OrganizerKinds.IsRegular(organizer.PlacementMode)
+                ? OrganizerContentScale.StoreIconItemScale(
+                    OrganizerContentScale.IconItemScale(organizer.ItemScale, organizer.IconContentScale),
+                    organizer.IconContentScale)
+                : Math.Clamp(organizer.ItemScale, .5, 1.65);
             organizer.NameScale = GlobalSettings.NormalizeCompactNameScale(organizer.NameScale);
             organizer.CompactListItemScale = double.IsFinite(organizer.CompactListItemScale)
                 ? Math.Clamp(organizer.CompactListItemScale, .5, 1.65)

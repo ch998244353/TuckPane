@@ -72,7 +72,7 @@ Drag files and folders directly into a pane, reveal a Station from a monitor edg
 Current version: **4.0.0**. See the [4.0.0 release](https://github.com/ch998244353/TuckPane/releases/tag/v4.0.0) for the complete release notes.
 
 - [TuckPane-4.0.0-win-x64-setup.exe](https://github.com/ch998244353/TuckPane/releases/download/v4.0.0/TuckPane-4.0.0-win-x64-setup.exe): recommended per-user offline installer with Start menu and desktop shortcuts.
-- [TuckPane-4.0.0-win-x64-portable.zip](https://github.com/ch998244353/TuckPane/releases/download/v4.0.0/TuckPane-4.0.0-win-x64-portable.zip): extract it and run `00-启动 TuckPane.exe`.
+- [TuckPane-4.0.0-win-x64-portable.zip](https://github.com/ch998244353/TuckPane/releases/download/v4.0.0/TuckPane-4.0.0-win-x64-portable.zip): extract the entire archive and run `TuckPane.exe`. In builds containing the launcher fix, `00-启动 TuckPane.exe` forwards to that executable; keep all files together and do not rename `TuckPane.exe`.
 - [SHA256SUMS.txt](https://github.com/ch998244353/TuckPane/releases/download/v4.0.0/SHA256SUMS.txt): SHA-256 checksums for both downloads.
 
 Version 3.0.2 has no in-app updater: install 4.0.0 over the existing installation, or extract the portable package into a separate program directory. Existing data roots are retained. Once on 4.0.0, use **Settings → Updates** for future releases.

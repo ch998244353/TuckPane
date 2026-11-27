@@ -32,6 +32,7 @@ public sealed partial class NoteWindow : Window
     private readonly PortableNoteDocument? _portableDocument;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _saveTimer;
     private readonly NoteSaveSequence _saveSequence;
+    private readonly NotePlacementRecovery _placementRecovery;
     private readonly AccessibilitySettings _accessibility = new();
     private AppWindow _appWindow = null!;
     private InputNonClientPointerSource? _titleInput;
@@ -58,6 +59,7 @@ public sealed partial class NoteWindow : Window
     private Uri? _editorUri;
     private bool _renaming;
     private bool _renameCommitInProgress;
+    private bool _saveErrorVisible;
 
     internal NoteWindow(
         AppHost host,
@@ -69,6 +71,8 @@ public sealed partial class NoteWindow : Window
     {
         _host = host;
         _definition = definition;
+        _placementRecovery = new NotePlacementRecovery(definition.Placement);
+        _definition.Placement = _placementRecovery.CaptureForSave(definition.Placement);
         _store = store;
         _organizerId = organizerId;
         _externalPath = externalPath is null ? null : Path.GetFullPath(externalPath);
@@ -287,6 +291,9 @@ public sealed partial class NoteWindow : Window
         AutomationProperties.SetName(RuledLinesButton, ruledLinesLabel);
         AutomationProperties.SetAutomationId(RuledLinesButton, $"NoteRuledLines-{Id:N}");
         ToolTipService.SetToolTip(RuledLinesButton, ruledLinesLabel);
+        AutomationProperties.SetName(MinimizeButton, AppStrings.Get("WindowMinimize"));
+        AutomationProperties.SetAutomationId(MinimizeButton, $"MinimizeNote-{Id:N}");
+        ToolTipService.SetToolTip(MinimizeButton, AppStrings.Get("WindowMinimize"));
         AutomationProperties.SetName(CloseButton, AppStrings.Get("CloseNote"));
         AutomationProperties.SetAutomationId(CloseButton, $"CloseNote-{Id:N}");
         ToolTipService.SetToolTip(CloseButton, AppStrings.Get("CloseNote"));
@@ -461,12 +468,17 @@ public sealed partial class NoteWindow : Window
         try
         {
             await _saveSequence.SaveAsync(readEditor, holdForDirectoryRename);
+            if (_saveErrorVisible)
+            {
+                ErrorBar.IsOpen = false;
+                _saveErrorVisible = false;
+            }
             return true;
         }
         catch (Exception ex)
         {
             AppLogger.Error($"无法保存便签：{Id}", ex);
-            ShowError(AppStrings.Format("NoteSaveErrorFormat", ex.Message));
+            ShowError(AppStrings.Format("NoteSaveErrorFormat", ex.Message), isSaveError: true);
             return false;
         }
         finally
@@ -477,6 +489,7 @@ public sealed partial class NoteWindow : Window
 
     private Func<Task> CaptureWrite()
     {
+        _definition.Placement = _placementRecovery.CaptureForSave(_definition.Placement);
         if (_externalPath is null)
         {
             var snapshot = new NoteDocument { Html = _document.Html };
@@ -492,7 +505,7 @@ public sealed partial class NoteWindow : Window
             Theme = _definition.Theme,
             FontSize = _definition.FontSize,
             ShowRuledLines = _definition.ShowRuledLines,
-            Placement = ToPortablePlacement(_definition.Placement),
+            Placement = NotePlacementRecovery.ToPortable(_definition.Placement),
             Html = _document.Html
         };
         string path = _externalPath;
@@ -554,17 +567,6 @@ public sealed partial class NoteWindow : Window
         else await FlushAsync(readEditor: false);
     }
 
-    private static PortableNotePlacement? ToPortablePlacement(NoteWindowPlacement? placement) => placement is null
-        ? null
-        : new PortableNotePlacement
-        {
-            MonitorDevice = placement.MonitorDevice,
-            XDip = placement.XDip,
-            YDip = placement.YDip,
-            WidthDip = placement.WidthDip,
-            HeightDip = placement.HeightDip
-        };
-
     private void ApplyTheme()
     {
         IReadOnlyDictionary<string, string> css = GetCssPalette();
@@ -600,6 +602,11 @@ public sealed partial class NoteWindow : Window
         _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonForegroundCheckedPointerOver", text);
         _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonForegroundCheckedPressed", text);
         _themeBrushes.Set(RuledLinesButton.Resources, "ToggleButtonForegroundCheckedDisabled", text);
+        MinimizeButton.Foreground = new SolidColorBrush(text);
+        _themeBrushes.Set(MinimizeButton.Resources, "ButtonBackgroundPointerOver", ColorHelper.FromArgb(24, text.R, text.G, text.B));
+        _themeBrushes.Set(MinimizeButton.Resources, "ButtonBackgroundPressed", ColorHelper.FromArgb(42, text.R, text.G, text.B));
+        _themeBrushes.Set(MinimizeButton.Resources, "ButtonForegroundPointerOver", text);
+        _themeBrushes.Set(MinimizeButton.Resources, "ButtonForegroundPressed", text);
         CloseButton.Foreground = new SolidColorBrush(text);
         Color closeHover = _accessibility.HighContrast ? accent : ColorHelper.FromArgb(255, 196, 43, 28);
         Color closePressed = _accessibility.HighContrast ? accent : ColorHelper.FromArgb(255, 164, 38, 25);
@@ -658,6 +665,11 @@ public sealed partial class NoteWindow : Window
         ApplyTheme();
         if (_editorReady)
             await Editor.CoreWebView2.ExecuteScriptAsync($"window.__tuckpane?.setTheme({JsonSerializer.Serialize(GetCssPalette())})");
+    }
+
+    private void MinimizeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_appWindow.Presenter is OverlappedPresenter presenter) presenter.Minimize();
     }
 
     private async void CloseButton_Click(object sender, RoutedEventArgs e) => await HideAsync();
@@ -767,7 +779,7 @@ public sealed partial class NoteWindow : Window
 
     private void RestorePlacement()
     {
-        NoteWindowPlacement placement = _definition.Placement ?? new NoteWindowPlacement();
+        NoteWindowPlacement placement = _placementRecovery.CaptureForSave(_definition.Placement);
         DisplayInfo display = DisplayPlacementService.GetDisplay(placement.MonitorDevice);
         int width = Math.Max(1, (int)Math.Round(placement.WidthDip * display.Scale));
         int height = Math.Max(1, (int)Math.Round(placement.HeightDip * display.Scale));
@@ -794,14 +806,16 @@ public sealed partial class NoteWindow : Window
         if (_restoringPlacement || (!args.DidPositionChange && !args.DidSizeChange) ||
             !NativeMethods.GetWindowRect(_hwnd, out NativeMethods.RECT bounds)) return;
         DisplayInfo display = DisplayPlacementService.ForBounds(bounds);
-        _definition.Placement = new NoteWindowPlacement
+        NoteWindowPlacement? placement = _placementRecovery.CaptureWindowChange(new NoteWindowPlacement
         {
             MonitorDevice = display.Device,
             XDip = (bounds.Left - display.Work.Left) / display.Scale,
             YDip = (bounds.Top - display.Work.Top) / display.Scale,
             WidthDip = bounds.Width / display.Scale,
             HeightDip = bounds.Height / display.Scale
-        };
+        }, sender.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Restored });
+        if (placement is null) return;
+        _definition.Placement = placement;
         _saveTimer.Stop();
         _saveTimer.Start();
     }
@@ -822,8 +836,9 @@ public sealed partial class NoteWindow : Window
         Editor.Close();
     }
 
-    private void ShowError(string message)
+    private void ShowError(string message, bool isSaveError = false)
     {
+        _saveErrorVisible = isSaveError;
         ErrorBar.Message = message;
         ErrorBar.IsOpen = true;
     }

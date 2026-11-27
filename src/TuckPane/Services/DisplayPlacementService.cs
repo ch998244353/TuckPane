@@ -156,6 +156,38 @@ internal static class DisplayPlacementService
         return (width, height);
     }
 
+    internal static (double Width, double Height) CalculateScaledItemCellSizeDip(
+        double availableWidth, double availableHeight, OrganizerLayout layout, double contentScale)
+    {
+        var cell = CalculateItemCellSizeDip(availableWidth / contentScale, availableHeight / contentScale, layout);
+        return (cell.Width * contentScale, cell.Height * contentScale);
+    }
+
+    internal static double CalculateMaximumIconItemScaleForCell(double cellWidthDip, double cellHeightDip, double displayFit) =>
+        CalculateMaximumItemScaleForCell(Math.Min(cellWidthDip, cellHeightDip) / displayFit);
+
+    internal static double CalculateIconItemFit(double cellWidthDip, double cellHeightDip, double itemScale, double displayFit) =>
+        Math.Min(displayFit, Math.Min(cellWidthDip, cellHeightDip) / CalculateRequiredCellDip(itemScale));
+
+    internal static double CalculateMaximumIconItemScaleForPanel(
+        DisplayInfo display, OrganizerLayout layout, double canvasScale,
+        double? manualWidth, double? manualHeight, double iconContentScale)
+    {
+        NativeMethods.RECT bounds = CalculateExpandedBounds(default, display, layout, canvasScale, manualWidth, manualHeight);
+        int titleHeightPx = (int)Math.Round(ExpandedTitleBandDip * display.Scale);
+        double width = bounds.Width / display.Scale;
+        double height = Math.Max(1, bounds.Height - titleHeightPx) / display.Scale;
+        double displayFit = manualWidth is double w && w > 0 && manualHeight is double h && h > 0
+            ? OrganizerContentScale.DisplayFit(w * canvasScale, h * canvasScale, width, height)
+            : 1;
+        double contentScale = OrganizerContentScale.Normalize(iconContentScale) * displayFit;
+        var cell = CalculateScaledItemCellSizeDip(
+            Math.Max(0, width - 2 * ExpandedSideInsetDip * contentScale),
+            Math.Max(0, height - (ExpandedTopInsetDip + ExpandedBottomInsetDip) * contentScale),
+            layout, contentScale);
+        return CalculateMaximumIconItemScaleForCell(cell.Width, cell.Height, displayFit);
+    }
+
     internal static double CalculateMaximumItemScale(DisplayInfo display, OrganizerLayout layout, double canvasScale)
     {
         double cellDip = CalculateCanvasCell(display, layout, canvasScale) / display.Scale;
@@ -215,6 +247,7 @@ internal static class DisplayPlacementService
     private static double CalculateMaximumItemScaleForCell(double cellDip)
     {
         if (CalculateRequiredCellDip(.5) >= cellDip) return .5;
+        if (CalculateRequiredCellDip(MaximumItemScale) <= cellDip) return MaximumItemScale;
         double low = .5;
         double high = MaximumItemScale;
         for (int iteration = 0; iteration < 24; iteration++)

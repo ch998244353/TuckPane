@@ -223,8 +223,8 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
         <SystemBackdropElement x:Name="ConsoleSurfaceHost" Grid.RowSpan="2" IsHitTestVisible="False"/>
-        <!-- Only the content is clipped here; the backdrop and edge each
-             draw their own rounded outline without a second alpha clip. -->
+        <!-- The native window owns the external corners; all client layers fill
+             the frame without their own transparent rounded cutouts. -->
         <Grid x:Name="ConsoleContentLayer" Grid.RowSpan="2">
             <Grid.RowDefinitions>
                 <RowDefinition Height="48"/>
@@ -563,6 +563,73 @@
                                         </Border>
                                     </StackPanel>
                                 </Border>
+                            </StackPanel>
+                            <StackPanel Spacing="12">
+                                <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:UniformExpandedSizes" Text="统一展开大小" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                    <StackPanel Spacing="0">
+                                        <Border Style="{StaticResource GeneralRow}">
+                                            <Grid ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock FontSize="14" Tag="loc:UniformCompactExpandedTitle" Text="统一精简模式展开大小" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <ToggleSwitch x:Name="UnifiedCompactToggle" Tag="Compact" Grid.Column="1" Toggled="UnifiedExpandedToggle_Toggled" AutomationProperties.AutomationId="UnifiedCompactToggle"/>
+                                            </Grid>
+                                        </Border>
+                                        <Border Style="{StaticResource GeneralRow}">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions>
+                                                <TextBlock Tag="loc:UniformExpandedWidth" Text="宽度" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <controls:ConsoleSlider x:Name="UnifiedCompactWidthSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="180" Maximum="2000" Value="280" StepFrequency="1" Tag="Compact" AutomationProperties.AutomationId="UnifiedCompactWidthSlider" ValueChanged="UnifiedExpandedSlider_ValueChanged"/>
+                                                <TextBlock x:Name="UnifiedCompactWidthValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            </Grid>
+                                        </Border>
+                                        <Border Style="{StaticResource GeneralRow}">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions>
+                                                <TextBlock Tag="loc:UniformExpandedHeight" Text="高度" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <controls:ConsoleSlider x:Name="UnifiedCompactHeightSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="105" Maximum="2000" Value="360" StepFrequency="1" Tag="Compact" AutomationProperties.AutomationId="UnifiedCompactHeightSlider" ValueChanged="UnifiedExpandedSlider_ValueChanged"/>
+                                                <TextBlock x:Name="UnifiedCompactHeightValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            </Grid>
+                                        </Border>
+                                        <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions>
+                                                <TextBlock Tag="loc:UniformExpandedContent" Text="内容比例" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <controls:ConsoleSlider x:Name="UnifiedCompactContentSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="0.5" Maximum="1.65" Value="1" StepFrequency=".01" Tag="Compact" AutomationProperties.AutomationId="UnifiedCompactContentSlider" ValueChanged="UnifiedExpandedSlider_ValueChanged"/>
+                                                <TextBlock x:Name="UnifiedCompactContentValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            </Grid>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource SettingsGroup}" Loaded="SettingsGroup_Loaded">
+                                    <StackPanel Spacing="0">
+                                        <Border Style="{StaticResource GeneralRow}">
+                                            <Grid ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock FontSize="14" Tag="loc:UniformIconExpandedTitle" Text="统一图标模式展开大小" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <ToggleSwitch x:Name="UnifiedIconToggle" Tag="Icon" Grid.Column="1" Toggled="UnifiedExpandedToggle_Toggled" AutomationProperties.AutomationId="UnifiedIconToggle"/>
+                                            </Grid>
+                                        </Border>
+                                        <Border Style="{StaticResource GeneralRow}">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions>
+                                                <TextBlock Tag="loc:UniformExpandedCell" Text="单元大小" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <controls:ConsoleSlider x:Name="UnifiedIconCellSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="54" Maximum="1000" Value="128" StepFrequency="1" Tag="Icon" AutomationProperties.AutomationId="UnifiedIconCellSlider" ValueChanged="UnifiedExpandedSlider_ValueChanged"/>
+                                                <TextBlock x:Name="UnifiedIconCellValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            </Grid>
+                                        </Border>
+                                        <Border Style="{StaticResource GeneralRow}" BorderThickness="0">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions>
+                                                <TextBlock Tag="loc:UniformExpandedContent" Text="内容比例" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                                <controls:ConsoleSlider x:Name="UnifiedIconContentSlider" Grid.Column="1" Style="{StaticResource Pct}" Minimum="0.5" Maximum="1.65" Value="1" StepFrequency=".01" Tag="Icon" AutomationProperties.AutomationId="UnifiedIconContentSlider" ValueChanged="UnifiedExpandedSlider_ValueChanged"/>
+                                                <TextBlock x:Name="UnifiedIconContentValue" Grid.Column="2" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            </Grid>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+                                <TextBlock Tag="loc:UniformExpandedIconHint" Text="统一单元大小，行列数仍由各窗口决定。" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}" Opacity=".7"/>
+                                <TextBlock x:Name="UnifiedExpandedLimitHint" Tag="loc:UniformExpandedLimitHint" Text="已按同模式窗口的共同可用空间限制大小或内容比例。" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}" Opacity=".7" Visibility="Collapsed"/>
                             </StackPanel>
                         </StackPanel>
                     </ScrollViewer>

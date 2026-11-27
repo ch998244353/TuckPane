@@ -10,15 +10,23 @@ public sealed partial class MainWindow
     {
         ClearWindowAlignment();
         if (_canvasResize is null) return;
-        StopCanvasResizeRendering();
-        _canvasResize = null;
-        _resizeGesture.Invalidate();
-        if (NativeMethods.GetCapture() == _hwnd) _ = NativeMethods.ReleaseCapture();
-        ConfigureItemsLayout();
-        UpdateCompactPreviewItemScale();
-        UpdateSurfaceClips();
-        _interactionSaveTimer.Stop();
-        CaptureExpandedPosition();
+        try
+        {
+            StopCanvasResizeRendering();
+            _canvasResize = null;
+            _resizeGesture.Invalidate();
+            if (NativeMethods.GetCapture() == _hwnd) _ = NativeMethods.ReleaseCapture();
+            ConfigureItemsLayout();
+            UpdateCompactPreviewItemScale();
+            UpdateSurfaceClips();
+            _interactionSaveTimer.Stop();
+            CaptureExpandedPosition();
+        }
+        finally
+        {
+            _canvasResize = null;
+            CompleteUnifiedResize();
+        }
         _ = SaveStateAsync();
     }
 
