@@ -7,7 +7,9 @@
 - 统一 README 下载地址、发布说明和应用清单版本；沿用现有标签触发的 GitHub Actions，由同一源码提交生成安装包、便携包及 SHA-256 校验文件。
 - 本地发布前门槛通过：版本元数据、发布脚本语法和 `git diff --check` 均通过。隔离目录 `artifacts/checks/v4.2.12-github` 的 Release x64 编译成功、0 错误；PRI 生成报告 5 条与带版本号的输出目录名有关的限定符警告。
 - 七项非 GUI 定向检查通过：`--vertical-dock-visuals`、`--dock-stability running-samples`、`--dock-stability resize`、`--dock-stability hover`、`--drag-drop-fixes dock`、`--stability drop`、`--stability storage`。结果在 `artifacts/release-evidence/v4.2.12-github/local-checks.json`。
-- 云端发布待推送标签后核验；不运行桌面 GUI 自动化，不修改本机安装及用户数据。
+- 云端发布成功。`main` 与 `v4.2.12` 标签已推送，发布源码提交为 `b6eb6a820e63c044844434ea5f0c8e2c48cc78b0`；GitHub Actions [46033028830](https://github.com/ch998244353/TuckPane/actions/runs/46033028830) 的构建、启动器专项和创建 Release 步骤全部成功。最新稳定版为 [v4.2.12](https://github.com/ch998244353/TuckPane/releases/tag/v4.2.12)。
+- 三个附件均已上传：安装包 382804330 字节、便携包 130020027 字节、`SHA256SUMS.txt` 205 字节。已下载校验文件，其自身 SHA-256 与 GitHub 摘要一致；两包服务端摘要分别为 `3155b4d7d7e1268474e55aec89f835506e738046a6e0b9d8a14a6ea62f9c469b`、`6af77f1a7671f468be9b0345c49946ba666a5f15b74268d40f0a5905cf9bc68e`，均与下载的校验清单一致。
+- 发布证据在 `artifacts/release-evidence/v4.2.12-github/publication-result.json`。本次未重复下载完整安装包和 ZIP，不将服务端摘要核对等同于重新解包逐文件核对；未运行桌面 GUI 自动化，未修改本机安装及用户数据。
 
 ## 基线与范围
 
