@@ -482,15 +482,17 @@ public sealed class StateStore
                 .Where(candidate => candidate.ContainerOrganizerId == organizer.Id)
                 .Select(candidate => OrganizerContainment.ItemKey(candidate.Id))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            organizer.ItemOrder = originalOrders[organizer.Id]
+            var nextOrder = originalOrders[organizer.Id]
                 .Where(key => !OrganizerContainment.TryParseItemKey(key, out _) || containedKeys.Contains(key))
                 .ToList();
             foreach (OrganizerDefinition child in state.Organizers.Where(candidate =>
                 candidate.ContainerOrganizerId == organizer.Id))
             {
                 string key = OrganizerContainment.ItemKey(child.Id);
-                if (!organizer.ItemOrder.Contains(key, StringComparer.OrdinalIgnoreCase)) organizer.ItemOrder.Add(key);
+                if (!nextOrder.Contains(key, StringComparer.OrdinalIgnoreCase)) nextOrder.Add(key);
             }
+            organizer.IconRowCounts = OrganizerIconRows.Reconcile(organizer, nextOrder);
+            organizer.ItemOrder = nextOrder;
             OrganizerExpansion.Normalize(organizer);
         }
 

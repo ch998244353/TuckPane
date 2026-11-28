@@ -25,9 +25,9 @@
     <AssemblyTitle>TuckPane</AssemblyTitle>
     <Authors>ch998244353</Authors>
     <Copyright>Copyright © 2026 ch998244353</Copyright>
-    <Version>4.2.12</Version>
-    <AssemblyVersion>4.2.12.0</AssemblyVersion>
-    <FileVersion>4.2.12.0</FileVersion>
+    <Version>4.2.16</Version>
+    <AssemblyVersion>4.2.16.0</AssemblyVersion>
+    <FileVersion>4.2.16.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -63,6 +63,10 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <Content Include="Assets\Todo.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="Assets\GlassGrain.png;Assets\MaterialStudy.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

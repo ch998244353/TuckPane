@@ -104,6 +104,7 @@ internal static class NativeMethods
     internal const uint WM_NCCALCSIZE = 0x0083;
     internal const uint WM_THEMECHANGED = 0x031A;
     internal const uint WM_DWMCOMPOSITIONCHANGED = 0x031E;
+    internal const uint WM_SYSCOLORCHANGE = 0x0015;
     internal const uint WM_SETTINGCHANGE = 0x001A;
     internal const uint WM_SYSCOMMAND = 0x0112;
     internal const uint SC_MAXIMIZE = 0xF030;

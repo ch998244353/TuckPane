@@ -22,10 +22,12 @@ internal sealed class OrganizerContainmentSnapshot
 {
     private readonly Dictionary<Guid, Guid?> _containers;
     private readonly Dictionary<Guid, List<string>> _orders;
+    private readonly Dictionary<Guid, List<int>> _rows;
 
     internal OrganizerContainmentSnapshot(IReadOnlyList<OrganizerDefinition> organizers)
     {
         _containers = organizers.ToDictionary(candidate => candidate.Id, candidate => candidate.ContainerOrganizerId);
+        _rows = organizers.ToDictionary(candidate => candidate.Id, candidate => candidate.IconRowCounts.ToList());
         _orders = organizers.ToDictionary(candidate => candidate.Id, candidate => candidate.ItemOrder.ToList());
     }
 
@@ -37,6 +39,8 @@ internal sealed class OrganizerContainmentSnapshot
                 organizer.ContainerOrganizerId = containerId;
             if (_orders.TryGetValue(organizer.Id, out List<string>? order))
                 organizer.ItemOrder = order.ToList();
+            if (_rows.TryGetValue(organizer.Id, out List<int>? rows))
+                organizer.IconRowCounts = rows.ToList();
         }
     }
 }
@@ -82,7 +86,8 @@ internal static class OrganizerContainment
         IReadOnlyList<OrganizerDefinition> organizers,
         Guid organizerId,
         Guid containerId,
-        int insertionIndex)
+        int insertionIndex,
+        IconRowTarget? rowTarget = null)
     {
         OrganizerDefinition? organizer = organizers.FirstOrDefault(candidate => candidate.Id == organizerId);
         OrganizerDefinition? container = organizers.FirstOrDefault(candidate => candidate.Id == containerId);
@@ -104,11 +109,37 @@ internal static class OrganizerContainment
             ? container.ItemOrder.FindIndex(item => item.Equals(key, StringComparison.OrdinalIgnoreCase))
             : -1;
         Guid? previousContainerId = organizer.ContainerOrganizerId;
+        int columns = container.Layout.Columns;
+        var rows = IconRowLayout.Normalize(container.IconRowCounts, columns, container.ItemOrder.Count);
+        IconRowEdit? edit = null;
+        if (rowTarget is { } target)
+        {
+            edit = previousIndex >= 0
+                ? IconRowLayout.Move(rows, columns, previousIndex, target)
+                : IconRowLayout.Insert(rows, columns, target);
+        }
         foreach (OrganizerDefinition candidate in organizers)
-            candidate.ItemOrder.RemoveAll(item => item.Equals(key, StringComparison.OrdinalIgnoreCase));
+            OrganizerIconRows.RemoveItem(candidate, key);
         if (previousIndex >= 0 && insertionIndex > previousIndex) insertionIndex--;
+        int index = Math.Clamp(insertionIndex, 0, container.ItemOrder.Count);
+        if (edit is { } placed)
+        {
+            index = placed.Index;
+            container.IconRowCounts = placed.Rows;
+        }
+        else if (container.PlacementMode != OrganizerPlacementMode.Dock)
+        {
+            // Reordering in the compact list keeps the prior row lengths.
+            if (previousIndex >= 0) container.IconRowCounts = rows;
+            else if (index < container.ItemOrder.Count)
+            {
+                var (row, column) = IconRowLayout.Locate(rows, index);
+                container.IconRowCounts = IconRowLayout.Insert(rows, columns, new(row, column)).Rows;
+            }
+            else container.IconRowCounts = IconRowLayout.Normalize(rows, columns, container.ItemOrder.Count + 1);
+        }
         organizer.ContainerOrganizerId = container.Id;
-        container.ItemOrder.Insert(Math.Clamp(insertionIndex, 0, container.ItemOrder.Count), key);
+        container.ItemOrder.Insert(index, key);
         return new(true, OrganizerContainmentFailure.None, previousContainerId);
     }
 
@@ -155,7 +186,7 @@ internal static class OrganizerContainment
         Guid? previousContainerId = organizer.ContainerOrganizerId;
         string key = ItemKey(organizer.Id);
         foreach (OrganizerDefinition candidate in organizers)
-            candidate.ItemOrder.RemoveAll(item => item.Equals(key, StringComparison.OrdinalIgnoreCase));
+            OrganizerIconRows.RemoveItem(candidate, key);
         organizer.ContainerOrganizerId = null;
         return previousContainerId;
     }

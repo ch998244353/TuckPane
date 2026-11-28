@@ -203,9 +203,10 @@ internal sealed class ThemeBackdrop : CompositionBrushBackdrop
         ThemeCompositionPlan next = preview
             ? OrganizerPreviewMaterial.BuildPlan(useEffects)
             : ThemePalette.BuildCompositionPlan(theme, useEffects);
-        if (_hasTheme && _theme == theme && _plan == next) return;
-        _hasTheme = true;
+        // Surface decoration does not own the sampled desktop or its GPU graph.
         _theme = theme;
+        if (_hasTheme && _plan == next) return;
+        _hasTheme = true;
         _plan = next;
         if (_target is not null && _compositor is not null)
         {

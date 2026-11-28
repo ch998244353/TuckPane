@@ -29,6 +29,9 @@ internal sealed class ThemeEdgeSurface : IDisposable
     private readonly CompositionLinearGradientBrush _innerBrush;
     private readonly CompositionLinearGradientBrush _highlightBrush;
     private readonly CompositionLinearGradientBrush _textureBrush;
+    private CompositionLinearGradientBrush? _pearlBrush;
+    private GlassMaterialSettings? _lastMaterial;
+    private float _lastOpacity = -1;
     private XamlRoot? _xamlRoot;
     private double _cornerRadius;
     private bool _disposed;
@@ -86,11 +89,49 @@ internal sealed class ThemeEdgeSurface : IDisposable
 
     internal void SetTheme(ThemeValues theme, bool useEffects)
     {
-        // These brushes intentionally never read theme colour, opacity or
-        // blur settings. A non-zero floor keeps the neutral edge visible in
-        // transparent, solid-colour, zero-blur and fallback states.
-        if (!_disposed) _visual.Opacity = ThemePalette.EdgeOpacity(theme);
+        if (_disposed) return;
+        bool decorate = useEffects && !theme.SolidColorMode && !theme.FullyTransparent;
+        var material = decorate ? theme.Material : GlassMaterialSettings.Classic;
+        float opacity = ThemePalette.EdgeOpacity(theme) * (float)material.Reflection;
+        if (_lastMaterial == material && opacity == _lastOpacity) return;
+        Vector2 source = GlassMaterialOptics.LightOrigin(material.LightDirection);
+        Vector2 opposite = Vector2.One - source;
+        _outerBrush.StartPoint = source;
+        _outerBrush.EndPoint = opposite;
+        _innerBrush.StartPoint = new Vector2(opposite.X, source.Y);
+        _innerBrush.EndPoint = new Vector2(source.X, opposite.Y);
+        _textureBrush.StartPoint = _highlightBrush.StartPoint = source;
+        _textureBrush.EndPoint = _highlightBrush.EndPoint = new Vector2(opposite.X, source.Y);
+
+        // Retain the neutral legacy rim in solid and reduced-effects modes.
+        // In glass mode, reflection controls all specular light on the rim.
+        _visual.Opacity = opacity;
+        if (decorate && material.Kind == GlassMaterialKind.Pearl && material.Reflection > 0)
+        {
+            _pearlBrush ??= CreateBrush(PearlStops, source, opposite);
+            _pearlBrush.StartPoint = source;
+            _pearlBrush.EndPoint = opposite;
+            _pearlBrush.ColorStops[1].Color = GlassMaterialOptics.PearlStop(material.ColorAArgb, material.ColorIntensity, 230);
+            _pearlBrush.ColorStops[2].Color = GlassMaterialOptics.PearlStop(material.ColorBArgb, material.ColorIntensity, 162);
+            _pearlBrush.ColorStops[3].Color = GlassMaterialOptics.PearlStop(material.ColorBArgb, material.ColorIntensity, 28);
+            _pearlBrush.ColorStops[4].Color = GlassMaterialOptics.PearlStop(material.ColorBArgb, material.ColorIntensity, 0);
+            _highlightShape.StrokeBrush = _pearlBrush;
+        }
+        else
+        {
+            _highlightShape.StrokeBrush = _highlightBrush;
+        }
+        _lastMaterial = material;
+        _lastOpacity = opacity;
     }
+
+    // The thick highlight disappears before the far corner, leaving only
+    // the narrow outer stroke. This visually tapers both illuminated sides.
+    private static readonly (float, Color)[] PearlStops =
+    [
+        (0f, Color.FromArgb(255, 255, 255, 255)),
+        (.065f, default), (.16f, default), (.35f, default), (.50f, default)
+    ];
 
     internal void SetEnabled(bool enabled)
     {
@@ -141,6 +182,7 @@ internal sealed class ThemeEdgeSurface : IDisposable
         _geometryHost.SizeChanged -= Host_SizeChanged;
         AttachXamlRoot(null);
         ElementCompositionPreview.SetElementChildVisual(_host, null);
+        _pearlBrush?.Dispose();
         _outerBrush.Dispose();
         _innerBrush.Dispose();
         _highlightBrush.Dispose();

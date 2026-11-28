@@ -310,7 +310,7 @@ internal sealed class OwnedDialogWindow : Window
 
     private void ApplyTheme()
     {
-        ThemeValues theme = _host.State.GlobalSettings.GetTheme(ThemeTarget.Organizer);
+        ThemeValues theme = _host.State.GlobalSettings.GetTheme(ThemeTarget.Organizer) with { Material = GlassMaterialSettings.Classic };
         _root.RequestedTheme = ThemePalette.IsDark(theme) ? ElementTheme.Dark : ElementTheme.Light;
         bool useEffects = _uiSettings.AdvancedEffectsEnabled;
         _backdrop.SetTheme(theme, useEffects);

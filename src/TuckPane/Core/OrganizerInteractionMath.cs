@@ -16,6 +16,7 @@ internal enum CanvasResizeEdge
 internal enum OrganizerWheelAction
 {
     Ignore,
+    ScrollReorder,
     ScrollCompactList,
     ScrollGrid,
     ScaleCompactList,
@@ -227,8 +228,9 @@ internal static class OrganizerInteractionMath
         bool compactList,
         bool pointerInsideList)
     {
-        if (!expanded || animating || resizing || reordering || shellDragging || !pointerInsideList)
+        if (!expanded || animating || resizing || shellDragging || !pointerInsideList)
             return OrganizerWheelAction.Ignore;
+        if (reordering) return controlPressed ? OrganizerWheelAction.Ignore : OrganizerWheelAction.ScrollReorder;
         if (controlPressed)
             return compactList ? OrganizerWheelAction.ScaleCompactList : OrganizerWheelAction.ScaleGrid;
         return compactList ? OrganizerWheelAction.ScrollCompactList : OrganizerWheelAction.ScrollGrid;

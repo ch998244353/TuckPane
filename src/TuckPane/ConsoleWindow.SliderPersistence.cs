@@ -19,7 +19,8 @@ public sealed partial class ConsoleWindow
             CompactHoverMagnificationSlider, DockHoverMagnificationSlider,
             CompactNameScaleSlider, ExpandedNameScaleSlider, HoverExpandDelaySlider, PointerLeaveCollapseDelaySlider,
             StationPointerLeaveCollapseDelaySlider, StationActivationDistanceSlider, StationHoverExpandDelaySlider,
-            ThemeTransparencySlider, ThemeBlurStrengthSlider, ManageRowsSlider, ManageColumnsSlider,
+            ThemeTransparencySlider, ThemeBlurStrengthSlider, ThemeColorIntensitySlider, ThemeReflectionSlider,
+            ThemeGrainSlider, ManageRowsSlider, ManageColumnsSlider,
             ManageCompactScaleSlider, ManageCanvasScaleSlider, ManageItemScaleSlider,
             ManageDockIconSizeSlider, ManageDockSpacingSlider, AddRowsSlider, AddColumnsSlider,
             AddCompactScaleSlider, AddCanvasScaleSlider, AddItemScaleSlider, AddDockIconSizeSlider, AddDockSpacingSlider })
@@ -113,7 +114,8 @@ public sealed partial class ConsoleWindow
         {
             foreach (var (target, previous) in new[] { (ThemeTarget.Organizer, _savedOrganizerTheme), (ThemeTarget.Station, _savedStationTheme), (ThemeTarget.Dock, _savedDockTheme) })
                 _host.UpdateGlobalTheme(target, previous.ColorArgb, previous.Transparency, previous.BlurStrength,
-                    previous.SolidColorMode, previous.SolidOpacity, previous.FullyTransparent);
+                    previous.SolidColorMode, previous.SolidOpacity, previous.FullyTransparent, previous.Material);
+            UpdateThemeControls();
         },
         ex => ShowSliderSaveError("ThemeSaveErrorTitle", ex));
 

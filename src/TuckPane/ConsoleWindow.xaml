@@ -465,6 +465,16 @@
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:AutoFillIconRowsTitle" Text="自动填满每行" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                            <ToggleSwitch x:Name="AutoFillIconRowsToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="AutoFillIconRowsToggle" Toggled="AutoFillIconRowsToggle_Toggled"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Style="{StaticResource GeneralRow}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" Tag="loc:NoteAlwaysOnTopTitle" Text="便签与待办永远处于最高层" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
                                             <ToggleSwitch x:Name="NoteAlwaysOnTopToggle" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.AutomationId="NoteAlwaysOnTopToggle" Toggled="NoteAlwaysOnTopToggle_Toggled"/>
                                         </Grid>
@@ -840,23 +850,74 @@
                             <Border Style="{StaticResource SettingsGroup}" Padding="16" Loaded="SettingsGroup_Loaded">
                                 <StackPanel Spacing="12">
                                     <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeTargetLabel" Text="修改目标" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <ToggleButton x:Name="OrganizerThemeTargetButton" Width="132" Height="36" Tag="Organizer" Click="ThemeTargetButton_Click">
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <ToggleButton x:Name="OrganizerThemeTargetButton" Grid.Column="0" HorizontalAlignment="Stretch" MinHeight="36" Tag="Organizer" Click="ThemeTargetButton_Click">
                                             <TextBlock Tag="loc:ThemeTargetOrganizer" Text="收纳窗" TextWrapping="Wrap"/>
                                         </ToggleButton>
-                                        <ToggleButton x:Name="StationThemeTargetButton" Width="132" Height="36" Tag="Station" Click="ThemeTargetButton_Click">
+                                        <ToggleButton x:Name="StationThemeTargetButton" Grid.Column="1" HorizontalAlignment="Stretch" MinHeight="36" Tag="Station" Click="ThemeTargetButton_Click">
                                             <TextBlock Tag="loc:NavStations" Text="中转站" TextWrapping="Wrap"/>
                                         </ToggleButton>
-                                        <ToggleButton x:Name="DockThemeTargetButton" Width="132" Height="36" Tag="Dock" Click="ThemeTargetButton_Click">
+                                        <ToggleButton x:Name="DockThemeTargetButton" Grid.Column="2" HorizontalAlignment="Stretch" MinHeight="36" Tag="Dock" Click="ThemeTargetButton_Click">
                                             <TextBlock Tag="loc:NavDocks" Text="Dock 栏" TextWrapping="Wrap"/>
                                         </ToggleButton>
-                                    </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsGroup}" Padding="16" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="12">
+                                    <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeModeLabel" Text="背景模式" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <ToggleButton x:Name="ThemeGlassModeButton" Grid.Column="0" HorizontalAlignment="Stretch" MinHeight="36" Tag="Glass" Click="ThemeModeButton_Click">
+                                            <TextBlock Tag="loc:ThemeGlassMode" Text="玻璃模式" TextWrapping="Wrap"/>
+                                        </ToggleButton>
+                                        <ToggleButton x:Name="ThemeSolidModeButton" Grid.Column="1" HorizontalAlignment="Stretch" MinHeight="36" Tag="Solid" Click="ThemeModeButton_Click">
+                                            <TextBlock Tag="loc:ThemeSolidMode" Text="纯色模式" TextWrapping="Wrap"/>
+                                        </ToggleButton>
+                                        <ToggleButton x:Name="ThemeTransparentModeButton" Grid.Column="2" HorizontalAlignment="Stretch" MinHeight="36" Tag="Transparent" Click="ThemeModeButton_Click" Visibility="Collapsed">
+                                            <TextBlock Tag="loc:ThemeFullyTransparent" Text="完全透明" TextWrapping="Wrap"/>
+                                        </ToggleButton>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                            <Border x:Name="ThemeMaterialCardGroup" Style="{StaticResource SettingsGroup}" Padding="16" Loaded="SettingsGroup_Loaded">
+                                <StackPanel Spacing="10">
+                                    <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:GlassMaterialTitle" Text="玻璃材质" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
+                                    <Grid ColumnSpacing="8" RowSpacing="8">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                        <ToggleButton x:Name="ClassicMaterialButton" Grid.Column="0" Grid.Row="0" Padding="4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Tag="Classic" Click="MaterialPreset_Click">
+                                            <StackPanel Spacing="3">
+                                                <controls:GlassMaterialPreview x:Name="ClassicMaterialPreview" Height="78" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+                                                <TextBlock Tag="loc:GlassClassic" Text="经典玻璃" TextAlignment="Center" FontSize="12" FontWeight="SemiBold" Margin="2,0,2,2"/>
+                                            </StackPanel>
+                                        </ToggleButton>
+                                        <ToggleButton x:Name="FrostedMaterialButton" Grid.Column="1" Grid.Row="0" Padding="4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Tag="Frosted" Click="MaterialPreset_Click">
+                                            <StackPanel Spacing="3">
+                                                <controls:GlassMaterialPreview x:Name="FrostedMaterialPreview" Height="78" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+                                                <TextBlock Tag="loc:GlassFrosted" Text="细砂磨砂" TextAlignment="Center" FontSize="12" FontWeight="SemiBold" Margin="2,0,2,2"/>
+                                            </StackPanel>
+                                        </ToggleButton>
+                                        <ToggleButton x:Name="MistMaterialButton" Grid.Column="0" Grid.Row="1" Padding="4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Tag="Mist" Click="MaterialPreset_Click">
+                                            <StackPanel Spacing="3">
+                                                <controls:GlassMaterialPreview x:Name="MistMaterialPreview" Height="78" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+                                                <TextBlock Tag="loc:GlassMist" Text="雾彩玻璃" TextAlignment="Center" FontSize="12" FontWeight="SemiBold" Margin="2,0,2,2"/>
+                                            </StackPanel>
+                                        </ToggleButton>
+                                        <ToggleButton x:Name="PearlMaterialButton" Grid.Column="1" Grid.Row="1" Padding="4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Tag="Pearl" Click="MaterialPreset_Click">
+                                            <StackPanel Spacing="3">
+                                                <controls:GlassMaterialPreview x:Name="PearlMaterialPreview" Height="78" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+                                                <TextBlock Tag="loc:GlassPearl" Text="珠光玻璃" TextAlignment="Center" FontSize="12" FontWeight="SemiBold" Margin="2,0,2,2"/>
+                                            </StackPanel>
+                                        </ToggleButton>
+                                    </Grid>
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource SettingsGroup}" Padding="16" Loaded="SettingsGroup_Loaded">
                                 <StackPanel Spacing="12">
                                     <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeColorLabel" Text="颜色" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <StackPanel Spacing="8">
                                         <StackPanel x:Name="ColorSwatchesPanel" Orientation="Horizontal" Spacing="6">
                                             <ToggleButton Width="36" Height="36" Padding="0" Tag="#E2E5E9" Click="ThemeColorSwatch_Click">
                                                 <Border Width="24" Height="24" Background="#FFE2E5E9" CornerRadius="12"/>
@@ -883,7 +944,7 @@
                                                 <Border Width="24" Height="24" Background="#FFE7C7CF" CornerRadius="12"/>
                                             </ToggleButton>
                                         </StackPanel>
-                                        <Button x:Name="CustomThemeColorButton" Height="36" Tag="loc:ThemeCustomColor" Content="自定义" AutomationProperties.AutomationId="CustomThemeColorButton">
+                                        <Button x:Name="CustomThemeColorButton" HorizontalAlignment="Left" Height="36" Tag="loc:ThemeCustomColor" Content="自定义" AutomationProperties.AutomationId="CustomThemeColorButton">
                                             <Button.Flyout>
                                                 <Flyout>
                                                     <ColorPicker x:Name="ThemeColorPicker" IsAlphaEnabled="False" IsAlphaSliderVisible="False" ColorChanged="ThemeColorPicker_ColorChanged"/>
@@ -891,25 +952,29 @@
                                             </Button.Flyout>
                                         </Button>
                                     </StackPanel>
-                                </StackPanel>
-                            </Border>
-                            <Border Style="{StaticResource SettingsGroup}" Padding="16" Loaded="SettingsGroup_Loaded">
-                                <StackPanel Spacing="12">
-                                    <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeModeLabel" Text="背景模式" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <ToggleButton x:Name="ThemeGlassModeButton" Width="110" Height="36" Tag="Glass" Click="ThemeModeButton_Click">
-                                            <TextBlock Tag="loc:ThemeGlassMode" Text="玻璃模式" TextWrapping="Wrap"/>
-                                        </ToggleButton>
-                                        <ToggleButton x:Name="ThemeSolidModeButton" Width="110" Height="36" Tag="Solid" Click="ThemeModeButton_Click">
-                                            <TextBlock Tag="loc:ThemeSolidMode" Text="纯色模式" TextWrapping="Wrap"/>
-                                        </ToggleButton>
-                                        <ToggleButton x:Name="ThemeTransparentModeButton" Width="110" Height="36" Tag="Transparent" Click="ThemeModeButton_Click" Visibility="Collapsed">
-                                            <TextBlock Tag="loc:ThemeFullyTransparent" Text="完全透明" TextWrapping="Wrap"/>
-                                        </ToggleButton>
+                                    <StackPanel x:Name="ThemeLightColorsGroup" Spacing="8">
+                                        <TextBlock FontWeight="SemiBold" Tag="loc:GlassLightColors" Text="彩光颜色"/>
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                            <Button x:Name="ThemeLightColorAButton" Grid.Column="0" HorizontalAlignment="Stretch">
+                                                <StackPanel Orientation="Horizontal" Spacing="7">
+                                                    <Border x:Name="ThemeLightColorAChip" Width="18" Height="18" CornerRadius="9" BorderThickness="1" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"/>
+                                                    <TextBlock Tag="loc:GlassLightA" Text="第一光色"/>
+                                                </StackPanel>
+                                                <Button.Flyout><Flyout><ColorPicker x:Name="ThemeLightColorAPicker" IsAlphaEnabled="False" IsAlphaSliderVisible="False" ColorChanged="MaterialColorPicker_ColorChanged"/></Flyout></Button.Flyout>
+                                            </Button>
+                                            <Button x:Name="ThemeLightColorBButton" Grid.Column="1" HorizontalAlignment="Stretch">
+                                                <StackPanel Orientation="Horizontal" Spacing="7">
+                                                    <Border x:Name="ThemeLightColorBChip" Width="18" Height="18" CornerRadius="9" BorderThickness="1" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"/>
+                                                    <TextBlock Tag="loc:GlassLightB" Text="第二光色"/>
+                                                </StackPanel>
+                                                <Button.Flyout><Flyout><ColorPicker x:Name="ThemeLightColorBPicker" IsAlphaEnabled="False" IsAlphaSliderVisible="False" ColorChanged="MaterialColorPicker_ColorChanged"/></Flyout></Button.Flyout>
+                                            </Button>
+                                        </Grid>
                                     </StackPanel>
                                     <StackPanel x:Name="ThemeTransparencyRow">
                                         <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeTransparencyLabel" Text="背景不透明度" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                        <Grid Width="460" HorizontalAlignment="Left" ColumnSpacing="12">
+                                        <Grid MaxWidth="540" HorizontalAlignment="Stretch" ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="52"/>
@@ -920,7 +985,7 @@
                                     </StackPanel>
                                     <StackPanel x:Name="ThemeBlurStrengthRow">
                                         <TextBlock FontSize="14" FontWeight="SemiBold" Tag="loc:ThemeBlurStrengthLabel" Text="模糊强度" TextWrapping="Wrap" Foreground="{StaticResource ConsolePrimaryTextBrush}"/>
-                                        <Grid Width="460" HorizontalAlignment="Left" ColumnSpacing="12">
+                                        <Grid MaxWidth="540" HorizontalAlignment="Stretch" ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="52"/>
@@ -930,6 +995,42 @@
                                         </Grid>
                                     </StackPanel>
                                 </StackPanel>
+                            </Border>
+                            <Border x:Name="ThemeMaterialAdjustmentGroup" Style="{StaticResource SettingsGroup}" Padding="16" Loaded="SettingsGroup_Loaded">
+                                <Expander x:Name="ThemeMaterialExpander" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                                    <StackPanel Spacing="12">
+                                        <StackPanel x:Name="ThemeColorIntensityRow" Spacing="2">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock Tag="loc:GlassColorIntensity" Text="彩光浓度"/>
+                                                <TextBlock x:Name="ThemeColorIntensityValue" Grid.Column="1"/>
+                                            </Grid>
+                                            <controls:ConsoleSlider x:Name="ThemeColorIntensitySlider" Minimum="0" Maximum="1" StepFrequency=".01" ValueChanged="MaterialSlider_ValueChanged"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="ThemeReflectionRow" Spacing="2">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock Tag="loc:GlassReflection" Text="反光强度"/>
+                                                <TextBlock x:Name="ThemeReflectionValue" Grid.Column="1"/>
+                                            </Grid>
+                                            <controls:ConsoleSlider x:Name="ThemeReflectionSlider" Minimum="0" Maximum="1" StepFrequency=".01" ValueChanged="MaterialSlider_ValueChanged"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="ThemeGrainRow" Spacing="2">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock Tag="loc:GlassGrain" Text="磨砂颗粒"/>
+                                                <TextBlock x:Name="ThemeGrainValue" Grid.Column="1"/>
+                                            </Grid>
+                                            <controls:ConsoleSlider x:Name="ThemeGrainSlider" Minimum="0" Maximum="1" StepFrequency=".01" ValueChanged="MaterialSlider_ValueChanged"/>
+                                        </StackPanel>
+                                        <ComboBox x:Name="ThemeLightDirectionCombo" HorizontalAlignment="Stretch" SelectionChanged="MaterialLightDirection_SelectionChanged">
+                                            <ComboBoxItem Tag="loc:GlassTopLeft" Content="左上"/>
+                                            <ComboBoxItem Tag="loc:GlassTopRight" Content="右上"/>
+                                            <ComboBoxItem Tag="loc:GlassBottomLeft" Content="左下"/>
+                                            <ComboBoxItem Tag="loc:GlassBottomRight" Content="右下"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                </Expander>
                             </Border>
                         </StackPanel>
                     </ScrollViewer>

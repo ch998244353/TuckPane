@@ -153,6 +153,7 @@
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center">
                     <SystemBackdropElement x:Name="CompactSurfaceHost" IsHitTestVisible="False" />
+                    <Grid x:Name="CompactFinishHost" IsHitTestVisible="False" />
                     <Grid x:Name="CompactIconPresenter">
                         <Grid x:Name="CompactPreviewGrid" IsHitTestVisible="False">
                             <Grid.ColumnDefinitions>
@@ -302,6 +303,7 @@
             </TextBox>
             <Grid x:Name="ExpandedPanel" Grid.Row="1">
                 <SystemBackdropElement x:Name="ExpandedSurfaceHost" IsHitTestVisible="False" />
+                <Grid x:Name="ExpandedFinishHost" IsHitTestVisible="False" />
                 <Grid x:Name="ExpandedContentLayer" Background="Transparent">
                 <Button
                 x:Name="CollapseButton"
@@ -435,6 +437,9 @@
                     </ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
                 </ScrollView>
+                <Border x:Name="RowInsertionLine" Height="2" CornerRadius="1"
+                    Background="{ThemeResource SystemControlHighlightAccentBrush}" Visibility="Collapsed"
+                    HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" />
                 <Button x:Name="DockEmptyAddButton" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"
                     Background="Transparent" BorderThickness="0" Padding="0" Click="AddItemMenuItem_Click"
                     AutomationProperties.Name="Add item">

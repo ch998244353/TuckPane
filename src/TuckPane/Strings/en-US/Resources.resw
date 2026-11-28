@@ -394,6 +394,7 @@ Storage path: {2}</value></data>
   <data name="DesktopMenuOtherCopy" xml:space="preserve"><value>The menu uses another copy of TuckPane. Enabling or repairing will switch it to this copy.</value></data>
   <data name="DesktopMenuErrorTitle" xml:space="preserve"><value>Could not update folder context menu</value></data>
   <data name="NavMenus" xml:space="preserve"><value>Context menu</value></data>
+  <data name="AutoFillIconRowsTitle" xml:space="preserve"><value>Automatically fill each icon row</value></data>
   <data name="HideCollapseIndicatorTitle" xml:space="preserve"><value>Hide collapse indicator</value></data>
   <data name="CreateInCategory" xml:space="preserve"><value>Create a window in this category</value></data>
   <data name="DiagnosticsDescription" xml:space="preserve"><value>Only failures, timeouts and unexpected interruptions are logged, with UTC times. ZIP: up to 5 MiB; local logs: up to 20 MiB. No file contents. Share only if you choose; nothing is uploaded automatically.</value></data>
@@ -464,4 +465,22 @@ Storage path: {2}</value></data>
   <data name="FileMenuFallback" xml:space="preserve"><value>The system menu could not be loaded. Basic commands are shown. Retry or use File Explorer.</value></data>
   <data name="FileMenuInitializationTimeout" xml:space="preserve"><value>The system menu took longer than 5 seconds to initialize. Opening was cancelled; the window is still available.</value></data>
   <data name="FileMenuSessionBusy" xml:space="preserve"><value>The previous system menu is still working or closing. Please try again later; the window is still available.</value></data>
+  <data name="GlassMaterialTitle" xml:space="preserve"><value>Glass finish</value></data>
+  <data name="GlassClassic" xml:space="preserve"><value>Classic glass</value></data>
+  <data name="GlassFrosted" xml:space="preserve"><value>Frosted glass</value></data>
+  <data name="GlassMist" xml:space="preserve"><value>Tinted mist</value></data>
+  <data name="GlassPearl" xml:space="preserve"><value>Pearl glass</value></data>
+  <data name="GlassFineTune" xml:space="preserve"><value>Material details</value></data>
+  <data name="GlassLightColors" xml:space="preserve"><value>Light colors</value></data>
+  <data name="GlassLightA" xml:space="preserve"><value>First light</value></data>
+  <data name="GlassLightB" xml:space="preserve"><value>Second light</value></data>
+  <data name="GlassColorIntensity" xml:space="preserve"><value>Color intensity</value></data>
+  <data name="GlassReflection" xml:space="preserve"><value>Reflection</value></data>
+  <data name="GlassGrain" xml:space="preserve"><value>Grain</value></data>
+  <data name="GlassLightDirection" xml:space="preserve"><value>Light direction</value></data>
+  <data name="GlassTopLeft" xml:space="preserve"><value>Top left</value></data>
+  <data name="GlassTopRight" xml:space="preserve"><value>Top right</value></data>
+  <data name="GlassBottomLeft" xml:space="preserve"><value>Bottom left</value></data>
+  <data name="GlassBottomRight" xml:space="preserve"><value>Bottom right</value></data>
+  <data name="GlassSampleName" xml:space="preserve"><value>Files</value></data>
 </root>

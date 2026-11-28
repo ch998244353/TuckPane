@@ -25,7 +25,16 @@ internal readonly record struct ThemeValues(
     double BlurStrength = GlobalSettings.DefaultThemeBlurStrength,
     bool SolidColorMode = false,
     double SolidOpacity = 1,
-    bool FullyTransparent = false);
+    bool FullyTransparent = false)
+{
+    // Even a default-initialized snapshot has the original glass finish.
+    private readonly GlassMaterialSettings? _material;
+    internal GlassMaterialSettings Material
+    {
+        get => _material ?? GlassMaterialSettings.Classic;
+        init => _material = value == GlassMaterialSettings.Classic ? null : value;
+    }
+}
 
 public enum PerformanceProfile
 {
@@ -173,6 +182,9 @@ public sealed class GlobalSettings
     public double DockThemeBlurStrength { get; set; } = DefaultThemeBlurStrength;
     public bool DockSolidColorMode { get; set; }
     public bool DockFullyTransparent { get; set; }
+    public GlassMaterialSettings OrganizerGlassMaterial { get; set; } = GlassMaterialSettings.Classic;
+    public GlassMaterialSettings StationGlassMaterial { get; set; } = GlassMaterialSettings.Classic;
+    public GlassMaterialSettings DockGlassMaterial { get; set; } = GlassMaterialSettings.Classic;
     public OrganizerTextColor OrganizerTextColor { get; set; } = DefaultOrganizerTextColor;
     public NoteTheme NoteTheme { get; set; } = NoteTheme.RainBlue;
     public bool StartWithWindows { get; set; }
@@ -181,6 +193,7 @@ public sealed class GlobalSettings
     public PerformanceProfile PerformanceProfile { get; set; } = global::TuckPane.Models.PerformanceProfile.Balanced;
     public bool ExclusiveExpansion { get; set; } = true;
     public bool CollapseOnOutsideClick { get; set; }
+    public bool AutoFillIconRows { get; set; }
     public bool HideCollapseIndicator { get; set; }
     public bool NoteAlwaysOnTop { get; set; }
     public bool TodoShowSeparators { get; set; }
@@ -292,13 +305,16 @@ public sealed class GlobalSettings
     internal ThemeValues GetTheme(ThemeTarget target)
     {
         if (target == ThemeTarget.Station)
-            return new(StationThemeColorArgb, StationThemeTransparency, StationThemeBlurStrength, StationSolidColorMode, StationSolidThemeOpacity);
+            return new(StationThemeColorArgb, StationThemeTransparency, StationThemeBlurStrength, StationSolidColorMode, StationSolidThemeOpacity)
+                { Material = StationGlassMaterial };
         if (target == ThemeTarget.Dock)
-            return new(DockThemeColorArgb, DockThemeTransparency, DockThemeBlurStrength, DockSolidColorMode, DockSolidThemeOpacity, DockFullyTransparent);
+            return new(DockThemeColorArgb, DockThemeTransparency, DockThemeBlurStrength, DockSolidColorMode, DockSolidThemeOpacity, DockFullyTransparent)
+                { Material = DockGlassMaterial };
         bool solid = target == ThemeTarget.Settings ? SettingsSolidColorMode : SolidColorMode;
         return target == ThemeTarget.Settings
             ? new(SettingsThemeColorArgb, SettingsThemeTransparency, SettingsThemeBlurStrength, solid, SettingsSolidThemeOpacity)
-            : new(ThemeColorArgb, ThemeTransparency, ThemeBlurStrength, solid, SolidThemeOpacity);
+            : new(ThemeColorArgb, ThemeTransparency, ThemeBlurStrength, solid, SolidThemeOpacity)
+                { Material = OrganizerGlassMaterial };
     }
 
     internal void SetTheme(ThemeTarget target, ThemeValues theme)
@@ -310,6 +326,7 @@ public sealed class GlobalSettings
             StationThemeBlurStrength = theme.BlurStrength;
             StationSolidColorMode = theme.SolidColorMode;
             StationSolidThemeOpacity = NormalizeSolidThemeOpacity(theme.SolidOpacity);
+            StationGlassMaterial = theme.Material;
             return;
         }
         if (target == ThemeTarget.Dock)
@@ -320,6 +337,7 @@ public sealed class GlobalSettings
             DockSolidColorMode = theme.SolidColorMode;
             DockSolidThemeOpacity = NormalizeSolidThemeOpacity(theme.SolidOpacity);
             DockFullyTransparent = theme.FullyTransparent;
+            DockGlassMaterial = theme.Material;
             return;
         }
         if (target == ThemeTarget.Settings)
@@ -337,6 +355,7 @@ public sealed class GlobalSettings
         SolidThemeOpacity = NormalizeSolidThemeOpacity(theme.SolidOpacity);
         ThemeBlurStrength = theme.BlurStrength;
         SolidColorMode = theme.SolidColorMode;
+        OrganizerGlassMaterial = theme.Material;
     }
 
     internal static ThemeValues NormalizeTheme(ThemeValues theme) => new(
@@ -344,7 +363,8 @@ public sealed class GlobalSettings
         NormalizeThemeTransparency(theme.Transparency),
         NormalizeThemeBlurStrength(theme.BlurStrength),
         theme.SolidColorMode,
-        NormalizeSolidThemeOpacity(theme.SolidOpacity), theme.FullyTransparent);
+        NormalizeSolidThemeOpacity(theme.SolidOpacity), theme.FullyTransparent)
+        { Material = theme.Material.Normalize() };
 
     // Shared by the UI update path and focused checks. Transparency always
     // means the stored Glass weight, even in Solid mode. Keeping named values
@@ -356,13 +376,14 @@ public sealed class GlobalSettings
         double blurStrength,
         bool solidColorMode,
         double? solidOpacity = null,
-        bool? fullyTransparent = null) => NormalizeTheme(new(
+        bool? fullyTransparent = null,
+        GlassMaterialSettings? material = null) => NormalizeTheme(new(
             colorArgb,
             transparency,
             blurStrength,
             solidColorMode,
             solidOpacity ?? previous.SolidOpacity,
-            fullyTransparent ?? previous.FullyTransparent));
+            fullyTransparent ?? previous.FullyTransparent) { Material = material ?? previous.Material });
 
     // Retain the legacy field and enum values for reading older state files.
     internal static OrganizerTextColor NormalizeOrganizerTextColor(OrganizerTextColor color) =>
@@ -413,6 +434,7 @@ public sealed class OrganizerDefinition
     public string? StorageAbsolutePath { get; set; }
     public bool StorageOwnedByApp { get; set; }
     public List<string> ItemOrder { get; set; } = [];
+    public List<int> IconRowCounts { get; set; } = [];
     public List<NoteDefinition> Notes { get; set; } = [];
 }
 

@@ -7,6 +7,32 @@ public sealed partial class AppHost
 {
     private readonly SemaphoreSlim _organizerPreferenceGate = new(1, 1);
 
+    internal async Task SetAutoFillIconRowsAsync(bool enabled)
+    {
+        await _organizerPreferenceGate.WaitAsync();
+        try
+        {
+            bool previous = State.GlobalSettings.AutoFillIconRows;
+            if (previous == enabled) return;
+            void Apply(bool value)
+            {
+                State.GlobalSettings.AutoFillIconRows = value;
+                foreach (MainWindow window in _windows.Values) window.RefreshIconRowMode();
+            }
+            try
+            {
+                Apply(enabled);
+                await SaveStateAsync();
+            }
+            catch
+            {
+                Apply(previous);
+                throw;
+            }
+        }
+        finally { _organizerPreferenceGate.Release(); }
+    }
+
     internal async Task SetHideCollapseIndicatorAsync(bool hidden)
     {
         await _organizerPreferenceGate.WaitAsync();

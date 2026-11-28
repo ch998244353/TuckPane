@@ -12,6 +12,7 @@ internal sealed class NativeWindowChromeController : IDisposable
     private readonly bool _extendClientFrame;
     private readonly bool _applyBorderLast;
     private readonly bool _preferSystemCorners;
+    private readonly SystemAppearanceWatcher? _appearanceWatcher;
     private int _visibleFrameThickness = 1;
     private bool _disposed;
     private bool _applyQueued;
@@ -22,13 +23,15 @@ internal sealed class NativeWindowChromeController : IDisposable
         DispatcherQueue dispatcher,
         bool extendClientFrame = true,
         bool applyBorderLast = false,
-        bool preferSystemCorners = false)
+        bool preferSystemCorners = false,
+        SystemAppearanceWatcher? appearanceWatcher = null)
     {
         _window = window;
         _dispatcher = dispatcher;
         _extendClientFrame = extendClientFrame;
         _applyBorderLast = applyBorderLast;
         _preferSystemCorners = preferSystemCorners;
+        _appearanceWatcher = appearanceWatcher;
         _subclass = WindowProc;
         _ = NativeMethods.SetWindowSubclass(window, _subclass, SubclassId, IntPtr.Zero);
         Apply(refreshFrame: true);
@@ -124,6 +127,7 @@ internal sealed class NativeWindowChromeController : IDisposable
             Marshal.StructureToPtr(parameters, lParam, fDeleteOld: false);
             return result;
         }
+        if (SystemAppearanceWatcher.IsAppearanceMessage(message)) _appearanceWatcher?.QueueCheck();
         if (message is NativeMethods.WM_NCACTIVATE or
             NativeMethods.WM_THEMECHANGED or
             NativeMethods.WM_DWMCOMPOSITIONCHANGED or

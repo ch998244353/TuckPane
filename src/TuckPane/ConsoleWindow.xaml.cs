@@ -102,6 +102,7 @@ public sealed partial class ConsoleWindow : Window
     {
         _host = host;
         InitializeComponent();
+        InitializeMaterialControls();
         SystemBackdrop = new TransparentWindowBackdrop();
         _themeBackdrop.Attach(ConsoleSurfaceHost);
         _themeSurface = new ThemeSurface(ConsoleSurfaceHost);
@@ -197,7 +198,12 @@ public sealed partial class ConsoleWindow : Window
         // native chrome from extending any frame into the client area so DWM
         // cannot add an independent sheet-of-glass blur.
         _chrome = new NativeWindowChromeController(Hwnd, DispatcherQueue, extendClientFrame: false, applyBorderLast: true,
-            preferSystemCorners: true);
+            preferSystemCorners: true, appearanceWatcher: new(DispatcherQueue, _accessibilitySettings, _uiSettings, () =>
+            {
+                if (_closingPermanently) return;
+                ApplyTheme();
+                UpdateManageListItemSurfaces();
+            }));
         Activated += ConsoleWindow_Activated;
         Closed += ConsoleWindow_Closed;
         ApplyNativeWindowChrome();
@@ -298,6 +304,7 @@ public sealed partial class ConsoleWindow : Window
         UpdateManageCategoryHeader();
         MissingStorageInfo.Title = AppStrings.Get("MissingStorage");
         ApplyLocalizedTree(ConsoleRoot);
+        LocalizeMaterialControls();
         UpdateOrganizerPreferenceControls();
         UpdateUnifiedExpandedControls();
         UpdateFolderMenuControls();
@@ -337,6 +344,7 @@ public sealed partial class ConsoleWindow : Window
         _creationSession.Close();
         LeaveCreationEditor();
         _appWindow?.Hide();
+        UpdateMaterialVisibility(false);
     }
 
     private void ConsoleMinimizeButton_Click(object sender, RoutedEventArgs e)
@@ -479,6 +487,7 @@ public sealed partial class ConsoleWindow : Window
         if (args.WindowActivationState != WindowActivationState.Deactivated)
         {
             RefreshSettingsAccessibility();
+            if (_materialPageVisible && _materialEffectsSubscription is null) UpdateThemeControls();
             UpdateFolderMenuControls();
         }
     }
@@ -491,6 +500,9 @@ public sealed partial class ConsoleWindow : Window
         try { _themeBackdrop.DetachAndClose(); }
         catch (Exception ex) { AppLogger.Error("Console backdrop close failed.", ex); }
         _host.ThemeChanged -= Host_ThemeChanged;
+        _materialEffectsSubscription?.Dispose();
+        _materialPageVisible = false;
+        ReleaseMaterialPreviews();
         _accessibilitySubscription?.Dispose();
         foreach (var (row, token) in _settingRowVisibilityTokens)
             row.UnregisterPropertyChangedCallback(UIElement.VisibilityProperty, token);
@@ -737,6 +749,7 @@ public sealed partial class ConsoleWindow : Window
     private void ShowPage(FrameworkElement page)
     {
         foreach (FrameworkElement candidate in new FrameworkElement[] { SystemPage, DisplayPage, MenuPage, InteractionPage, ThemePage, ManagePage, UpdatePage }) candidate.Visibility = ReferenceEquals(candidate, page) ? Visibility.Visible : Visibility.Collapsed;
+        UpdateMaterialVisibility(ReferenceEquals(page, ThemePage));
         page.Opacity = 1;
         page.Translation = Vector3.Zero;
     }
@@ -1439,7 +1452,8 @@ public sealed partial class ConsoleWindow : Window
         double? blurStrength = null,
         bool? solidColorMode = null,
         double? solidOpacity = null,
-        bool? fullyTransparent = null)
+        bool? fullyTransparent = null,
+        GlassMaterialSettings? material = null)
     {
         GlobalSettings settings = _host.State.GlobalSettings;
         ThemeValues theme = settings.GetTheme(_themeTarget);
@@ -1451,7 +1465,8 @@ public sealed partial class ConsoleWindow : Window
             blurStrength ?? theme.BlurStrength,
             solidColorMode ?? theme.SolidColorMode,
             solidOpacity,
-            fullyTransparent);
+            fullyTransparent,
+            material: material);
         _themeSaveTimer.Stop();
         _themeSaveTimer.Start();
     }
@@ -1479,6 +1494,7 @@ public sealed partial class ConsoleWindow : Window
         CustomThemeColorButton.IsEnabled = !theme.FullyTransparent;
         foreach (ToggleButton button in ColorSwatchesPanel.Children.OfType<ToggleButton>())
         {
+            button.IsEnabled = !theme.FullyTransparent;
             string hex = (string)button.Tag;
             button.IsChecked = ParseThemeColor(hex) == theme.ColorArgb;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
@@ -1501,6 +1517,7 @@ public sealed partial class ConsoleWindow : Window
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeColorPicker, AppStrings.Get("ThemeCustomColor"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeTransparencySlider, AppStrings.Get("ThemeTransparencyLabel"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ThemeBlurStrengthSlider, AppStrings.Get("ThemeBlurStrengthLabel"));
+        UpdateMaterialControls(theme);
         _loadingTheme = false;
     }
 
@@ -2214,6 +2231,7 @@ public sealed partial class ConsoleWindow : Window
         },
         StorageRelativePath = source.StorageRelativePath,
         StorageAbsolutePath = source.StorageAbsolutePath,
+        IconRowCounts = source.IconRowCounts.ToList(),
         ItemOrder = source.ItemOrder.ToList()
     };
 }

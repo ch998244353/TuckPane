@@ -7,6 +7,19 @@ using Windows.Storage;
 using System.Text.Json;
 using System.Xml.Linq;
 
+if (args is ["--drag-scroll"])
+{
+    DragScrollChecks.Run();
+    return;
+}
+
+if (args is ["--icon-rows"])
+{
+    IconRowLayoutChecks.Run();
+    await IconRowStateChecks.RunAsync();
+    return;
+}
+
 if (args.Length > 0 && args[0] == "--file-menu-cursor-placement")
 {
     if (args is not ["--file-menu-cursor-placement"])
@@ -957,11 +970,11 @@ if (args is ["--sep03-organizer-visual-input-fixes"])
         ResolveAction(false, false, false, false, false, false, true, true) == "Ignore" &&
         ResolveAction(true, true, false, false, false, false, true, true) == "Ignore" &&
         ResolveAction(true, false, true, false, false, false, true, true) == "Ignore" &&
-        ResolveAction(true, false, false, true, false, false, true, true) == "Ignore" &&
+        ResolveAction(true, false, false, true, false, false, true, true) == "ScrollReorder" &&
         ResolveAction(true, false, false, false, true, false, true, true) == "Ignore" &&
-        ResolveAction(true, false, false, false, false, false, false, true) == "Ignore" &&
+        ResolveAction(true, false, false, false, false, false, false, true) == "ScrollGrid" &&
         ResolveAction(true, false, false, false, false, false, true, false) == "Ignore",
-        "滚轮动作未完整排除收起、动画、缩放、换序、Shell 拖动、图标普通滚轮或列表外命中。");
+        "滚轮在换序、普通滚动或不可交互状态下的分派错误。");
 
     (double ScrollDeltaDip, int Remainder)? ConsumeWheel(int remainder, int delta, double rowHeightDip)
     {
@@ -3512,22 +3525,9 @@ if (args is ["--station-hot-zone"])
     return;
 }
 
-if (args is ["--theme-material-removal"])
+if (args is ["--glass-materials"] or ["--theme-material-removal"])
 {
-    static void Require(bool condition, string message)
-    {
-        if (!condition) throw new InvalidOperationException(message);
-    }
-
-    string sourceRoot = Path.Combine(Environment.CurrentDirectory, "src", "TuckPane");
-    string model = File.ReadAllText(Path.Combine(sourceRoot, "Models", "AppState.cs"));
-    string console = File.ReadAllText(Path.Combine(sourceRoot, "ConsoleWindow.xaml"));
-    Require(!model.Contains("ThemeMaterial", StringComparison.Ordinal) &&
-            !model.Contains("SettingsThemeMaterial", StringComparison.Ordinal) &&
-            !console.Contains("ThemeMaterial", StringComparison.Ordinal),
-        "材质枚举、持久化字段或设置入口仍然存在。");
-
-    Console.WriteLine("PASS: theme material removal");
+    await GlassMaterialChecks.RunAsync();
     return;
 }
 
@@ -3615,27 +3615,25 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
             "收纳窗内缘没有使用固定的左上白色 64→8、右下黑色 32 渐变。 ");
 
         string endpointSurface = Read(endpointServicesRoot, "ThemeSurface.cs");
-        int endpointSetThemeStart = endpointSurface.IndexOf(
-            "internal void SetTheme", StringComparison.Ordinal);
-        int endpointSetCornerRadiusStart = endpointSurface.IndexOf(
-            "internal void SetCornerRadius", endpointSetThemeStart, StringComparison.Ordinal);
-        string endpointSetThemeBody = endpointSetThemeStart >= 0 &&
-            endpointSetCornerRadiusStart > endpointSetThemeStart
-                ? endpointSurface[endpointSetThemeStart..endpointSetCornerRadiusStart]
-                : string.Empty;
-        CheckEndpoint(endpointSurface.Contains("bool showPersistentGlassEdge = false", StringComparison.Ordinal) &&
-              endpointSurface.Contains("CreateShapeVisual", StringComparison.Ordinal) &&
-              Count(endpointSurface, "CreateRoundedRectangleGeometry()") >= 2 &&
-              Count(endpointSurface, "CreateSpriteShape(") >= 2 &&
-              Count(endpointSurface, "StrokeBrush =") >= 2 &&
-              Count(endpointSurface, "StrokeThickness =") >= 2,
-            "ThemeSurface 缺少默认关闭的永久双层圆角玻璃描边。 ");
-        CheckEndpoint(Count(endpointSurface, "BorderMode = CompositionBorderMode.Soft") >= 3,
-            "ThemeSurface 根视觉、高光视觉或边缘视觉没有显式使用 Soft 抗锯齿。 ");
-        CheckEndpoint(!endpointSetThemeBody.Contains("OrganizerGlassOuterEdge", StringComparison.Ordinal) &&
-              !endpointSetThemeBody.Contains("OrganizerGlassInnerEdge", StringComparison.Ordinal) &&
-              !endpointSetThemeBody.Contains("StrokeBrush", StringComparison.Ordinal),
-            "SetTheme 仍会根据主题端点重建或关闭永久玻璃边缘。 ");
+        string endpointEdge = Read(endpointServicesRoot, "ThemeEdgeSurface.cs");
+        CheckEndpoint(endpointEdge.Contains("CreateShapeVisual", StringComparison.Ordinal) &&
+              Count(endpointEdge, "CreateRoundedRectangleGeometry()") >= 2 &&
+              Count(endpointEdge, "CreateSpriteShape(") >= 2 &&
+              endpointEdge.Contains("_outerShape.StrokeBrush = _outerBrush", StringComparison.Ordinal) &&
+              endpointEdge.Contains("_innerShape.StrokeBrush = _innerBrush", StringComparison.Ordinal) &&
+              endpointEdge.Contains("_outerShape.StrokeThickness = ThemePalette.OrganizerGlassOuterEdgeThicknessDip", StringComparison.Ordinal) &&
+              endpointEdge.Contains("_innerShape.StrokeThickness = ThemePalette.OrganizerGlassInnerEdgeThicknessDip", StringComparison.Ordinal),
+            "独立边缘层缺少永久双层圆角玻璃描边。");
+        CheckEndpoint(Count(endpointSurface, "BorderMode = CompositionBorderMode.Soft") >= 2 &&
+              endpointEdge.Contains("BorderMode = CompositionBorderMode.Soft", StringComparison.Ordinal),
+            "根视觉、高光视觉或边缘视觉没有显式使用 Soft 抗锯齿。");
+        foreach (double opacity in new[] { 0d, 1d })
+        {
+            var classic = new ThemeValues(0xFF304050, opacity);
+            CheckEndpoint(ThemePalette.EdgeOpacity(classic) == ThemePalette.GlassEdgeMinimumOpacity &&
+                  ThemePalette.EdgeOpacity(classic with { FullyTransparent = true }) == 0,
+                "经典玻璃边线在底色端点或 Dock 完全透明模式下错误。");
+        }
 
         string transparentHost = Read(endpointServicesRoot, "TransparentWindowBackdrop.cs");
         CheckEndpoint(transparentHost.Contains("DwmBlurBehindBlurRegion", StringComparison.Ordinal) &&
@@ -3674,17 +3672,20 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
               mainXaml.Contains("Background=\"Transparent\"", StringComparison.Ordinal) &&
               mainXaml.Contains("x:Name=\"CompactSurfaceHost\"", StringComparison.Ordinal) &&
               mainXaml.Contains("x:Name=\"ExpandedSurfaceHost\"", StringComparison.Ordinal) &&
-              mainCode.Contains("CompactSurfaceHost.CornerRadius", StringComparison.Ordinal) &&
-              mainCode.Contains("ExpandedSurfaceHost.CornerRadius", StringComparison.Ordinal),
+              mainCode.Contains("_compactBackdrop.SetRoundedGeometry(compactGeometry)", StringComparison.Ordinal) &&
+              mainCode.Contains("ExpandedSurfaceHost.CornerRadius", StringComparison.Ordinal) &&
+              mainCode.Contains("_expandedBackdrop.SetRoundedGeometry(dockSurface)", StringComparison.Ordinal),
             "收纳根节点未透明，或局部主题背景未受圆角约束。 ");
         CheckEndpoint(mainCode.Contains(
-                  "new ThemeSurface(CompactSurfaceHost, showPersistentGlassEdge: true)",
+                  "new ThemeEdgeSurface(CompactEdgeOverlay, CompactThumbnailHost)",
                   StringComparison.Ordinal) &&
               mainCode.Contains(
-                  "new ThemeSurface(ExpandedSurfaceHost, showPersistentGlassEdge: true)",
+                  "new ThemeEdgeSurface(ExpandedEdgeOverlay,",
                   StringComparison.Ordinal) &&
-              Count(mainCode, "showPersistentGlassEdge: true") == 2,
-            "MainWindow 没有仅为 compact/expanded 两个收纳表面启用永久玻璃边缘。 ");
+              Count(mainCode, "new ThemeEdgeSurface(") == 2 &&
+              mainCode.Contains("_compactEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled && !highContrast)", StringComparison.Ordinal) &&
+              mainCode.Contains("_expandedEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled && !highContrast)", StringComparison.Ordinal),
+            "MainWindow 的两个边缘宿主未连接边缘弧光开关。");
         CheckEndpoint(mainCode.Contains("GetElementVisual(CompactSurfaceHost)", StringComparison.Ordinal) &&
               mainCode.Contains("GetElementVisual(ExpandedSurfaceHost)", StringComparison.Ordinal) &&
               mainCode.Contains("GetElementVisual(CompactIconPresenter)", StringComparison.Ordinal) &&
@@ -3695,10 +3696,10 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
         string endpointOwnedDialog = Read(endpointServicesRoot, "OwnedDialogWindow.cs");
         CheckEndpoint(endpointConsoleCode.Contains(
                   "new ThemeSurface(ConsoleSurfaceHost)", StringComparison.Ordinal) &&
-              !endpointConsoleCode.Contains("showPersistentGlassEdge", StringComparison.Ordinal) &&
+              endpointConsoleCode.Contains("new ThemeEdgeSurface(SettingsEdgeOverlay)", StringComparison.Ordinal) &&
               endpointOwnedDialog.Contains("new ThemeSurface(surfaceHost)", StringComparison.Ordinal) &&
-              !endpointOwnedDialog.Contains("showPersistentGlassEdge", StringComparison.Ordinal),
-            "设置窗口或 OwnedDialog 错误启用了收纳窗专属永久玻璃边缘。 ");
+              !endpointOwnedDialog.Contains("new ThemeEdgeSurface", StringComparison.Ordinal),
+            "设置窗口或 OwnedDialog 未使用各自的表面/边缘宿主。");
         string endpointDesktopLayer = Read(endpointServicesRoot, "DesktopLayerService.cs");
         CheckEndpoint(endpointDesktopLayer.Contains("DWMWCP_DONOTROUND", StringComparison.Ordinal) &&
               endpointDesktopLayer.Contains("DWMWA_WINDOW_CORNER_PREFERENCE", StringComparison.Ordinal) &&
@@ -3729,7 +3730,8 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
 
     string surface = Read(servicesRoot, "ThemeSurface.cs");
     Require(surface.Contains("CreateHighlightBrush", StringComparison.Ordinal) &&
-            surface.Contains("HighlightOpacity", StringComparison.Ordinal) &&
+            surface.Contains("GlassMaterialOptics.Resolve(theme, useEffects)", StringComparison.Ordinal) &&
+            Read(servicesRoot, "GlassMaterialOptics.cs").Contains("ThemePalette.HighlightOpacity(theme)", StringComparison.Ordinal) &&
             !surface.Contains("CreateHostBackdropBrush()", StringComparison.Ordinal) &&
             !surface.Contains("CreateBackdropBrush()", StringComparison.Ordinal) &&
             !surface.Contains("GaussianBlurEffect", StringComparison.Ordinal) &&
@@ -3739,11 +3741,11 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
     string desktopLayer = Read(servicesRoot, "DesktopLayerService.cs");
     int desktopConstructor = desktopLayer.IndexOf("public DesktopLayerService(", StringComparison.Ordinal);
     int reattachMethod = desktopConstructor >= 0
-        ? desktopLayer.IndexOf("public void Reattach()", desktopConstructor, StringComparison.Ordinal)
+        ? desktopLayer.IndexOf("public void Reattach(", desktopConstructor, StringComparison.Ordinal)
         : -1;
     int activationGuard = desktopLayer.IndexOf("private IntPtr ActivationGuard(", StringComparison.Ordinal);
     int findDesktop = activationGuard >= 0
-        ? desktopLayer.IndexOf("internal static IntPtr FindDesktopIconView()", activationGuard, StringComparison.Ordinal)
+        ? desktopLayer.IndexOf("internal static IntPtr FindDesktopIconView(", activationGuard, StringComparison.Ordinal)
         : -1;
     Require(desktopConstructor >= 0 && reattachMethod > desktopConstructor &&
             activationGuard >= 0 && findDesktop > activationGuard &&
@@ -3770,7 +3772,8 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
             transparentBackdropSource.Contains("GetDC(", StringComparison.Ordinal) &&
             transparentBackdropSource.Contains("ReleaseDC(", StringComparison.Ordinal) &&
             Count(transparentBackdropSource, "DeleteObject(") >= 3 &&
-            Count(transparentBackdropSource, "DwmEnableBlurBehindWindow(") == 2,
+            Count(transparentBackdropSource, "DwmEnableBlurBehindWindow(hwnd, ref blur)") == 1 &&
+            transparentBackdropSource.Contains("extern int DwmEnableBlurBehindWindow(", StringComparison.Ordinal),
         "透明承载缺少 DWM alpha 初始化、黑色清底或 GDI 资源释放。");
     string[] blurSources = Directory.GetFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
         .Where(path => File.ReadAllText(path).Contains("DwmEnableBlurBehindWindow(", StringComparison.Ordinal))
@@ -3791,40 +3794,17 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
                                 text.Contains("ThemeSurface", StringComparison.Ordinal)),
         "目标窗口接线仍使用旧透明 tint 或缺少 ThemeSurface。");
     string consoleXaml = Read(sourceRoot, "ConsoleWindow.xaml");
-    string consoleCode = Read(sourceRoot, "ConsoleWindow.xaml.cs");
-    string modelCode = Read(sourceRoot, "Models", "AppState.cs");
     Require(consoleXaml.Contains("<SystemBackdropElement", StringComparison.Ordinal) &&
             Read(sourceRoot, "MainWindow.xaml").Contains("CompactSurfaceHost", StringComparison.Ordinal) &&
             Read(sourceRoot, "MainWindow.xaml").Contains("ExpandedSurfaceHost", StringComparison.Ordinal) &&
             Read(servicesRoot, "OwnedDialogWindow.cs").Contains("new SystemBackdropElement", StringComparison.Ordinal),
         "设置、收纳或 OwnedDialog 未使用局部 SystemBackdropElement。");
-    Require(!consoleXaml.Contains("ThemeMaterial", StringComparison.Ordinal) &&
-            !consoleCode.Contains("ThemeMaterial", StringComparison.Ordinal) &&
-            !modelCode.Contains("ThemeMaterial", StringComparison.Ordinal) &&
-            !modelCode.Contains("SettingsThemeMaterial", StringComparison.Ordinal),
-        "材质选择 UI、事件或持久化类型仍然存在。");
-    string[] themeProductionSources = Directory.GetFiles(sourceRoot, "*", SearchOption.AllDirectories)
-        .Where(path => Path.GetExtension(path) is ".cs" or ".xaml" or ".resw")
-        .Where(path => !path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            .Any(segment => segment is "bin" or "obj"))
-        .ToArray();
-    string[] removedMaterialTokens =
-    [
-        "ThemeMaterial",
-        "SettingsThemeMaterial",
-        "AcrylicMaterial",
-        "GlassMaterial",
-        "MatteMaterial"
-    ];
-    Require(themeProductionSources.All(path => removedMaterialTokens.All(token =>
-            !File.ReadAllText(path).Contains(token, StringComparison.Ordinal))),
-        "生产代码、XAML 或资源中仍有已删除的可选材质符号。");
-    string[] resourceCultures = ["zh-CN", "en-US", "ja-JP"];
-    Require(resourceCultures.All(culture =>
-            !Read(sourceRoot, "Strings", culture, "Resources.resw")
-                .Contains("ThemeMaterial", StringComparison.Ordinal)),
-        "中英日资源仍包含已删除的材质入口文案。");
-
+    // The obsolete schema-12 selectors had different JSON names and semantics.
+    // New glass finishes must remain independently editable after migration.
+    Require(typeof(GlobalSettings).GetProperty("Material") is null &&
+            typeof(GlobalSettings).GetProperty("SettingsThemeMaterial") is null &&
+            typeof(GlobalSettings).Assembly.GetType("TuckPane.Models.ThemeMaterial") is null,
+        "旧主题材质枚举或配置字段重新出现。");
     string tempRoot = Path.Combine(Path.GetTempPath(), $"TuckPane-theme-depth-{Guid.NewGuid():N}");
     Directory.CreateDirectory(tempRoot);
     try
@@ -3836,7 +3816,7 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
         var store = new StateStore(statePath);
         await store.SaveAsync(new AppStateV2 { GlobalSettings = settings });
         AppStateV2 roundTrip = await store.LoadAsync();
-        Require(roundTrip.SchemaVersion == 13 &&
+        Require(roundTrip.SchemaVersion == new AppStateV2().SchemaVersion &&
                 roundTrip.GlobalSettings.GetTheme(ThemeTarget.Organizer) ==
                     new ThemeValues(0xFF123456, .5, .25) &&
                 roundTrip.GlobalSettings.GetTheme(ThemeTarget.Settings) ==
@@ -3863,7 +3843,7 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
         }));
         var legacyStore = new StateStore(legacyPath);
         AppStateV2 migrated = await legacyStore.LoadAsync();
-        Require(migrated.SchemaVersion == 13 &&
+        Require(migrated.SchemaVersion == new AppStateV2().SchemaVersion &&
                 migrated.GlobalSettings.ThemeTransparency == .82 &&
                 migrated.GlobalSettings.SettingsThemeTransparency == .18 &&
                 migrated.GlobalSettings.ThemeColorArgb == 0xFF102030u &&
@@ -3877,7 +3857,7 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
             JsonElement global = migratedJson.RootElement.GetProperty("GlobalSettings");
             Require(!global.TryGetProperty("Material", out _) &&
                     !global.TryGetProperty("SettingsThemeMaterial", out _),
-                "Schema 13 写回仍包含已删除的材质字段。");
+                "当前版本写回仍包含已删除的材质字段。");
         }
         migrated.GlobalSettings.ThemeTransparency = .12;
         migrated.GlobalSettings.SettingsThemeTransparency = .87;
@@ -3885,7 +3865,7 @@ if (args is ["--theme-material-depth"] || args is ["--theme-visual-zero-endpoint
         AppStateV2 loadedAgain = await legacyStore.LoadAsync();
         Require(loadedAgain.GlobalSettings.ThemeTransparency == .12 &&
                 loadedAgain.GlobalSettings.SettingsThemeTransparency == .87,
-            "Schema 13 后续加载重复重置透明度。");
+            "迁移后再次加载重复重置透明度。");
     }
     finally
     {
@@ -3925,7 +3905,7 @@ if (args is ["--theme-targets"])
             legacyTheme.ColorArgb,
             GlobalSettings.DefaultThemeTransparency,
             GlobalSettings.DefaultThemeBlurStrength);
-        Require(migrated.SchemaVersion == 13 &&
+        Require(migrated.SchemaVersion == new AppStateV2().SchemaVersion &&
                 migrated.GlobalSettings.GetTheme(ThemeTarget.Organizer) == migratedLegacyTheme &&
                 migrated.GlobalSettings.GetTheme(ThemeTarget.Settings) == migratedLegacyTheme,
             "Schema 7 主题没有同时迁移到设置界面和收纳窗。");

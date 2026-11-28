@@ -20,6 +20,22 @@ internal sealed class ItemReorderSession
     internal const double ActivationThresholdDip = 8;
     internal const double SlotHysteresisDip = 6;
 
+    private IReadOnlyList<int>? _originalRows;
+    private IconRowTarget? _rowTarget;
+    private IconRowEdit? _rowEdit;
+    private int _rowRevision;
+    internal List<int>? PreviewRows => _rowEdit?.Rows;
+
+    internal void UpdateRowTarget(Point pointer, IReadOnlyList<int> rows, int columns, IconRowTarget target)
+    {
+        Track(pointer);
+        if (!IsActive || IsSealed || _rowTarget == target) return;
+        _originalRows = rows;
+        _rowTarget = target;
+        _rowEdit = IconRowLayout.Move(rows, columns, SourceIndex, target);
+        _rowRevision++;
+    }
+
     private GridGapPath? _gapPath;
     private GridGapPrimaryAxis _primaryAxis = GridGapPrimaryAxis.Horizontal;
     private GridGapPrimaryAxis _pendingPrimaryAxis = GridGapPrimaryAxis.Horizontal;
@@ -44,8 +60,8 @@ internal sealed class ItemReorderSession
 
     internal string RelativeName { get; }
     internal int SourceIndex { get; }
-    internal int TargetIndex => _pendingTarget ?? _gapPath?.GapIndex ?? SourceIndex;
-    internal int PreviewRevision => _gapPath?.Revision ?? 0;
+    internal int TargetIndex => _rowEdit?.Index ?? _pendingTarget ?? _gapPath?.GapIndex ?? SourceIndex;
+    internal int PreviewRevision => _rowEdit.HasValue ? _rowRevision : _gapPath?.Revision ?? 0;
     internal Point PressPointerContent { get; }
     internal Point LatestPointerContent { get; private set; }
     internal Point GrabOffset { get; }
@@ -142,6 +158,7 @@ internal sealed class ItemReorderSession
 
     internal bool TryBeginPreviewTransition(int itemCount, out int[] fromVisualIndices, out int[] toVisualIndices)
     {
+        if (_rowEdit.HasValue) { fromVisualIndices = toVisualIndices = []; return false; }
         fromVisualIndices = GetVisualIndices(itemCount);
         toVisualIndices = fromVisualIndices;
         if (_sealedVisualIndices is not null || _pendingTarget is not int target || _gapPath is null) return false;
@@ -155,11 +172,21 @@ internal sealed class ItemReorderSession
     internal int GetVisualIndex(int originalIndex)
         => _sealedVisualIndices is { } sealedMapping
             ? sealedMapping[originalIndex]
+            : _rowEdit is { } edit ? MovedIndex(originalIndex, edit.Index)
             : _gapPath?.GetVisualSlot(originalIndex) ?? originalIndex;
+
+    private int MovedIndex(int index, int destination)
+    {
+        if (index == SourceIndex) return destination;
+        if (SourceIndex < index && index <= destination) return index - 1;
+        if (destination <= index && index < SourceIndex) return index + 1;
+        return index;
+    }
 
     internal int[] GetVisualIndices(int itemCount)
     {
         if (_sealedVisualIndices is { } sealedMapping) return (int[])sealedMapping.Clone();
+        if (_rowEdit.HasValue) return Enumerable.Range(0, itemCount).Select(GetVisualIndex).ToArray();
         if (_gapPath is null) return Enumerable.Range(0, itemCount).ToArray();
         if (_gapPath.Count != itemCount) throw new ArgumentOutOfRangeException(nameof(itemCount));
         return _gapPath.CreateVisualIndices();
@@ -178,6 +205,12 @@ internal sealed class ItemReorderSession
         int visualIndex = GetVisualIndex(originalIndex);
         double stepX = cellWidth + gap;
         double stepY = cellHeight + gap;
+        if (_originalRows is not null && PreviewRows is { } preview)
+        {
+            var from = IconRowLayout.Locate(_originalRows, originalIndex);
+            var to = IconRowLayout.Locate(preview, visualIndex);
+            return new Vector2((float)((to.Column - from.Column) * stepX), (float)((to.Row - from.Row) * stepY));
+        }
         return new Vector2(
             (float)((visualIndex % columns - originalIndex % columns) * stepX),
             (float)((visualIndex / columns - originalIndex / columns) * stepY));
@@ -222,6 +255,9 @@ internal sealed class ItemReorderSession
         if (_sealedVisualIndices is not null) return;
         _pendingTarget = null;
         _gapPath?.Reset();
+        _rowEdit = null;
+        _rowTarget = null;
+        _originalRows = null;
         _directionAnchor = LatestPointerContent;
     }
 }

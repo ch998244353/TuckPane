@@ -15,6 +15,8 @@ public sealed partial class ConsoleWindow
         _loadingOrganizerPreferences = true;
         try
         {
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(AutoFillIconRowsToggle, AppStrings.Get("AutoFillIconRowsTitle"));
+            if (AutoFillIconRowsToggle.IsEnabled) AutoFillIconRowsToggle.IsOn = _host.State.GlobalSettings.AutoFillIconRows;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(HideCollapseIndicatorToggle, AppStrings.Get("HideCollapseIndicatorTitle"));
             if (HideCollapseIndicatorToggle.IsEnabled) HideCollapseIndicatorToggle.IsOn = _host.State.GlobalSettings.HideCollapseIndicator;
             if (CompactHoverMagnificationToggle.IsEnabled) CompactHoverMagnificationToggle.IsOn = _host.State.GlobalSettings.CompactHoverMagnificationEnabled;
@@ -44,6 +46,23 @@ public sealed partial class ConsoleWindow
             UpdateSettingGroupSeparators(OrganizerMenuOptions);
         }
         finally { _loadingOrganizerPreferences = false; }
+    }
+
+    private async void AutoFillIconRowsToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (!_componentReady || _loadingOrganizerPreferences) return;
+        AutoFillIconRowsToggle.IsEnabled = false;
+        try { await _host.SetAutoFillIconRowsAsync(AutoFillIconRowsToggle.IsOn); }
+        catch (Exception ex)
+        {
+            AppLogger.Error("无法保存图标行自动填充设置。", ex);
+            ShowError(AppStrings.Get("SaveConfigurationError"), ex.Message);
+        }
+        finally
+        {
+            AutoFillIconRowsToggle.IsEnabled = true;
+            UpdateOrganizerPreferenceControls();
+        }
     }
 
     private async void HideCollapseIndicatorToggle_Toggled(object sender, RoutedEventArgs e)

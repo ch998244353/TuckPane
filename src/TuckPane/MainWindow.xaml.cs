@@ -24,6 +24,7 @@ using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Streams;
 using Windows.System;
+using Windows.UI.ViewManagement;
 using WinUIEx;
 using WinRT.Interop;
 
@@ -55,6 +56,7 @@ public sealed partial class MainWindow : Window
     private IReadOnlySet<string> _knownPortableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private long _ignoredPortableSaveEvents;
     private int _catalogScanActive;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(FileSystemWatcher Watcher, string OldName, string NewName)> _catalogRenames = new();
     private readonly IconCacheService _iconCache = new();
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _longPressTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _externalHoverTimer;
@@ -64,8 +66,12 @@ public sealed partial class MainWindow : Window
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _interactionSaveTimer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _canvasResizeInputTimer;
     private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
+    private readonly Windows.UI.ViewManagement.AccessibilitySettings _accessibilitySettings = new();
+    private readonly SystemAppearanceWatcher _systemAppearance;
+    private bool _glassHighContrast;
+    private Windows.UI.Color _glassContrastText;
     private readonly LongPressGesture _longPressGesture = new(LongPressMoveLimitDip);
-    private readonly UniformGridLayout _gridLayout = new() { Orientation = Orientation.Horizontal };
+    private readonly OrganizerRowLayout _rowLayout = new();
     private readonly SolidColorBrush _transparentItemBrush = new(Colors.Transparent);
     private readonly SolidColorBrush _hoveredItemBrush = new(ColorHelper.FromArgb(20, 24, 38, 56));
     private readonly SolidColorBrush _pressedItemBrush = new(ColorHelper.FromArgb(36, 24, 38, 56));
@@ -192,6 +198,8 @@ public sealed partial class MainWindow : Window
     private Border? _itemDragHost;
     private uint _itemDragPointerId;
     private PointerPoint? _itemDragLastPointerPoint;
+    private Point _itemDragPointerInWindow;
+    private SmoothScrollState _itemDragScroll;
     private PointerDeviceType _itemDragPointerType;
     private readonly NativeMethods.HookProc _itemDragBoundaryHookProc;
     private IntPtr _itemDragBoundaryHook;
@@ -297,9 +305,10 @@ public sealed partial class MainWindow : Window
         _compactBackdrop.Attach(CompactSurfaceHost);
         _expandedBackdrop.Attach(ExpandedSurfaceHost);
         ApplyExpandedContentInset();
+        _rowLayout.DragSource = () => _itemReorderSession?.SourceIndex ?? -1;
         ItemsRepeater.ItemsSource = _items;
-        _compactSurface = new ThemeSurface(CompactSurfaceHost, CompactThumbnailHost);
-        _expandedSurface = new ThemeSurface(ExpandedSurfaceHost, IsDock ? ExpandedPanel : null);
+        _compactSurface = new ThemeSurface(CompactFinishHost, CompactThumbnailHost, classicHost: CompactSurfaceHost);
+        _expandedSurface = new ThemeSurface(ExpandedFinishHost, ExpandedPanel, classicHost: ExpandedSurfaceHost);
         _compactEdgeSurface = new ThemeEdgeSurface(CompactEdgeOverlay, CompactThumbnailHost);
         _expandedEdgeSurface = new ThemeEdgeSurface(ExpandedEdgeOverlay, IsDock ? ExpandedPanel : null);
         CompactThumbnailHost.SizeChanged += (_, _) => UpdateSurfaceClips();
@@ -321,6 +330,10 @@ public sealed partial class MainWindow : Window
         WindowRoot.PointerExited += WindowRoot_PointerExited;
         Title = "TuckPane";
         _host.ThemeChanged += Host_ThemeChanged;
+        _systemAppearance = new(DispatcherQueue, _accessibilitySettings, _uiSettings, () =>
+        {
+            if (!_closing) ApplyTheme();
+        });
         ApplyTheme();
         ApplyLanguage();
 
@@ -854,6 +867,8 @@ public sealed partial class MainWindow : Window
                 AppLogger.Performance($"note-catalog ignored-save-events={_ignoredPortableSaveEvents} organizer={_definition.Id}");
             return;
         }
+        if (args is RenamedEventArgs { OldName: { } oldName, Name: { } newName } && sender is FileSystemWatcher watcher)
+            _catalogRenames.Enqueue((watcher, oldName, newName));
         Interlocked.Increment(ref _catalogRefreshGeneration);
         if (Interlocked.Exchange(ref _watcherRefreshPosted, 1) == 0)
         {
@@ -972,7 +987,7 @@ public sealed partial class MainWindow : Window
         IReadOnlyList<string> unsupportedNames = await unsupportedTask;
         cancellationToken.ThrowIfCancellationRequested();
         if (_closing || generation != Volatile.Read(ref _catalogRefreshGeneration)) return;
-        if (_dockIncomingGap is not null)
+        if (_dockIncomingGap is not null || _itemReorderSession is not null)
         {
             // A scan may have started before the external preview acquired the
             // layout. Defer its UI commit as well as newly requested scans.
@@ -989,6 +1004,17 @@ public sealed partial class MainWindow : Window
             .Concat(_definition.Notes.Select(OrganizerNoteRules.CreateItem))
             .Concat(containedOrganizers)
             .ToDictionary(item => item.RelativeName, StringComparer.OrdinalIgnoreCase);
+        // Follow rename pairs in arrival order, including multi-step and case-only renames.
+        bool renamed = false;
+        while (_catalogRenames.TryDequeue(out var change))
+        {
+            if (!ReferenceEquals(change.Watcher, _watcher)) continue;
+            int slot = _definition.ItemOrder.FindIndex(key => key.Equals(change.OldName, StringComparison.OrdinalIgnoreCase));
+            if (slot < 0 || _definition.ItemOrder.Any(key => key.Equals(change.NewName, StringComparison.OrdinalIgnoreCase)
+                && !key.Equals(change.OldName, StringComparison.OrdinalIgnoreCase))) continue;
+            _definition.ItemOrder[slot] = change.NewName;
+            renamed = true;
+        }
         var ordered = new List<WidgetItem>();
         foreach (string relativeName in _definition.ItemOrder)
         {
@@ -999,10 +1025,14 @@ public sealed partial class MainWindow : Window
         }
 
         ordered.AddRange(byName.Values.OrderBy(item => item.RelativeName, StringComparer.CurrentCultureIgnoreCase));
-        bool orderChanged = !_definition.ItemOrder.SequenceEqual(ordered.Select(item => item.RelativeName), StringComparer.OrdinalIgnoreCase);
+        List<string> nextOrder = ordered.Select(item => item.RelativeName).ToList();
+        List<int> nextRows = IsDock ? _definition.IconRowCounts : OrganizerIconRows.Reconcile(_definition, nextOrder);
+        bool changed = renamed || !_definition.ItemOrder.SequenceEqual(nextOrder, StringComparer.OrdinalIgnoreCase) ||
+            !_definition.IconRowCounts.SequenceEqual(nextRows);
         ReconcileCatalogItems(ordered);
-        _definition.ItemOrder = ordered.Select(item => item.RelativeName).ToList();
-        if (orderChanged)
+        _definition.IconRowCounts = nextRows;
+        _definition.ItemOrder = nextOrder;
+        if (changed)
         {
             await SaveStateAsync();
         }
@@ -1163,6 +1193,14 @@ public sealed partial class MainWindow : Window
         ConfigureItemsLayout();
     }
 
+    internal void RefreshIconRowMode()
+    {
+        if (_closing || IsDock || IsCompactList) return;
+        if (_itemReorderSession is not null) CancelItemReorder();
+        ResetHoverWave();
+        ConfigureItemsLayout();
+    }
+
     private void ConfigureItemsLayout(bool updateItems = true)
     {
         if (IsDock)
@@ -1184,12 +1222,10 @@ public sealed partial class MainWindow : Window
         ItemsRepeater.Height = double.NaN;
         (double cellWidth, double cellHeight) = GetItemCellSizeDip(width, height);
         ItemsRepeater.Width = width;
-        _gridLayout.MinItemWidth = cellWidth;
-        _gridLayout.MinItemHeight = cellHeight;
-        _gridLayout.MinColumnSpacing = GetItemLayoutGapDip();
-        _gridLayout.MinRowSpacing = GetItemLayoutGapDip();
-        _gridLayout.MaximumRowsOrColumns = GetItemLayoutColumnCount();
-        if (!ReferenceEquals(ItemsRepeater.Layout, _gridLayout)) ItemsRepeater.Layout = _gridLayout;
+        int columns = GetItemLayoutColumnCount();
+        List<int> rows = OrganizerIconRows.DisplayRows(_definition, IsCompactList || _host.State.GlobalSettings.AutoFillIconRows, columns, _items.Count);
+        _rowLayout.Configure(rows, columns, new Size(cellWidth, cellHeight), GetItemLayoutGapDip());
+        if (!ReferenceEquals(ItemsRepeater.Layout, _rowLayout)) ItemsRepeater.Layout = _rowLayout;
         if (updateItems) UpdateRealizedItems();
         ReconcileSmoothScrollBounds();
         InvalidateHoverGeometry();
@@ -2670,6 +2706,8 @@ public sealed partial class MainWindow : Window
         if (e.Handled) return; // A hover proxy also bubbles through ExpandedView's handled-events listener.
         _compactClicks.Reset();
         if (IsDock) { Dock_PointerWheelChanged(e); return; }
+        if (_itemReorderSession is { } drag && (drag.State != ItemDragState.InternalPreview ||
+            drag.IsNativeDragging || _itemDragPointerId == 0 || _shellPromotionPending)) return;
         Point pointerPosition = e.GetCurrentPoint(ItemsScrollView).Position;
         bool pointerInsideList = pointerPosition.X >= 0 && pointerPosition.Y >= 0 &&
             pointerPosition.X <= ItemsScrollView.ActualWidth &&
@@ -2696,6 +2734,14 @@ public sealed partial class MainWindow : Window
 
         PointerPoint point = e.GetCurrentPoint(ItemsScrollView);
         e.Handled = true;
+        if (action == OrganizerWheelAction.ScrollReorder)
+        {
+            Size viewport = GetItemsViewportSize();
+            (_, double cellHeight) = GetItemCellSizeDip(viewport.Width, viewport.Height);
+            _itemDragScroll = OrganizerScrollMath.ConsumeWheelDelta(_itemDragScroll, point.Properties.MouseWheelDelta,
+                cellHeight + GetItemLayoutGapDip(), ItemsScrollView.ScrollableHeight);
+            return;
+        }
         if (action is OrganizerWheelAction.ScrollCompactList or OrganizerWheelAction.ScrollGrid)
         {
             if (action == OrganizerWheelAction.ScrollCompactList) UpdateCompactScrollHover(pointerPosition);
@@ -3119,6 +3165,7 @@ public sealed partial class MainWindow : Window
 
     private IntPtr GestureWindowProc(IntPtr hWnd, uint message, UIntPtr wParam, IntPtr lParam, UIntPtr subclassId, IntPtr referenceData)
     {
+        if (SystemAppearanceWatcher.IsAppearanceMessage(message)) _systemAppearance.QueueCheck();
         if (message is 0x02E0 or 0x007E) // WM_DPICHANGED / WM_DISPLAYCHANGE
         {
             ResetHoverWave();
@@ -4124,6 +4171,7 @@ public sealed partial class MainWindow : Window
         _itemDragPointerId = e.Pointer.PointerId;
         _itemDragPointerType = e.Pointer.PointerDeviceType;
         _itemDragLastPointerPoint = e.GetCurrentPoint(host);
+        _itemDragPointerInWindow = e.GetCurrentPoint(WindowRoot).Position;
         if (e.Pointer.PointerDeviceType == PointerDeviceType.Mouse)
             UpdateCompactRowHighlight(e.GetCurrentPoint(ItemsScrollView).Position);
         // Keep native gesture recognition on the element that received the press.
@@ -4146,6 +4194,7 @@ public sealed partial class MainWindow : Window
     {
         if (_itemReorderSession is not { } session || e.Pointer.PointerId != _itemDragPointerId) return;
         if (sender is Border host) _itemDragLastPointerPoint = e.GetCurrentPoint(host);
+        _itemDragPointerInWindow = e.GetCurrentPoint(WindowRoot).Position;
         Point pointer = _itemDragPointerType == PointerDeviceType.Mouse && TryGetMousePointerContent(out Point mousePointer)
             ? mousePointer
             : e.GetCurrentPoint(ItemsRepeater).Position;
@@ -4200,6 +4249,8 @@ public sealed partial class MainWindow : Window
         if (session.IsActive && !session.IsNativeDragging)
         {
             e.Handled = true;
+            if (!IsDock && !IsCompactList && _itemDragHost is { } host)
+                UpdateOrganizerDragTarget(session, e.GetCurrentPoint(ItemsRepeater).Position, host.Width, host.Height);
             await CommitItemReorderAsync(session);
         }
         else if (!session.IsNativeDragging)
@@ -4274,6 +4325,11 @@ public sealed partial class MainWindow : Window
         }
         ResetHoverWave();
         BeginNoteDragPreparation(session);
+        StopSmoothScrollRendering();
+        double offset = ItemsScrollView.VerticalOffset;
+        _itemDragScroll = new(offset, offset, 0, 0);
+        if (IsCompactList) _compactListScrollState = _itemDragScroll;
+        else _gridScrollState = _itemDragScroll;
         _itemTouchHoldTimer.Stop();
         ResetGapTransitionState();
         _itemReorderUsesAnimations = UseCustomAnimations;
@@ -4345,10 +4401,7 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            Point contentOrigin = ItemsRepeater.TransformToVisual(WindowRoot).TransformPoint(new Point());
-            pointerInWindow = new(
-                contentOrigin.X + session.LatestPointerContent.X,
-                contentOrigin.Y + session.LatestPointerContent.Y);
+            pointerInWindow = _itemDragPointerInWindow;
             NativeMethods.POINT origin = default;
             if (NativeMethods.ClientToScreen(_hwnd, ref origin) &&
                 Volatile.Read(ref _itemIconDragBoundary)?.IsFullyOutside(
@@ -4359,17 +4412,9 @@ public sealed partial class MainWindow : Window
             }
         }
         Point pointerInViewport = new(pointerInWindow.X - viewportOrigin.X, pointerInWindow.Y - viewportOrigin.Y);
-        ApplyItemDragAutoScroll(pointerInViewport.Y, seconds);
-        Point pointerContent = new(
-            pointerInViewport.X + ItemsScrollView.HorizontalOffset,
-            pointerInViewport.Y + ItemsScrollView.VerticalOffset);
-        session.UpdateTarget(
-            pointerContent,
-            Math.Max(1, _itemDragHost.Width),
-            Math.Max(1, _itemDragHost.Height),
-            GetItemLayoutGapDip(),
-            GetItemLayoutColumnCount(),
-            _items.Count);
+        ApplyItemDragAutoScroll(pointerInViewport, seconds);
+        Point pointerContent = WindowRoot.TransformToVisual(ItemsRepeater).TransformPoint(pointerInWindow);
+        UpdateOrganizerDragTarget(session, pointerContent, Math.Max(1, _itemDragHost.Width), Math.Max(1, _itemDragHost.Height));
         bool transitionRunning = StepGapTransition(session, now);
         if (!transitionRunning) EnsureGapPreviewMaterialized(session);
 
@@ -4595,22 +4640,39 @@ public sealed partial class MainWindow : Window
         AppLogger.Performance("item-drag-hook shutdown queued");
     }
 
-    private void ApplyItemDragAutoScroll(double pointerY, double seconds)
+    private void ApplyItemDragAutoScroll(Point pointerInViewport, double seconds)
     {
-        if (ItemsScrollView.ScrollableHeight <= .5) return;
-        const double edge = 48;
-        double penetration = pointerY < edge
-            ? Math.Clamp((edge - pointerY) / edge, 0, 1)
-            : pointerY > ItemsScrollView.ActualHeight - edge
-                ? Math.Clamp((pointerY - (ItemsScrollView.ActualHeight - edge)) / edge, 0, 1)
-                : 0;
-        if (penetration <= 0 || seconds <= 0) return;
-        double direction = pointerY < edge ? -1 : 1;
-        if (direction < 0 && ItemsScrollView.VerticalOffset <= .5 ||
-            direction > 0 && ItemsScrollView.VerticalOffset >= ItemsScrollView.ScrollableHeight - .5) return;
-        double speed = 120 + 600 * penetration * penetration;
-        ItemsScrollView.ScrollBy(0, direction * speed * seconds,
+        if (IsDock || _itemDragPointerId == 0 || _shellPromotionPending || _shellDragActive) return;
+        double delta = pointerInViewport.X >= 0 && pointerInViewport.X <= ItemsScrollView.ActualWidth
+            ? OrganizerScrollMath.DragEdgeDelta(pointerInViewport.Y, ItemsScrollView.ActualHeight, seconds)
+            : 0;
+        _itemDragScroll = OrganizerScrollMath.QueueTarget(_itemDragScroll, delta, ItemsScrollView.ScrollableHeight);
+        if (_itemDragScroll.TargetOffset == _itemDragScroll.CurrentOffset) return;
+        _itemDragScroll = _itemDragScroll with { CurrentOffset = _itemDragScroll.TargetOffset };
+        ItemsScrollView.ScrollTo(0, _itemDragScroll.TargetOffset,
             new ScrollingScrollOptions(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
+    }
+
+    private void UpdateOrganizerDragTarget(ItemReorderSession session, Point point, double width, double height)
+    {
+        double gap = GetItemLayoutGapDip();
+        int columns = GetItemLayoutColumnCount();
+        if (IsDock || IsCompactList || _host.State.GlobalSettings.AutoFillIconRows)
+        {
+            session.UpdateTarget(point, width, height, gap, columns, _items.Count);
+            return;
+        }
+        if (_items.Count == 0 || session.IsSealed) return;
+        IconRowTarget target = IconRowLayout.HitTest(_rowLayout.Rows, point.X, point.Y, width, height, gap);
+        session.UpdateRowTarget(point, _rowLayout.Rows, columns, target);
+        if (!target.NewRow) { RowInsertionLine.Visibility = Visibility.Collapsed; return; }
+        Point origin = ItemsRepeater.TransformToVisual(ExpandedContentLayer).TransformPoint(new Point());
+        Point viewport = ItemsScrollView.TransformToVisual(ExpandedContentLayer).TransformPoint(new Point());
+        double y = Math.Clamp(origin.Y + target.Row * (height + gap) - gap / 2,
+            viewport.Y, viewport.Y + Math.Max(0, ItemsScrollView.ActualHeight - 2));
+        RowInsertionLine.Width = ItemsScrollView.ActualWidth;
+        RowInsertionLine.Translation = new Vector3((float)origin.X, (float)y, 0);
+        RowInsertionLine.Visibility = Visibility.Visible;
     }
 
     private void ApplyAllProvisionalItemVisuals(bool animate)
@@ -4849,6 +4911,7 @@ public sealed partial class MainWindow : Window
 
     private void ResetGapTransitionState()
     {
+        RowInsertionLine.Visibility = Visibility.Collapsed;
         _gapTransitionFrom = null;
         _gapTransitionTo = null;
         _gapTransitionStartedAt = 0;
@@ -4893,7 +4956,8 @@ public sealed partial class MainWindow : Window
         if (nativeDrop) MaterializeNativeSourceAtTarget(session);
         Dictionary<string, Point>? visualPositions = _itemReorderUsesAnimations ? CaptureRealizedItemPositions() : null;
         ResetItemDragVisuals();
-        bool changed = false;
+        List<int>? previewRows = session.PreviewRows;
+        bool changed = previewRows is not null && !_definition.IconRowCounts.SequenceEqual(previewRows);
         for (int original = 0; original < visualIndices.Length; original++)
         {
             if (visualIndices[original] == original) continue;
@@ -4911,6 +4975,8 @@ public sealed partial class MainWindow : Window
             if (desiredItems.Any(item => item is null)) throw new InvalidOperationException("The gap preview is not a complete permutation.");
             WidgetItem[] desired = desiredItems.Select(item => item!).ToArray();
             List<string> previousOrder = _definition.ItemOrder.ToList();
+            List<int> previousRows = _definition.IconRowCounts;
+            if (previewRows is not null) _definition.IconRowCounts = previewRows;
             _definition.ItemOrder = desired.Select(item => item.RelativeName).ToList();
             try
             {
@@ -4919,6 +4985,7 @@ public sealed partial class MainWindow : Window
             catch
             {
                 _definition.ItemOrder = previousOrder;
+                _definition.IconRowCounts = previousRows;
                 throw;
             }
             var realizedSlots = new Border?[originalItems.Length];
@@ -4965,6 +5032,7 @@ public sealed partial class MainWindow : Window
                     if (!canRotateRealizedContent && affectedSlots.Contains(slot)) PrepareReorderedItemIdentity(host, item);
                 }
                 _animationTrace?.Metrics.RecordWork(AnimationTraceWork.UpdateLayout);
+                if (previewRows is not null) ConfigureItemsLayout(updateItems: false);
                 ItemsRepeater.UpdateLayout();
                 if (visualPositions is not null) ApplyFlipFromCapturedPositions(visualPositions);
             }
@@ -5857,13 +5925,7 @@ public sealed partial class MainWindow : Window
     private void UpdateInternalOleTarget(DragEventArgs e, ItemReorderSession session)
     {
         session.MarkInternalPreview();
-        session.UpdateTarget(
-            e.GetPosition(ItemsRepeater),
-            _nativeDragCellWidth,
-            _nativeDragCellHeight,
-            GetItemLayoutGapDip(),
-            GetItemLayoutColumnCount(),
-            _items.Count);
+        UpdateOrganizerDragTarget(session, e.GetPosition(ItemsRepeater), _nativeDragCellWidth, _nativeDragCellHeight);
         _ = StartGapTransitionIfReady(session, Stopwatch.GetTimestamp());
         StartNativeItemMotionRendering();
     }
@@ -6289,6 +6351,43 @@ public sealed partial class MainWindow : Window
         ResetStationPointerDelay();
     }
 
+    private IconRowTarget? IncomingFileRowTarget(DragEventArgs e)
+    {
+        if (!_expanded || IsDock || IsCompactList) return null;
+        Point viewport = e.GetPosition(ItemsScrollView);
+        if (viewport.X < 0 || viewport.Y < 0 || viewport.X > ItemsScrollView.ActualWidth ||
+            viewport.Y > ItemsScrollView.ActualHeight) return null;
+        Size size = GetItemsViewportSize();
+        var (width, height) = GetItemCellSizeDip(size.Width, size.Height);
+        Point point = e.GetPosition(ItemsRepeater);
+        return IconRowLayout.HitTest(_rowLayout.Rows, point.X, point.Y, width, height, GetItemLayoutGapDip());
+    }
+
+    private async Task InsertIncomingIconFilesAsync(IconRowTarget target, int? packedIndex, IReadOnlyList<TransferOutcome> outcomes)
+    {
+        string[] names = DockGapAnchor.SuccessfulNames(outcomes).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (names.Length == 0) return;
+        var incoming = names.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var oldOrder = _definition.ItemOrder;
+        var oldRows = _definition.IconRowCounts;
+        var order = oldOrder.Where(key => !incoming.Contains(key)).ToList();
+        var rows = OrganizerIconRows.Reconcile(_definition, order);
+        int columns = _definition.Layout.Columns;
+        IconRowEdit edit = packedIndex is int index
+            ? new IconRowEdit(Math.Clamp(index, 0, order.Count), IconRowLayout.Normalize(rows, columns, order.Count + names.Length))
+            : IconRowLayout.Insert(rows, columns, target, names.Length);
+        order.InsertRange(edit.Index, names);
+        _definition.ItemOrder = order;
+        _definition.IconRowCounts = edit.Rows;
+        try { await _host.SaveStateAsync(); }
+        catch
+        {
+            _definition.ItemOrder = oldOrder;
+            _definition.IconRowCounts = oldRows;
+            throw;
+        }
+    }
+
     private async Task ImportFromDragAsync(DragEventArgs e, Action finishDeferral)
     {
         using var diagnostic = AppLogger.Begin(DiagnosticArea.Drop);
@@ -6304,6 +6403,9 @@ public sealed partial class MainWindow : Window
         bool move = operation == DataPackageOperation.Move;
 
         if (IsDock && _dockIncomingGap?.Frozen == true) return;
+        IconRowTarget? iconTarget = IncomingFileRowTarget(e);
+        int? packedIndex = _host.State.GlobalSettings.AutoFillIconRows && iconTarget is { } hit
+            ? _rowLayout.Rows.Take(hit.Row).Sum() + hit.Column : null;
         DockGapAnchor? dockAnchor = FreezeDockFileGap(e, out DockIncomingGap? dockToken);
         try
         {
@@ -6391,12 +6493,13 @@ public sealed partial class MainWindow : Window
                 try { RebindMovedPortableWindows(outcomes); }
                 finally { finishDeferral(); }
                 if (_closing) return;
+                if (iconTarget is { } target) await InsertIncomingIconFilesAsync(target, packedIndex, outcomes);
                 if (dockAnchor is not null) await CommitDockIncomingFilesAsync(dockAnchor, outcomes);
                 if (dockToken is not null) ClearIncomingDockGap(dockToken, refresh: false);
                 StartWatcher();
                 await RefreshCatalogAsync(notifyUnsupported: false);
                 await WaitForNextRenderAsync(CancellationToken.None);
-                if (!IsDock) ScrollToEnd(animated: true);
+                if (!IsDock && iconTarget is null) ScrollToEnd(animated: true);
 
                 TransferOutcome[] warnings = outcomes.Where(outcome => move
                     ? outcome.Status is not (TransferStatus.Moved or TransferStatus.ShortcutCreated or TransferStatus.Cancelled)
@@ -7176,8 +7279,12 @@ public sealed partial class MainWindow : Window
         (IsDock ? DockContainsScreenPoint(point) : DragBoundaryMath.Contains(bounds, point) ||
             HasHoverPresentation && TryScreenToHoverViewport(point, out Point hoverPoint) && HoverItemAtViewportPoint(hoverPoint) is not null);
 
-    internal bool TryGetOrganizerDropIndex(NativeMethods.POINT screenPoint, out int insertionIndex)
+    internal bool TryGetOrganizerDropIndex(NativeMethods.POINT screenPoint, out int insertionIndex) =>
+        TryGetOrganizerDropIndex(screenPoint, out insertionIndex, out _);
+
+    internal bool TryGetOrganizerDropIndex(NativeMethods.POINT screenPoint, out int insertionIndex, out IconRowTarget? rowTarget)
     {
+        rowTarget = null;
         insertionIndex = 0;
         if (_animating || !ContainsScreenPoint(screenPoint)) return false;
         NativeMethods.POINT clientPoint = screenPoint;
@@ -7217,7 +7324,7 @@ public sealed partial class MainWindow : Window
         Size viewport = GetItemsViewportSize();
         (double width, double height) = GetItemCellSizeDip(viewport.Width, viewport.Height);
         double gap = GetItemLayoutGapDip();
-        if (_definition.ExpandedContentMode == OrganizerExpandedContentMode.CompactList)
+        if (IsCompactList)
         {
             int compactRow = Math.Max(0, (int)Math.Floor(Math.Max(0, y) / Math.Max(1, height + gap)));
             int compactCandidate = compactRow;
@@ -7226,12 +7333,9 @@ public sealed partial class MainWindow : Window
             return true;
         }
 
-        int columns = GetItemLayoutColumnCount();
-        int column = Math.Clamp((int)Math.Floor(Math.Max(0, x) / Math.Max(1, width + gap)), 0, columns - 1);
-        int row = Math.Max(0, (int)Math.Floor(Math.Max(0, y) / Math.Max(1, height + gap)));
-        int candidate = row * columns + column;
-        if (x - column * (width + gap) > width / 2) candidate++;
-        insertionIndex = Math.Clamp(candidate, 0, _items.Count);
+        var target = IconRowLayout.HitTest(_rowLayout.Rows, x, y, width, height, gap);
+        rowTarget = _host.State.GlobalSettings.AutoFillIconRows ? null : target;
+        insertionIndex = _rowLayout.Rows.Take(target.Row).Sum() + target.Column;
         return true;
     }
 
@@ -7538,19 +7642,29 @@ public sealed partial class MainWindow : Window
     {
         _animationTrace?.Metrics.RecordWork(AnimationTraceWork.ThemeApplication);
         ThemeValues theme = _host.State.GlobalSettings.GetTheme(OrganizerKinds.ThemeFor(_definition.PlacementMode));
+        bool highContrast = _glassHighContrast = _accessibilitySettings.HighContrast;
+        if (highContrast)
+        {
+            var background = _uiSettings.UIElementColor(UIElementType.Window);
+            _glassContrastText = _uiSettings.UIElementColor(UIElementType.WindowText);
+            uint argb = 0xff000000u | (uint)background.R << 16 | (uint)background.G << 8 | background.B;
+            // This is a rendering override. FullyTransparent still takes precedence for the Dock.
+            theme = theme with { ColorArgb = argb, SolidColorMode = true, SolidOpacity = 1 };
+        }
         bool dark = ThemePalette.IsDark(theme);
         WindowRoot.RequestedTheme = dark ? ElementTheme.Dark : ElementTheme.Light;
-        if (_dockDotBrush is not null) _dockDotBrush.Color = dark ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black;
-        bool useEffects = _uiSettings.AdvancedEffectsEnabled;
+        if (_dockDotBrush is not null)
+            _dockDotBrush.Color = highContrast ? _glassContrastText : dark ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black;
+        bool useEffects = _uiSettings.AdvancedEffectsEnabled && !highContrast;
         _compactBackdrop.SetTheme(theme, useEffects);
         _expandedBackdrop.SetTheme(theme, useEffects);
         _compactSurface.SetTheme(theme, useEffects);
         _expandedSurface.SetTheme(theme, useEffects);
         _compactEdgeSurface.SetTheme(theme, useEffects);
         _expandedEdgeSurface.SetTheme(theme, useEffects);
-        _compactEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled);
-        _expandedEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled);
-        var foregroundColor = ThemePalette.ForegroundColor(theme);
+        _compactEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled && !highContrast);
+        _expandedEdgeSurface.SetEnabled(_host.State.GlobalSettings.EdgeGlowEnabled && !highContrast);
+        var foregroundColor = highContrast ? _glassContrastText : ThemePalette.ForegroundColor(theme);
         var foreground = new SolidColorBrush(foregroundColor);
         DockEmptyAddIcon.Foreground = foreground;
         SolidColorBrush organizerText = CreateOrganizerTextBrush();
@@ -7560,7 +7674,6 @@ public sealed partial class MainWindow : Window
         _pressedItemBrush.Color = ColorHelper.FromArgb(38, foregroundColor.R, foregroundColor.G, foregroundColor.B);
         _collapseHoverBrush.Color = ColorHelper.FromArgb(26, foregroundColor.R, foregroundColor.G, foregroundColor.B);
         _collapsePressedBrush.Color = ColorHelper.FromArgb(46, foregroundColor.R, foregroundColor.G, foregroundColor.B);
-        bool highContrast = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast;
         CompactWarningBadge.Background = new SolidColorBrush(highContrast
             ? _uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Accent)
             : ColorHelper.FromArgb(184, 29, 35, 43));
@@ -7576,6 +7689,7 @@ public sealed partial class MainWindow : Window
 
     private SolidColorBrush CreateOrganizerTextBrush()
     {
+        if (_glassHighContrast) return new(_glassContrastText);
         ThemeValues theme = _host.State.GlobalSettings.GetTheme(OrganizerKinds.ThemeFor(_definition.PlacementMode));
         return new(ThemePalette.ResolveOrganizerTextColor(
             _host.State.GlobalSettings.OrganizerTextColor,

@@ -14,6 +14,17 @@ internal static class OrganizerScrollMath
     internal const double ResponseSeconds = .16;
     internal const int WheelDeltaPerLine = 120;
 
+    internal static double DragEdgeDelta(double pointerY, double viewportHeight, double seconds)
+    {
+        double edge = Math.Min(48, viewportHeight / 2);
+        if (edge <= 0 || seconds <= 0) return 0;
+        double fromEdge = Math.Min(pointerY, viewportHeight - pointerY);
+        if (fromEdge >= edge) return 0;
+        double penetration = Math.Clamp(1 - fromEdge / edge, 0, 1);
+        double direction = pointerY < viewportHeight / 2 ? -1 : 1;
+        return direction * (120 + 600 * penetration * penetration) * seconds;
+    }
+
     internal static SmoothScrollState ConsumeWheelDelta(
         SmoothScrollState state,
         int wheelDelta,

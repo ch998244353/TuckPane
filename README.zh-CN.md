@@ -66,16 +66,17 @@ TuckPane 是一款适用于 Windows 10 22H2 与 Windows 11 x64 的桌面文件�
 - 右键可打开设置、复制空白窗口、切换模式、重命名、打开收纳目录或安全删除窗口；通用设置还可分别统一悬浮/定位模式的底部名称大小。
 - 支持浅色、灰色、纯浅色、纯深色、白色磨砂和深色磨砂主题，以及 English、简体中文、日本語界面。
 - 启动后只驻留系统托盘。关闭设置窗口只会隐藏；只有托盘菜单中的“退出”会结束 TuckPane。
+- 图标模式下可把项目拖到行间或末行下方另起一行。在「设置 → 显示 → 自动填满每行」打开总开关后，普通收纳窗和中转站都会逐行填满。关闭后恢复各窗口保存的手动分行。
 
 ## 下载
 
-当前版本：**4.2.12**。完整发布说明请查看 [4.2.12 Release](https://github.com/ch998244353/TuckPane/releases/tag/v4.2.12)。
+当前版本：**4.2.16**。完整发布说明请查看 [4.2.16 Release](https://github.com/ch998244353/TuckPane/releases/tag/v4.2.16)。
 
-- [TuckPane-4.2.12-win-x64-setup.exe](https://github.com/ch998244353/TuckPane/releases/download/v4.2.12/TuckPane-4.2.12-win-x64-setup.exe)：推荐使用的当前用户离线安装器，创建开始菜单和桌面快捷方式。
-- [TuckPane-4.2.12-win-x64-portable.zip](https://github.com/ch998244353/TuckPane/releases/download/v4.2.12/TuckPane-4.2.12-win-x64-portable.zip)：完整解压后双击 `TuckPane.exe`。也可通过 `00-启动 TuckPane.exe` 启动同目录主程序；请保留完整文件，不要重命名 `TuckPane.exe`。
-- [SHA256SUMS.txt](https://github.com/ch998244353/TuckPane/releases/download/v4.2.12/SHA256SUMS.txt)：两个下载文件的 SHA-256 校验值。
+- [TuckPane-4.2.16-win-x64-setup.exe](https://github.com/ch998244353/TuckPane/releases/download/v4.2.16/TuckPane-4.2.16-win-x64-setup.exe)：推荐使用的当前用户离线安装器，创建开始菜单和桌面快捷方式。
+- [TuckPane-4.2.16-win-x64-portable.zip](https://github.com/ch998244353/TuckPane/releases/download/v4.2.16/TuckPane-4.2.16-win-x64-portable.zip)：完整解压后双击 `TuckPane.exe`。也可通过 `00-启动 TuckPane.exe` 启动同目录主程序；请保留完整文件，不要重命名 `TuckPane.exe`。
+- [SHA256SUMS.txt](https://github.com/ch998244353/TuckPane/releases/download/v4.2.16/SHA256SUMS.txt)：两个下载文件的 SHA-256 校验值。
 
-3.0.2 尚无应用内更新入口：首次升级请运行 4.2.12 安装包覆盖原安装，或把便携包解压到独立程序目录；原有数据根继续保留。使用 4.2.12 后，可通过“设置 → 更新”获取后续版本。
+3.0.2 尚无应用内更新入口：首次升级请运行 4.2.16 安装包覆盖原安装，或把便携包解压到独立程序目录；原有数据根继续保留。使用 4.2.16 后，可通过“设置 → 更新”获取后续版本。
 
 两种版本均自带 .NET 与 Windows App SDK。离线安装器还携带 Microsoft Edge WebView2 Runtime，并仅在系统缺失时自动安装；便携版使用电脑上已有的 WebView2 Runtime，默认不注册文件夹和桌面右键菜单，手动开启后会写入当前用户注册表。当前 TuckPane 安装器未进行代码签名，Windows SmartScreen 可能显示“未知发布者”；需要时可使用 `SHA256SUMS.txt` 校验下载文件。
 

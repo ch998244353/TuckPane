@@ -66,16 +66,17 @@ Drag files and folders directly into a pane, reveal a Station from a monitor edg
 - Open settings, duplicate an empty pane, switch compatible modes, rename, open its storage directory, or safely delete it. General settings can also unify bottom-name size separately for Floating and Positioned panes.
 - Choose Light, Gray, Solid Light, Solid Dark, Frosted Light, or Frosted Dark themes, with English, Simplified Chinese, and Japanese interfaces.
 - Run silently from the system tray. Closing the settings window hides it; only **Exit** in the tray menu terminates TuckPane.
+- In icon mode, drag between rows to start a new row. Use **Settings → Display → Automatically fill each icon row** to pack icons across organizer windows and stations. Turn it off to restore saved row breaks.
 
 ## Download
 
-Current version: **4.2.12**. See the [4.2.12 release](https://github.com/ch998244353/TuckPane/releases/tag/v4.2.12) for the complete release notes.
+Current version: **4.2.16**. See the [4.2.16 release](https://github.com/ch998244353/TuckPane/releases/tag/v4.2.16) for the complete release notes.
 
-- [TuckPane-4.2.12-win-x64-setup.exe](https://github.com/ch998244353/TuckPane/releases/download/v4.2.12/TuckPane-4.2.12-win-x64-setup.exe): recommended per-user offline installer with Start menu and desktop shortcuts.
-- [TuckPane-4.2.12-win-x64-portable.zip](https://github.com/ch998244353/TuckPane/releases/download/v4.2.12/TuckPane-4.2.12-win-x64-portable.zip): extract the entire archive and run `TuckPane.exe`. The `00-启动 TuckPane.exe` launcher also starts that executable; keep all files together and do not rename `TuckPane.exe`.
-- [SHA256SUMS.txt](https://github.com/ch998244353/TuckPane/releases/download/v4.2.12/SHA256SUMS.txt): SHA-256 checksums for both downloads.
+- [TuckPane-4.2.16-win-x64-setup.exe](https://github.com/ch998244353/TuckPane/releases/download/v4.2.16/TuckPane-4.2.16-win-x64-setup.exe): recommended per-user offline installer with Start menu and desktop shortcuts.
+- [TuckPane-4.2.16-win-x64-portable.zip](https://github.com/ch998244353/TuckPane/releases/download/v4.2.16/TuckPane-4.2.16-win-x64-portable.zip): extract the entire archive and run `TuckPane.exe`. The `00-启动 TuckPane.exe` launcher also starts that executable; keep all files together and do not rename `TuckPane.exe`.
+- [SHA256SUMS.txt](https://github.com/ch998244353/TuckPane/releases/download/v4.2.16/SHA256SUMS.txt): SHA-256 checksums for both downloads.
 
-Version 3.0.2 has no in-app updater: install 4.2.12 over the existing installation, or extract the portable package into a separate program directory. Existing data roots are retained. Once on 4.2.12, use **Settings → Updates** for future releases.
+Version 3.0.2 has no in-app updater: install 4.2.16 over the existing installation, or extract the portable package into a separate program directory. Existing data roots are retained. Once on 4.2.16, use **Settings → Updates** for future releases.
 
 Both packages include .NET and the Windows App SDK. The offline installer also carries the Microsoft Edge WebView2 Runtime and installs it only when missing; the portable package uses an existing WebView2 Runtime and leaves the folder and desktop context menus unregistered until enabled. Enabling these menus writes to the current user's registry. The TuckPane installer is currently unsigned, so Windows SmartScreen may show an “Unknown publisher” warning; verify the download with `SHA256SUMS.txt` when needed.
 

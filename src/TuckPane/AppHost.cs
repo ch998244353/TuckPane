@@ -320,6 +320,7 @@ public sealed partial class AppHost : IDisposable
         var draft = OrganizerInteractionMath.CopySettings(source, name);
         draft.Notes.Clear();
         draft.ItemOrder.Clear();
+        draft.IconRowCounts.Clear();
         draft.ContainerOrganizerId = null;
         return await CreateOrganizerAsync(draft);
     }
@@ -360,11 +361,13 @@ public sealed partial class AppHost : IDisposable
         };
         string path = await _noteStore.CreateTodoAsync(storagePath, "新建待办", document);
         string relativeName = Path.GetFileName(path);
+        List<int> previousRows = organizer.IconRowCounts;
         organizer.ItemOrder.Add(relativeName);
         try { await SaveStateAsync(); }
         catch
         {
             organizer.ItemOrder.RemoveAll(key => key.Equals(relativeName, StringComparison.OrdinalIgnoreCase));
+            organizer.IconRowCounts = previousRows;
             try { File.Delete(path); }
             catch (Exception cleanupError) { AppLogger.Error($"无法回滚新建待办：{path}", cleanupError); }
             throw;
@@ -389,11 +392,13 @@ public sealed partial class AppHost : IDisposable
         Directory.CreateDirectory(storagePath);
         string path = await noteStore.CreatePortableAsync(storagePath, name, document);
         string relativeName = Path.GetFileName(path);
+        List<int> previousRows = organizer.IconRowCounts;
         organizer.ItemOrder.Add(relativeName);
         try { await saveStateAsync(); }
         catch
         {
             organizer.ItemOrder.RemoveAll(key => key.Equals(relativeName, StringComparison.OrdinalIgnoreCase));
+            organizer.IconRowCounts = previousRows;
             try { File.Delete(path); }
             catch (Exception cleanupError) { AppLogger.Error($"无法回滚新建便签：{path}", cleanupError); }
             throw;
@@ -439,6 +444,7 @@ public sealed partial class AppHost : IDisposable
                 createdPath = await noteStore.CreatePortableAsync(storagePath, note.Name, ToPortableDocument(note, document));
                 _ = await noteStore.LoadPortableAsync(createdPath);
                 string relativeName = Path.GetFileName(createdPath);
+                List<int> previousRows = organizer.IconRowCounts;
                 organizer.Notes.Remove(note);
                 organizer.ItemOrder.RemoveAll(key => key.Equals(legacyKey, StringComparison.OrdinalIgnoreCase));
                 if (orderIndex >= 0) organizer.ItemOrder.Insert(Math.Min(orderIndex, organizer.ItemOrder.Count), relativeName);
@@ -450,6 +456,7 @@ public sealed partial class AppHost : IDisposable
                 catch
                 {
                     organizer.Notes.Insert(Math.Min(noteIndex, organizer.Notes.Count), note);
+                    organizer.IconRowCounts = previousRows;
                     organizer.ItemOrder.RemoveAll(key => key.Equals(relativeName, StringComparison.OrdinalIgnoreCase));
                     if (orderIndex >= 0) organizer.ItemOrder.Insert(Math.Min(orderIndex, organizer.ItemOrder.Count), legacyKey);
                     throw;
@@ -881,7 +888,11 @@ public sealed partial class AppHost : IDisposable
         if (_noteWindows.Remove(noteId, out NoteWindow? noteWindow)) await noteWindow.ClosePermanentlyAsync();
         _trayHiddenNotes.Remove(noteId);
         organizer.Notes.RemoveAt(index);
-        organizer.ItemOrder.RemoveAll(key => key.Equals(OrganizerNoteRules.ItemKey(noteId), StringComparison.OrdinalIgnoreCase));
+        List<int> previousRows = organizer.IconRowCounts;
+        if (orderIndex >= 0)
+        {
+            OrganizerIconRows.RemoveItem(organizer, OrganizerNoteRules.ItemKey(noteId));
+        }
         try
         {
             await SaveStateAsync();
@@ -889,7 +900,8 @@ public sealed partial class AppHost : IDisposable
         catch
         {
             organizer.Notes.Insert(index, note);
-            organizer.ItemOrder.Insert(orderIndex < 0 ? organizer.ItemOrder.Count : orderIndex, OrganizerNoteRules.ItemKey(noteId));
+            if (orderIndex >= 0) organizer.ItemOrder.Insert(orderIndex, OrganizerNoteRules.ItemKey(noteId));
+            organizer.IconRowCounts = previousRows;
             throw;
         }
         try { await _noteStore.DeleteAsync(noteId); }
@@ -1537,7 +1549,8 @@ public sealed partial class AppHost : IDisposable
         double blurStrength,
         bool solidColorMode = false,
         double? solidOpacity = null,
-        bool? fullyTransparent = null)
+        bool? fullyTransparent = null,
+        GlassMaterialSettings? material = null)
     {
         GlobalSettings settings = State.GlobalSettings;
         ThemeValues previous = settings.GetTheme(target);
@@ -1548,8 +1561,9 @@ public sealed partial class AppHost : IDisposable
             blurStrength,
             solidColorMode,
             solidOpacity,
-            fullyTransparent);
-        if (settings.GetTheme(target) == theme) return;
+            fullyTransparent,
+            material);
+        if (previous == theme) return;
         settings.SetTheme(target, theme);
         ThemeChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -1819,10 +1833,10 @@ public sealed partial class AppHost : IDisposable
         {
             if (target.OrganizerId == organizer.Id ||
                 OrganizerContainment.IsAncestor(State.Organizers, organizer.Id, target.OrganizerId)) continue;
-            if (!target.TryGetOrganizerDropIndex(dropPoint, out int insertionIndex)) continue;
+            if (!target.TryGetOrganizerDropIndex(dropPoint, out int insertionIndex, out IconRowTarget? rowTarget)) continue;
             using var receivingDrop = target.HoldIncomingDrop();
             target.ClearIncomingDockGap(refresh: false);
-            try { await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex); }
+            try { await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex, rowTarget); }
             catch { await target.RefreshContainedOrganizerItemsAsync(); throw; }
             return true;
         }
@@ -1837,10 +1851,10 @@ public sealed partial class AppHost : IDisposable
         {
             if (target.OrganizerId == organizer.Id ||
                 OrganizerContainment.IsAncestor(State.Organizers, organizer.Id, target.OrganizerId)) continue;
-            if (!target.TryGetOrganizerDropIndex(dropPoint, out int insertionIndex)) continue;
+            if (!target.TryGetOrganizerDropIndex(dropPoint, out int insertionIndex, out IconRowTarget? rowTarget)) continue;
             using var receivingDrop = target.HoldIncomingDrop();
             target.ClearIncomingDockGap(refresh: false);
-            try { await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex); }
+            try { await MoveOrganizerToContainerAsync(organizer, target.OrganizerId, insertionIndex, rowTarget); }
             catch { await target.RefreshContainedOrganizerItemsAsync(); throw; }
             return null;
         }
@@ -1947,14 +1961,15 @@ public sealed partial class AppHost : IDisposable
     private async Task MoveOrganizerToContainerAsync(
         OrganizerDefinition organizer,
         Guid containerId,
-        int insertionIndex)
+        int insertionIndex,
+        IconRowTarget? rowTarget)
     {
         OrganizerContainmentSnapshot snapshot = OrganizerContainment.Capture(State.Organizers);
         OrganizerContainmentMoveResult move = OrganizerContainment.TryMove(
             State.Organizers,
             organizer.Id,
             containerId,
-            insertionIndex);
+            insertionIndex, rowTarget);
         if (!move.Succeeded) throw new InvalidOperationException(GetContainmentFailureMessage(move.Failure));
         try
         {

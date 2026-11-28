@@ -394,6 +394,7 @@
   <data name="DesktopMenuOtherCopy" xml:space="preserve"><value>菜单当前关联另一份 TuckPane。开启或修复将改为使用当前程序。</value></data>
   <data name="DesktopMenuErrorTitle" xml:space="preserve"><value>无法更新文件夹右键菜单</value></data>
   <data name="NavMenus" xml:space="preserve"><value>右键菜单</value></data>
+  <data name="AutoFillIconRowsTitle" xml:space="preserve"><value>自动填满每行</value></data>
   <data name="HideCollapseIndicatorTitle" xml:space="preserve"><value>隐藏右上角收缩标志</value></data>
   <data name="CreateInCategory" xml:space="preserve"><value>新建当前类别的窗口</value></data>
   <data name="DiagnosticsDescription" xml:space="preserve"><value>仅记录带 UTC 时间的失败、超时和意外中断。诊断包最多 5 MiB，本地日志最多 20 MiB。不含文件正文；由你主动分享，不会自动上传。</value></data>
@@ -464,4 +465,22 @@
   <data name="FileMenuFallback" xml:space="preserve"><value>无法读取完整系统菜单，已显示基础操作。可重试或在资源管理器中操作。</value></data>
   <data name="FileMenuInitializationTimeout" xml:space="preserve"><value>系统菜单初始化超过 5 秒，已取消本次打开。窗口仍可操作。</value></data>
   <data name="FileMenuSessionBusy" xml:space="preserve"><value>上一次系统菜单仍在处理或退出，请稍后重试。窗口仍可操作。</value></data>
+  <data name="GlassMaterialTitle" xml:space="preserve"><value>玻璃材质</value></data>
+  <data name="GlassClassic" xml:space="preserve"><value>经典玻璃</value></data>
+  <data name="GlassFrosted" xml:space="preserve"><value>细砂磨砂</value></data>
+  <data name="GlassMist" xml:space="preserve"><value>雾彩玻璃</value></data>
+  <data name="GlassPearl" xml:space="preserve"><value>珠光玻璃</value></data>
+  <data name="GlassFineTune" xml:space="preserve"><value>材质细节</value></data>
+  <data name="GlassLightColors" xml:space="preserve"><value>彩光颜色</value></data>
+  <data name="GlassLightA" xml:space="preserve"><value>第一光色</value></data>
+  <data name="GlassLightB" xml:space="preserve"><value>第二光色</value></data>
+  <data name="GlassColorIntensity" xml:space="preserve"><value>彩光浓度</value></data>
+  <data name="GlassReflection" xml:space="preserve"><value>反光强度</value></data>
+  <data name="GlassGrain" xml:space="preserve"><value>磨砂颗粒</value></data>
+  <data name="GlassLightDirection" xml:space="preserve"><value>光照方向</value></data>
+  <data name="GlassTopLeft" xml:space="preserve"><value>左上</value></data>
+  <data name="GlassTopRight" xml:space="preserve"><value>右上</value></data>
+  <data name="GlassBottomLeft" xml:space="preserve"><value>左下</value></data>
+  <data name="GlassBottomRight" xml:space="preserve"><value>右下</value></data>
+  <data name="GlassSampleName" xml:space="preserve"><value>资料</value></data>
 </root>
